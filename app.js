@@ -977,6 +977,8 @@ function toggleDevConsole() {
 
 /* INITIALIZATION ON WINDOW LOAD */
 window.onload = function () {
+  const savedTheme = localStorage.getItem("theme") || "light";
+  setTheme(savedTheme);
   initTelegramWebApp();
   loadGatewaySettings();
   updateFullCodes();

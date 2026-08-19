@@ -27,7 +27,7 @@ Follow this simple step-by-step guide to push your Telegram Mini App code to Git
    ```
 
 4. **Create a Repository on GitHub**:
-   - Go to [GitHub.com](https://github.com/new) and create a new repository (e.g. `telegram-mini-bank-app`).
+   - Go to [GitHub.com](https://github.com/new) and create a new repository (e.g. `git `).
    - Copy your repository URL (e.g. `https://github.com/your-username/telegram-mini-bank-app.git`).
 
 5. **Link and Push to GitHub**:
