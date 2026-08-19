@@ -886,19 +886,33 @@
           </div>
           <div class="grid grid-cols-2 gap-2 text-[11px]">
             <div
-              class="bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200/70 dark:border-slate-800"
+              class="bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200/70 dark:border-slate-800 space-y-0.5"
             >
-              <span class="text-slate-400 block text-[9px]">Biller</span>
-              <span id="resSupplier" class="font-bold truncate block">-</span>
+              <span class="text-slate-400 block text-[9px] font-bold uppercase">Biller / Supplier</span>
+              <span id="resSupplier" class="font-bold truncate block text-slate-800 dark:text-slate-200">-</span>
             </div>
             <div
-              class="bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200/70 dark:border-slate-800"
+              class="bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200/70 dark:border-slate-800 space-y-0.5"
             >
-              <span class="text-slate-400 block text-[9px]">Customer Name</span>
-              <span id="resCustomerName" class="font-bold truncate block"
-                >-</span
-              >
+              <span class="text-slate-400 block text-[9px] font-bold uppercase">Customer Code</span>
+              <span id="resCustomerCode" class="font-bold font-mono truncate block text-slate-800 dark:text-slate-200">-</span>
             </div>
+            <div
+              class="bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200/70 dark:border-slate-800 space-y-0.5"
+            >
+              <span class="text-slate-400 block text-[9px] font-bold uppercase">Customer Name</span>
+              <span id="resCustomerName" class="font-bold truncate block text-slate-800 dark:text-slate-200">-</span>
+            </div>
+            <div
+              class="bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200/70 dark:border-slate-800 space-y-0.5"
+            >
+              <span class="text-slate-400 block text-[9px] font-bold uppercase">Gateway Message</span>
+              <span id="resMessage" class="font-bold truncate block text-slate-800 dark:text-slate-200">-</span>
+            </div>
+          </div>
+          <div class="p-2.5 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200/70 dark:border-slate-800 space-y-0.5">
+            <span class="text-slate-400 block text-[9px] font-bold uppercase flex items-center gap-1"><i class="fa-solid fa-key text-indigo-400"></i> Active Payment Token</span>
+            <p id="resPaymentToken" class="text-[10px] font-mono text-indigo-500 break-all leading-tight">No token generated yet.</p>
           </div>
         </div>
       </section>
@@ -1101,7 +1115,7 @@ System ready...</pre
               >-</span
             >
           </div>
-          <div class="space-y-1 pt-1">
+          <div class="space-y-1 pt-1 hidden">
             <span class="text-slate-400 block text-[10px] uppercase font-bold"
               >Scanned KHQR String</span
             >
@@ -1191,6 +1205,10 @@ System ready...</pre
                 class="font-black text-emerald-600 font-num"
                 >-</span
               >
+            </div>
+            <div class="flex justify-between">
+              <span class="text-slate-400">Fee</span
+              ><span id="mFeeAmount" class="font-bold font-num">-</span>
             </div>
             <div class="flex justify-between">
               <span class="text-slate-400">Paid To</span

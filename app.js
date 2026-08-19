@@ -91,27 +91,41 @@ function getMockSandboxResponse(url, options) {
   if (url.includes("/inquiry")) {
     return {
       code: "SUCCESS",
-      message: "Sandbox Inquiry Success (Mock)",
+      message: "Customer found in proxy! (Sandbox Mock)",
       data: {
-        payment_token: "MOCK_TOKEN_" + Date.now(),
-        bill_amount: 15.5,
-        fee_amount: 0.0,
-        total_amount: 15.5,
-        currency: "USD",
-        customer_code: workflowState.customer_code || "INV-2026-0009",
-        customer_name: "Telegram Sandbox User",
-        biller_name: "Utility Supplier Sandbox",
+        supplier: {
+          code: "8282",
+          name: "ABCV4 Co., Ltd.",
+          short_name: "ABCV4",
+        },
+        customer: {
+          code: workflowState.customer_code || "INV-2026-0076",
+          name: "Chetra Lat 2",
+          name_en: "Chetra Lat 2",
+        },
+        balances: [
+          {
+            bill_amount: 1.1,
+            fee_amount: 0.0,
+            total_amount: 1.1,
+            currency: "USD",
+            payment_token: "MOCK_TOKEN_" + Date.now(),
+          },
+        ],
       },
     };
   } else if (url.includes("/payment/v2/confirm")) {
     return {
       code: "SUCCESS",
-      message: "Sandbox Payment Confirmed (Mock)",
+      message: "Payment success. (Sandbox Mock)",
       data: {
+        customer_code: workflowState.customer_code || "INV-2026-0076",
+        customer_name: workflowState.customer_name || "Chetra Lat 2",
+        paid_to: workflowState.supplier_name || "ABCV4 Co., Ltd.",
         ref_no: autoRef,
-        total_amount: workflowState.total_amount || 15.5,
-        fee_amount: 0.0,
-        paid_to: workflowState.supplier_name || "Bank Gateway Sandbox",
+        total_amount: workflowState.total_amount || 1.1,
+        fee_amount: workflowState.fee_amount || 0.0,
+        currency: workflowState.currency || "USD",
         paid_date: new Date().toLocaleString(),
       },
     };
@@ -624,7 +638,7 @@ async function runInquiry() {
   const token = document.getElementById("authToken").value.trim();
   updateFullCodes();
 
-  log("Executing Inquiry for: " + workflowState.customer_code);
+  log("Executing Inquiry request for customer_code: " + workflowState.customer_code);
   openLoadingModal("Executing Inquiry");
 
   try {
@@ -638,38 +652,69 @@ async function runInquiry() {
       body: JSON.stringify({ customer_code: workflowState.customer_code }),
     });
 
+    log("Inquiry Response Payload:", jsonData);
+
     if (jsonData.code === "SUCCESS" && jsonData.data) {
       const data = jsonData.data;
-      workflowState.payment_token = data.payment_token || "TOKEN_" + Date.now();
-      workflowState.bill_amount = data.bill_amount || 15.5;
-      workflowState.fee_amount = data.fee_amount || 0;
-      workflowState.total_amount = data.total_amount || 15.5;
-      workflowState.customer_name = data.customer_name || "Sandbox Customer";
-      workflowState.supplier_name = data.biller_name || "Biller Supplier";
+      const supplierObj = data.supplier || {};
+      const customerObj = data.customer || {};
+      const balanceObj = (Array.isArray(data.balances) && data.balances.length > 0) ? data.balances[0] : (data.balance || {});
 
-      document.getElementById("resSupplier").textContent =
-        workflowState.supplier_name;
-      document.getElementById("resCustomerName").textContent =
-        workflowState.customer_name;
-      document.getElementById("resBillAmount").textContent =
-        `${workflowState.bill_amount} USD`;
-      document.getElementById("resFeeAmount").textContent =
-        `${workflowState.fee_amount} USD`;
+      workflowState.customer_code = customerObj.code || data.customer_code || workflowState.customer_code;
+      workflowState.customer_name = customerObj.name || customerObj.name_en || data.customer_name || data.consumer_name || "N/A";
+      workflowState.supplier_name = supplierObj.name || supplierObj.short_name || data.supplier_name || data.biller_name || "N/A";
+      workflowState.bill_code = customerObj.code || data.bill_code || workflowState.customer_code;
+
+      workflowState.payment_token = balanceObj.payment_token || balanceObj.payment_Token || data.payment_token || data.payment_Token || data.token || "";
+
+      workflowState.bill_amount = balanceObj.bill_amount !== undefined ? balanceObj.bill_amount : (data.bill_amount !== undefined ? data.bill_amount : (data.bill_Amount !== undefined ? data.bill_Amount : 0));
+      workflowState.fee_amount = balanceObj.fee_amount !== undefined ? balanceObj.fee_amount : (data.fee_amount !== undefined ? data.fee_amount : (data.fee_Amount !== undefined ? data.fee_Amount : 0));
+      workflowState.total_amount = balanceObj.total_amount !== undefined ? balanceObj.total_amount : (data.total_amount !== undefined ? data.total_amount : (data.total_Amount !== undefined ? data.total_Amount : (workflowState.bill_amount + workflowState.fee_amount)));
+      workflowState.currency = balanceObj.currency || data.currency || data.currency_code || data.currency_Code || "USD";
+
+      const resSupplierEl = document.getElementById("resSupplier");
+      const resCustomerCodeEl = document.getElementById("resCustomerCode");
+      const resCustomerNameEl = document.getElementById("resCustomerName");
+      const resMessageEl = document.getElementById("resMessage");
+      const resPaymentTokenEl = document.getElementById("resPaymentToken");
+      const resBillAmountEl = document.getElementById("resBillAmount");
+      const resFeeAmountEl = document.getElementById("resFeeAmount");
+
+      if (resSupplierEl) resSupplierEl.textContent = workflowState.supplier_name;
+      if (resCustomerCodeEl) resCustomerCodeEl.textContent = workflowState.customer_code;
+      if (resCustomerNameEl) resCustomerNameEl.textContent = workflowState.customer_name;
+      if (resMessageEl) resMessageEl.textContent = jsonData.message || "Success";
+      if (resPaymentTokenEl) resPaymentTokenEl.textContent = workflowState.payment_token || "None";
+      if (resBillAmountEl) resBillAmountEl.textContent = `${workflowState.bill_amount} ${workflowState.currency}`;
+      if (resFeeAmountEl) resFeeAmountEl.textContent = `${workflowState.fee_amount} ${workflowState.currency}`;
+
       document.getElementById("responseCodeBadge").textContent = jsonData.code;
-      document.getElementById("paymentAmount").value =
-        workflowState.bill_amount;
+      document.getElementById("paymentAmount").value = workflowState.bill_amount;
 
       document.getElementById("appStatusBadge").textContent = "Token Active";
       document.getElementById("appStatusBadge").className =
         "text-[9px] bg-emerald-500/10 text-emerald-600 font-bold px-2 py-0.5 rounded-full border border-emerald-500/20";
       evaluatePaymentMode();
 
+      const metaDetails = {
+        customer_code: workflowState.customer_code,
+        customer_name: workflowState.customer_name,
+        total_amount: `${workflowState.total_amount} ${workflowState.currency}`,
+        fee_amount: `${workflowState.fee_amount} ${workflowState.currency}`,
+        paid_to: workflowState.supplier_name,
+        paid_date: new Date().toLocaleString(),
+      };
+
       finishModal(
         true,
         "Inquiry Successful",
-        "Bill details retrieved successfully.",
+        jsonData.message || "Bill details retrieved successfully.",
+        metaDetails,
       );
     } else {
+      document.getElementById("responseCodeBadge").textContent = jsonData.code || "FAILED";
+      const resMessageEl = document.getElementById("resMessage");
+      if (resMessageEl) resMessageEl.textContent = jsonData.message || "Inquiry Failed";
       finishModal(
         false,
         "Inquiry Failed",
@@ -677,6 +722,7 @@ async function runInquiry() {
       );
     }
   } catch (err) {
+    log("Inquiry Connection Error:", err.message);
     finishModal(false, "Connection Error", err.message);
   }
 }
@@ -687,15 +733,20 @@ async function runSmartPaymentFlow() {
   const amount =
     parseFloat(document.getElementById("paymentAmount").value) || 0;
   const autoRef = generateRandom16();
+  document.getElementById("refNoDisplay").value = autoRef;
+  workflowState.bank_ref = autoRef;
 
   const payload = {
+    customer_code: workflowState.customer_code,
+    bill_code: workflowState.bill_code || workflowState.customer_code,
+    bill_amount: workflowState.bill_amount || amount,
+    total_amount: workflowState.total_amount || amount,
+    currency: workflowState.currency || "USD",
     payment_token: workflowState.payment_token,
     ref_no: autoRef,
-    pay_amount: amount,
-    currency: "USD",
   };
 
-  log("Submitting Payment Request...", payload);
+  log("Submitting Payment Request to /payment/v2/confirm...", payload);
   openLoadingModal("Executing Payment");
 
   try {
@@ -709,12 +760,27 @@ async function runSmartPaymentFlow() {
       body: JSON.stringify(payload),
     });
 
+    log("Pay Response Payload:", jsonData);
+
+    const data = jsonData.data || {};
+    const supplierObj = data.supplier || {};
+    const customerObj = data.customer || {};
+
+    const customerCode = data.customer_code || customerObj.code || workflowState.customer_code || payload.ref_no;
+    const customerName = data.customer_name || customerObj.name || workflowState.customer_name || "N/A";
+    const paidTo = data.paid_to || supplierObj.name || data.biller_name || workflowState.supplier_name || "N/A";
+    const totalAmt = data.total_amount !== undefined ? data.total_amount : (payload.total_amount || payload.bill_amount);
+    const feeAmt = data.fee_amount !== undefined ? data.fee_amount : (workflowState.fee_amount || 0);
+    const curr = data.currency || payload.currency || "USD";
+    const paidDate = data.paid_date || new Date().toLocaleString();
+
     const metaDetails = {
-      customer_code: workflowState.customer_code,
-      customer_name: workflowState.customer_name,
-      total_amount: `${amount} USD`,
-      paid_to: workflowState.supplier_name,
-      paid_date: new Date().toLocaleString(),
+      customer_code: customerCode,
+      customer_name: customerName,
+      total_amount: `${totalAmt} ${curr}`,
+      fee_amount: `${feeAmt} ${curr}`,
+      paid_to: paidTo,
+      paid_date: paidDate,
     };
 
     if (jsonData.code === "SUCCESS") {
@@ -722,7 +788,7 @@ async function runSmartPaymentFlow() {
       finishModal(
         true,
         "Payment Successful",
-        `Transaction ${autoRef} completed.`,
+        jsonData.message || `Transaction ${autoRef} completed.`,
         metaDetails,
       );
     } else {
@@ -735,6 +801,7 @@ async function runSmartPaymentFlow() {
       );
     }
   } catch (err) {
+    log("Payment Connection Error:", err.message);
     finishModal(false, "Connection Error", err.message);
   }
 }
@@ -857,16 +924,19 @@ function finishModal(isSuccess, title, message, extraDetails = null) {
   }
 
   if (extraDetails) {
-    document.getElementById("mCustomerCode").textContent =
-      extraDetails.customer_code || "-";
-    document.getElementById("mCustomerName").textContent =
-      extraDetails.customer_name || "-";
-    document.getElementById("mTotalAmount").textContent =
-      extraDetails.total_amount || "-";
-    document.getElementById("mPaidTo").textContent =
-      extraDetails.paid_to || "-";
-    document.getElementById("mPaidDate").textContent =
-      extraDetails.paid_date || "-";
+    const elCode = document.getElementById("mCustomerCode");
+    const elName = document.getElementById("mCustomerName");
+    const elTotal = document.getElementById("mTotalAmount");
+    const elFee = document.getElementById("mFeeAmount");
+    const elTo = document.getElementById("mPaidTo");
+    const elDate = document.getElementById("mPaidDate");
+
+    if (elCode) elCode.textContent = extraDetails.customer_code || "-";
+    if (elName) elName.textContent = extraDetails.customer_name || "-";
+    if (elTotal) elTotal.textContent = extraDetails.total_amount || "-";
+    if (elFee) elFee.textContent = extraDetails.fee_amount || "-";
+    if (elTo) elTo.textContent = extraDetails.paid_to || "-";
+    if (elDate) elDate.textContent = extraDetails.paid_date || "-";
     details.classList.remove("hidden");
   } else {
     details.classList.add("hidden");
