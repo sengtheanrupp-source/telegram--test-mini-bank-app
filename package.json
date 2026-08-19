@@ -1,0 +1,18 @@
+{
+  "name": "telegram-mini-bank-payment-app",
+  "version": "2.4.0",
+  "description": "Telegram Mini App with Bank Payment enhancements, KHQR live camera scanner, and Vercel deployment.",
+  "scripts": {
+    "start": "npx serve .",
+    "dev": "npx serve ."
+  },
+  "keywords": [
+    "telegram-mini-app",
+    "khqr",
+    "bank-payment",
+    "vercel",
+    "bill24"
+  ],
+  "author": "BillFlow Engineering",
+  "license": "MIT"
+}
