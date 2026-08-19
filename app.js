@@ -376,12 +376,12 @@ async function submitQRConfirm() {
 
     const data = jsonData.data || {};
     const metaDetails = {
-      customer_code: payload.ref_no,
-      customer_name: payload.issuer_name,
-      total_amount: `${payload.amount} ${payload.currency}`,
-      fee_amount: `0.00 ${payload.currency}`,
-      paid_to: payload.issuer_name,
-      paid_date: new Date().toLocaleString(),
+      customer_code: data.customer_code || payload.ref_no,
+      customer_name: data.customer_name || data.customer_code || payload.issuer_name,
+      total_amount: `${data.total_amount || payload.amount} ${data.currency || payload.currency}`,
+      fee_amount: `${data.fee_amount || "0.00"} ${data.currency || payload.currency}`,
+      paid_to: data.paid_to || data.biller_name || payload.issuer_name,
+      paid_date: data.paid_date || new Date().toLocaleString(),
     };
 
     if (jsonData.code === "SUCCESS") {
@@ -822,11 +822,16 @@ function navigateToView(viewId) {
 function openLoadingModal(title) {
   const modal = document.getElementById("bankModal");
   const container = document.getElementById("modalContainer");
+  const iconContainer = document.getElementById("modalIconContainer");
+  const icon = document.getElementById("modalIcon");
+
   document.getElementById("modalTitle").textContent = title;
-  document.getElementById("modalMessage").textContent =
-    "Connecting to bank API...";
+  document.getElementById("modalMessage").textContent = "Connecting to bank API...";
   document.getElementById("modalReceiptDetails").classList.add("hidden");
   document.getElementById("modalCloseBtn").disabled = true;
+
+  icon.className = "fa-solid fa-spinner animate-spin text-xl text-white";
+  iconContainer.className = "w-14 h-14 rounded-full flex items-center justify-center mx-auto text-xl shadow-lg bg-white/20 text-white border border-white/30";
 
   modal.classList.remove("hidden");
   setTimeout(() => {
@@ -840,6 +845,16 @@ function finishModal(isSuccess, title, message, extraDetails = null) {
   document.getElementById("modalMessage").textContent = message;
   const closeBtn = document.getElementById("modalCloseBtn");
   const details = document.getElementById("modalReceiptDetails");
+  const iconContainer = document.getElementById("modalIconContainer");
+  const icon = document.getElementById("modalIcon");
+
+  if (isSuccess) {
+    icon.className = "fa-solid fa-check text-2xl text-white";
+    iconContainer.className = "w-14 h-14 rounded-full flex items-center justify-center mx-auto text-xl shadow-xl bg-emerald-500 text-white border-2 border-emerald-300 ring-pulse-success";
+  } else {
+    icon.className = "fa-solid fa-xmark text-2xl text-white";
+    iconContainer.className = "w-14 h-14 rounded-full flex items-center justify-center mx-auto text-xl shadow-xl bg-rose-500 text-white border-2 border-rose-300";
+  }
 
   if (extraDetails) {
     document.getElementById("mCustomerCode").textContent =
