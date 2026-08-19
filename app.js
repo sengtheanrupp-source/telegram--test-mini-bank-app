@@ -867,7 +867,6 @@ function navigateToView(viewId) {
     "tab-btn-home",
     "tab-btn-camera",
     "tab-btn-payment",
-    "tab-btn-verify",
   ].forEach((id) => {
     const btn = document.getElementById(id);
     if (btn) btn.className = idleTab;
@@ -880,8 +879,6 @@ function navigateToView(viewId) {
     startCameraStream();
   } else if (viewId === "paymentView")
     document.getElementById("tab-btn-payment").className = activeTab;
-  else if (viewId === "verifyView")
-    document.getElementById("tab-btn-verify").className = activeTab;
 
   window.scrollTo({ top: 0, behavior: "smooth" });
 }

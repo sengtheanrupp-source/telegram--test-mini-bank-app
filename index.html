@@ -451,7 +451,7 @@
         </div>
 
         <!-- Quick Action Grid -->
-        <div class="grid grid-cols-4 gap-2">
+        <div class="grid grid-cols-3 gap-2">
           <button
             onclick="navigateToView('cameraScanView')"
             class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 rounded-2xl flex flex-col items-center gap-1.5 shadow-sm hover:border-indigo-500 transition-all group"
@@ -494,21 +494,6 @@
             <span
               class="text-[10px] font-bold text-slate-700 dark:text-slate-200"
               >Upload QR</span
-            >
-          </button>
-
-          <button
-            onclick="navigateToView('verifyView')"
-            class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 rounded-2xl flex flex-col items-center gap-1.5 shadow-sm hover:border-indigo-500 transition-all group"
-          >
-            <div
-              class="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center text-lg group-hover:scale-110 transition-transform"
-            >
-              <i class="fa-solid fa-shield-halved"></i>
-            </div>
-            <span
-              class="text-[10px] font-bold text-slate-700 dark:text-slate-200"
-              >Verify</span
             >
           </button>
         </div>
@@ -723,17 +708,6 @@
             <i class="fa-solid fa-receipt text-indigo-500"></i> Bill Inquiry
             &amp; Payment
           </h2>
-          <div
-            class="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-xl text-[10px] font-bold"
-          >
-            <span>Batch</span>
-            <input
-              type="checkbox"
-              id="batchToggle"
-              onchange="toggleBatchMode()"
-              class="rounded accent-indigo-600"
-            />
-          </div>
         </div>
 
         <!-- Single Input Form -->
@@ -814,31 +788,6 @@
           </button>
         </div>
 
-        <!-- Batch Input Form -->
-        <div
-          id="batchInputPanel"
-          class="hidden bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 shadow-sm space-y-3"
-        >
-          <p class="text-xs text-slate-400">
-            Upload Excel/CSV file with consumer code column.
-          </p>
-          <input
-            type="file"
-            id="batchFileInput"
-            accept=".xlsx, .xls, .csv"
-            onchange="handleBatchFile(event)"
-            class="w-full text-xs text-slate-500 file:mr-2 file:py-2 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-600"
-          />
-          <button
-            id="btnProcessBatch"
-            onclick="processBatchInquiries()"
-            disabled
-            class="w-full bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-600 font-bold py-3 rounded-2xl text-xs cursor-not-allowed"
-          >
-            <i class="fa-solid fa-layer-group"></i> Process Batch
-          </button>
-        </div>
-
         <!-- Inquiry Output Summary -->
         <div
           class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-4 shadow-sm space-y-3 text-xs"
@@ -910,10 +859,7 @@
               <span id="resMessage" class="font-bold truncate block text-slate-800 dark:text-slate-200">-</span>
             </div>
           </div>
-          <div class="p-2.5 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200/70 dark:border-slate-800 space-y-0.5">
-            <span class="text-slate-400 block text-[9px] font-bold uppercase flex items-center gap-1"><i class="fa-solid fa-key text-indigo-400"></i> Active Payment Token</span>
-            <p id="resPaymentToken" class="text-[10px] font-mono text-indigo-500 break-all leading-tight">No token generated yet.</p>
-          </div>
+          <span id="resPaymentToken" class="hidden"></span>
         </div>
       </section>
 
@@ -1015,7 +961,7 @@ System ready...</pre
     <nav
       class="fixed bottom-0 inset-x-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 pb-[env(safe-area-inset-bottom)] shadow-lg max-w-md mx-auto"
     >
-      <div class="grid grid-cols-4">
+      <div class="grid grid-cols-3">
         <button
           id="tab-btn-home"
           onclick="navigateToView('homeView')"
@@ -1039,14 +985,6 @@ System ready...</pre
         >
           <i class="fa-solid fa-receipt text-base"></i>
           <span class="text-[10px] font-bold">Pay Bill</span>
-        </button>
-        <button
-          id="tab-btn-verify"
-          onclick="navigateToView('verifyView')"
-          class="flex flex-col items-center justify-center gap-1 py-2.5 text-slate-400"
-        >
-          <i class="fa-solid fa-shield-halved text-base"></i>
-          <span class="text-[10px] font-bold">Verify</span>
         </button>
       </div>
     </nav>
