@@ -223,7 +223,16 @@ async function startCameraStream() {
 
   stopCameraStream();
 
-  // Multi-tier iOS & WebKit constraints ladder
+  // Guard: mediaDevices only available in secure contexts (HTTPS / Telegram WebView)
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    log("getUserMedia not available (insecure context or old browser).");
+    if (statusText) statusText.textContent = "Camera API unavailable on this device";
+    showToast("Camera not supported here. Use Telegram Scan or Image Upload.", true);
+    return;
+  }
+
+  // Multi-tier iOS / Safari / Telegram WebView constraints ladder (soft → permissive)
+  // iOS requires playsinline + muted; facingMode ideal is safer than exact
   const constraintOptions = [
     {
       video: {
@@ -233,80 +242,89 @@ async function startCameraStream() {
       },
       audio: false,
     },
+    {
+      video: {
+        facingMode: { ideal: cameraFacingMode },
+      },
+      audio: false,
+    },
     { video: { facingMode: cameraFacingMode }, audio: false },
     { video: { facingMode: "environment" }, audio: false },
+    { video: { facingMode: "user" }, audio: false },
     { video: true, audio: false },
   ];
 
   log(`Starting camera stream (Facing mode: ${cameraFacingMode})...`);
-  statusText.textContent = "Accessing camera...";
+  if (statusText) statusText.textContent = "Accessing camera...";
 
   let streamObtained = null;
-  let lastCameraError = null;
-
-  // iOS/WebKit requires a secure (HTTPS) context for getUserMedia; surface that clearly
-  if (!window.isSecureContext) {
-    log("Camera blocked: page is not running in a secure (HTTPS) context.");
-    statusText.textContent = "Camera requires HTTPS. Open the app via its https:// link.";
-    showToast("Camera needs a secure HTTPS connection to work.", true);
-    return;
-  }
-
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    log("Camera blocked: getUserMedia API unavailable on this WebView.");
-    statusText.textContent = "Camera API unavailable on this device/browser.";
-    showToast("This device/browser does not support camera scanning.", true);
-    return;
-  }
-
+  let lastError = null;
   for (const constraints of constraintOptions) {
     try {
       streamObtained = await navigator.mediaDevices.getUserMedia(constraints);
       if (streamObtained) break;
     } catch (err) {
-      lastCameraError = err;
-      console.warn("Camera constraint attempt failed:", err);
+      lastError = err;
+      console.warn("Camera constraint attempt failed:", err && err.name, err && err.message);
     }
   }
 
   if (streamObtained) {
     try {
       cameraStream = streamObtained;
-      video.srcObject = cameraStream;
+      // Critical for iOS Safari / Telegram iOS WebView autoplay & inline play
       video.setAttribute("playsinline", "true");
       video.setAttribute("webkit-playsinline", "true");
+      video.playsInline = true;
       video.muted = true;
-      await video.play();
+      video.autoplay = true;
+      video.srcObject = cameraStream;
+
+      // Wait for metadata then play (helps iOS timing)
+      await new Promise((resolve) => {
+        if (video.readyState >= 2) return resolve();
+        video.onloadedmetadata = () => resolve();
+        setTimeout(resolve, 800);
+      });
+      await video.play().catch((e) => {
+        log("video.play() soft fail (retrying): " + (e && e.message));
+        return video.play();
+      });
 
       isCameraScanning = true;
-      statusText.textContent = "Point camera at KHQR code...";
-      btnToggle.innerHTML = '<i class="fa-solid fa-stop"></i> Stop Camera';
-      btnToggle.className =
-        "bg-rose-600 hover:bg-rose-500 text-white font-bold py-3 rounded-2xl text-xs shadow-lg flex items-center justify-center gap-2 active:scale-95 transition-all";
+      if (statusText) statusText.textContent = "Point camera at KHQR code...";
+      if (btnToggle) {
+        btnToggle.innerHTML = '<i class="fa-solid fa-stop"></i> Stop Camera';
+        btnToggle.className =
+          "bg-rose-600 hover:bg-rose-500 text-white font-bold py-3 rounded-2xl text-xs shadow-lg flex items-center justify-center gap-2 active:scale-95 transition-all";
+      }
 
       lastFrameTime = 0;
       requestAnimationFrame(tickCameraFrame);
     } catch (playErr) {
-      log("Video play error: " + playErr.message);
-      statusText.textContent = "Camera feed play failed.";
+      log("Video play error: " + (playErr && playErr.message));
+      if (statusText) statusText.textContent = "Camera feed play failed.";
+      showToast("Camera started but playback failed. Try Flip Camera.", true);
     }
   } else {
-    log("Camera stream access denied or unavailable on device.");
-    const errName = lastCameraError && lastCameraError.name;
-    if (errName === "NotAllowedError" || errName === "SecurityError") {
-      // iOS Telegram: once denied, Safari/WKWebView will not re-prompt automatically.
-      statusText.textContent =
-        "Camera blocked. On iOS: Settings > Telegram > Camera, or Settings > Safari > Camera > Allow, then reopen the app.";
+    const errName = (lastError && lastError.name) || "";
+    const errMsg = (lastError && lastError.message) || "unknown";
+    log("Camera stream access denied or unavailable: " + errName + " - " + errMsg);
+    if (errName === "NotAllowedError" || errName === "PermissionDeniedError") {
+      if (statusText) statusText.textContent = "Camera permission denied";
       showToast(
-        "Camera permission is blocked. Enable it in iOS Settings for Telegram, then reopen the app.",
+        "Camera access denied on iOS. Open Settings → Telegram → Camera (Allow), then reopen this Mini App.",
         true,
       );
-    } else if (errName === "NotFoundError" || errName === "OverconstrainedError") {
-      statusText.textContent = "No camera found on this device.";
-      showToast("No usable camera was found on this device.", true);
+    } else if (errName === "NotFoundError" || errName === "DevicesNotFoundError") {
+      if (statusText) statusText.textContent = "No camera found on device";
+      showToast("No camera detected. Use Image Upload instead.", true);
+    } else if (errName === "NotReadableError" || errName === "TrackStartError") {
+      if (statusText) statusText.textContent = "Camera is in use by another app";
+      showToast("Camera busy. Close other apps using the camera and retry.", true);
     } else {
-      statusText.textContent = "Camera access denied or unavailable";
-      showToast("Camera access denied. Please check permissions.", true);
+      if (statusText) statusText.textContent = "Camera access denied or unavailable";
+      showToast("Camera access denied. Please check permissions or use Telegram Scan.", true);
     }
   }
 }
@@ -440,6 +458,13 @@ function closeKHQRModal() {
 }
 
 async function submitQRConfirm() {
+  // Require PIN / Biometric when security lock is enabled
+  requireSecurityAuth(() => {
+    submitQRConfirmAfterAuth();
+  });
+}
+
+async function submitQRConfirmAfterAuth() {
   closeKHQRModal();
 
   const baseUrl = document.getElementById("baseUrl").value.trim();
@@ -820,6 +845,13 @@ async function runInquiry() {
 }
 
 async function runSmartPaymentFlow() {
+  // Require PIN / Biometric when security lock is enabled
+  requireSecurityAuth(() => {
+    runSmartPaymentFlowAfterAuth();
+  });
+}
+
+async function runSmartPaymentFlowAfterAuth() {
   const baseUrl = document.getElementById("baseUrl").value.trim();
   const token = document.getElementById("authToken").value.trim();
   const amount =
@@ -1115,6 +1147,22 @@ function toggleSecurityLockSetting() {
   const configBox = document.getElementById("pinConfigBox");
   if (configBox && lockToggle) {
     configBox.classList.toggle("hidden", !lockToggle.checked);
+    // Auto-save toggle state so setup is immediately effective
+    if (lockToggle.checked) {
+      securitySettings.enabled = true;
+      const pinInput = document.getElementById("securityPinValue");
+      if (pinInput && pinInput.value.trim()) {
+        securitySettings.pin = pinInput.value.trim();
+      }
+      localStorage.setItem("bankSecuritySettings", JSON.stringify(securitySettings));
+      // Focus PIN field so setup is visible & ready
+      setTimeout(() => {
+        if (pinInput) pinInput.focus();
+      }, 100);
+    } else {
+      securitySettings.enabled = false;
+      localStorage.setItem("bankSecuritySettings", JSON.stringify(securitySettings));
+    }
   }
 }
 

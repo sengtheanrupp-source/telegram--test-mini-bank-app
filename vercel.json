@@ -17,10 +17,6 @@
         {
           "key": "Access-Control-Allow-Origin",
           "value": "*"
-        },
-        {
-          "key": "Permissions-Policy",
-          "value": "camera=(self \"https://web.telegram.org\" \"https://telegram.org\"), microphone=()"
         }
       ]
     }
