@@ -185,6 +185,9 @@ let payloadLogs = [];
 let batchItems = [];
 let isLogFullScreen = false;
 let lastFrameTime = 0;
+let scanCanvasCtx = null;
+const SCAN_MAX_SIZE = 400;
+const SCAN_INTERVAL_MS = 22;
 
 /* 4. LIVE CAMERA KHQR SCANNER ENGINE */
 let cameraStream = null;
@@ -214,7 +217,6 @@ function triggerInstantQRScan() {
 
   if (preferNative && tgApp && tgApp.showScanQrPopup) {
     try {
-      // If user closes native scanner without a result, fall back to HTML camera
       if (tgApp.onEvent) {
         const onClosed = function () {
           try {
@@ -225,7 +227,7 @@ function triggerInstantQRScan() {
               log("Native QR popup closed without scan → opening live camera");
               navigateToView("cameraScanView");
             }
-          }, 250);
+          }, 60);
         };
         try {
           tgApp.onEvent("scanQrPopupClosed", onClosed);
@@ -262,8 +264,8 @@ async function startCameraStream() {
   const btnToggle = document.getElementById("btnToggleCamera");
 
   stopCameraStream();
+  scanCanvasCtx = null;
 
-  // Guard: mediaDevices only available in secure contexts (HTTPS / Telegram WebView)
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     log("getUserMedia not available (insecure context or old browser).");
     if (statusText) statusText.textContent = "Camera API unavailable on this device";
@@ -271,31 +273,22 @@ async function startCameraStream() {
     return;
   }
 
-  // Multi-tier iOS / Safari / Telegram WebView constraints ladder (soft → permissive)
-  // iOS requires playsinline + muted; facingMode ideal is safer than exact
+  // Fast-first constraints: 640x480 starts quicker and decodes faster than 1280x720
   const constraintOptions = [
     {
       video: {
         facingMode: { ideal: cameraFacingMode },
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
+        width: { ideal: 640 },
+        height: { ideal: 480 },
       },
       audio: false,
     },
-    {
-      video: {
-        facingMode: { ideal: cameraFacingMode },
-      },
-      audio: false,
-    },
-    { video: { facingMode: cameraFacingMode }, audio: false },
-    { video: { facingMode: "environment" }, audio: false },
-    { video: { facingMode: "user" }, audio: false },
+    { video: { facingMode: { ideal: cameraFacingMode } }, audio: false },
     { video: true, audio: false },
   ];
 
   log(`Starting camera stream (Facing mode: ${cameraFacingMode})...`);
-  if (statusText) statusText.textContent = "Accessing camera...";
+  if (statusText) statusText.textContent = "Opening camera...";
 
   let streamObtained = null;
   let lastError = null;
@@ -312,7 +305,6 @@ async function startCameraStream() {
   if (streamObtained) {
     try {
       cameraStream = streamObtained;
-      // Critical for iOS Safari / Telegram iOS WebView autoplay & inline play
       video.setAttribute("playsinline", "true");
       video.setAttribute("webkit-playsinline", "true");
       video.playsInline = true;
@@ -320,11 +312,14 @@ async function startCameraStream() {
       video.autoplay = true;
       video.srcObject = cameraStream;
 
-      // Wait for metadata then play (helps iOS timing)
       await new Promise((resolve) => {
         if (video.readyState >= 2) return resolve();
-        video.onloadedmetadata = () => resolve();
-        setTimeout(resolve, 800);
+        const done = () => {
+          video.onloadedmetadata = null;
+          resolve();
+        };
+        video.onloadedmetadata = done;
+        setTimeout(done, 180);
       });
       await video.play().catch((e) => {
         log("video.play() soft fail (retrying): " + (e && e.message));
@@ -336,7 +331,7 @@ async function startCameraStream() {
       if (btnToggle) {
         btnToggle.innerHTML = '<i class="fa-solid fa-stop"></i> Stop Camera';
         btnToggle.className =
-          "bg-rose-600 hover:bg-rose-500 text-white font-bold py-3 rounded-2xl text-xs shadow-lg flex items-center justify-center gap-2 active:scale-95 transition-all";
+          "bg-rose-600 hover:bg-rose-500 text-white font-bold py-3 rounded-2xl text-xs shadow-lg flex items-center justify-center gap-2 active:scale-95 transition-transform";
       }
 
       lastFrameTime = 0;
@@ -392,8 +387,7 @@ function switchCameraFacing() {
 function tickCameraFrame(timestamp) {
   if (!isCameraScanning) return;
 
-  // Throttle frame processing (~15fps / every 65ms) to optimize CPU speed & prevent iOS overheating
-  if (timestamp - lastFrameTime < 65) {
+  if (timestamp - lastFrameTime < SCAN_INTERVAL_MS) {
     requestAnimationFrame(tickCameraFrame);
     return;
   }
@@ -403,21 +397,33 @@ function tickCameraFrame(timestamp) {
   const canvas = document.getElementById("cameraCanvas");
   const statusText = document.getElementById("cameraScanStatus");
 
-  if (video && video.readyState === video.HAVE_ENOUGH_DATA) {
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const ctx = canvas.getContext("2d", { willReadFrequently: true });
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  if (video && video.readyState >= 2 && video.videoWidth) {
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    const side = Math.min(vw, vh);
+    const sx = (vw - side) / 2;
+    const sy = (vh - side) / 2;
+    const dw = Math.min(SCAN_MAX_SIZE, side);
 
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const code = jsQR(imageData.data, imageData.width, imageData.height, {
+    if (canvas.width !== dw || canvas.height !== dw) {
+      canvas.width = dw;
+      canvas.height = dw;
+      scanCanvasCtx = null;
+    }
+    if (!scanCanvasCtx) {
+      scanCanvasCtx = canvas.getContext("2d", { willReadFrequently: true });
+    }
+    scanCanvasCtx.drawImage(video, sx, sy, side, side, 0, 0, dw, dw);
+
+    const imageData = scanCanvasCtx.getImageData(0, 0, dw, dw);
+    const code = jsQR(imageData.data, dw, dw, {
       inversionAttempts: "dontInvert",
     });
 
     if (code && code.data && code.data.trim()) {
       log("Live camera detected QR Code:", code.data);
       triggerHaptic("success");
-      statusText.textContent = "KHQR Code Detected!";
+      if (statusText) statusText.textContent = "KHQR Code Detected!";
       stopCameraStream();
       processDecodedQR(code.data);
       return;
@@ -490,6 +496,12 @@ function openKHQRConfirmModal(data) {
 
   const modal = document.getElementById("khqrConfirmModal");
   modal.classList.remove("hidden");
+  const box = document.getElementById("khqrModalContainer");
+  if (box) {
+    box.classList.remove("animate-modal-pop");
+    void box.offsetWidth;
+    box.classList.add("animate-modal-pop");
+  }
 }
 
 function closeKHQRModal() {
@@ -1044,7 +1056,7 @@ function navigateToView(viewId) {
   } else if (viewId === "paymentView")
     document.getElementById("tab-btn-payment").className = activeTab;
 
-  window.scrollTo({ top: 0, behavior: "smooth" });
+  window.scrollTo({ top: 0, behavior: viewId === "cameraScanView" ? "auto" : "smooth" });
 }
 
 function openLoadingModal(title) {
@@ -1114,7 +1126,7 @@ function closeModal() {
   const container = document.getElementById("modalContainer");
   container.classList.remove("scale-100", "opacity-100");
   container.classList.add("scale-95", "opacity-0");
-  setTimeout(() => modal.classList.add("hidden"), 200);
+  setTimeout(() => modal.classList.add("hidden"), 80);
 }
 
 /* 8. SECURITY LOCK & SECRET TAP RESET ENGINE */
@@ -1127,6 +1139,8 @@ let pendingAuthCallback = null;
 let enteredPin = "";
 let secretResetTapCount = 0;
 let secretResetTimer = null;
+let isAppUnlocked = false;
+let pinLockMode = "payment"; // "app" | "payment"
 
 function showToast(message, isError = false) {
   const toast = document.getElementById("toastAlert");
@@ -1147,7 +1161,7 @@ function showToast(message, isError = false) {
   setTimeout(() => {
     toast.classList.remove("opacity-100");
     toast.classList.add("opacity-0", "pointer-events-none");
-  }, 2800);
+  }, 1800);
 }
 
 function loadSecuritySettings() {
@@ -1237,26 +1251,44 @@ function resetSecurityLockSecretly() {
   if (pinInput) pinInput.value = "1234";
   if (configBox) configBox.classList.add("hidden");
 
-  closeSecurityLockModal();
+  isAppUnlocked = true;
+  pinLockMode = "payment";
+  const modal = document.getElementById("securityLockModal");
+  if (modal) modal.classList.add("hidden");
+  pendingAuthCallback = null;
+  enteredPin = "";
   triggerHaptic("warning");
   showToast("Security Reset! PIN Lock Disabled (Secret Tap)", false);
   log("SECURITY SECRET RESET TRIGGERED: Emergency PIN reset applied.");
 }
 
-function requireSecurityAuth(onSuccess) {
+function requireSecurityAuth(onSuccess, mode) {
   if (!securitySettings.enabled) {
-    onSuccess();
+    if (onSuccess) onSuccess();
     return;
   }
 
-  pendingAuthCallback = onSuccess;
+  pinLockMode = mode || "payment";
+  pendingAuthCallback = onSuccess || null;
   enteredPin = "";
   updatePinDotsDisplay();
+
+  const titleEl = document.getElementById("pinLockTitle");
+  const subEl = document.getElementById("pinLockSubtitle");
+  const cancelBtn = document.getElementById("pinLockCancelBtn");
+  if (pinLockMode === "app") {
+    if (titleEl) titleEl.textContent = "Unlock Bank Mobile";
+    if (subEl) subEl.textContent = "Enter your 4-digit PIN to open the app";
+    if (cancelBtn) cancelBtn.classList.add("invisible");
+  } else {
+    if (titleEl) titleEl.textContent = "Authorize Payment";
+    if (subEl) subEl.textContent = "Enter your 4-digit PIN to confirm this payment";
+    if (cancelBtn) cancelBtn.classList.remove("invisible");
+  }
 
   const modal = document.getElementById("securityLockModal");
   if (modal) modal.classList.remove("hidden");
 
-  // Attempt Telegram biometrics if enabled
   if (securitySettings.useBiometrics && tgApp && tgApp.BiometricManager) {
     try {
       tgApp.BiometricManager.init(() => {
@@ -1269,6 +1301,9 @@ function requireSecurityAuth(onSuccess) {
 }
 
 function closeSecurityLockModal() {
+  if (pinLockMode === "app" && securitySettings.enabled && !isAppUnlocked) {
+    return;
+  }
   const modal = document.getElementById("securityLockModal");
   if (modal) modal.classList.add("hidden");
   pendingAuthCallback = null;
@@ -1283,7 +1318,7 @@ function pressPinNum(num) {
   }
 
   if (enteredPin.length === 4) {
-    setTimeout(verifyEnteredPin, 100);
+    setTimeout(verifyEnteredPin, 20);
   }
 }
 
@@ -1313,17 +1348,19 @@ function updatePinDotsDisplay() {
 function verifyEnteredPin() {
   if (enteredPin === securitySettings.pin) {
     triggerHaptic("success");
-    closeSecurityLockModal();
-    if (pendingAuthCallback) {
-      const cb = pendingAuthCallback;
-      pendingAuthCallback = null;
-      cb();
-    }
+    isAppUnlocked = true;
+    pinLockMode = "payment";
+    const modal = document.getElementById("securityLockModal");
+    if (modal) modal.classList.add("hidden");
+    const cb = pendingAuthCallback;
+    pendingAuthCallback = null;
+    enteredPin = "";
+    if (cb) cb();
   } else {
     triggerHaptic("error");
     enteredPin = "";
     updatePinDotsDisplay();
-    showToast("Incorrect PIN code. Try again or reset.", true);
+    showToast("Incorrect PIN. Try again.", true);
   }
 }
 
@@ -1335,7 +1372,10 @@ function triggerBiometricScan() {
         (success) => {
           if (success) {
             triggerHaptic("success");
-            closeSecurityLockModal();
+            isAppUnlocked = true;
+            pinLockMode = "payment";
+            const modal = document.getElementById("securityLockModal");
+            if (modal) modal.classList.add("hidden");
             if (pendingAuthCallback) {
               const cb = pendingAuthCallback;
               pendingAuthCallback = null;
@@ -1394,7 +1434,7 @@ function navigateToView(viewId) {
   } else if (viewId === "paymentView")
     document.getElementById("tab-btn-payment").className = activeTab;
 
-  window.scrollTo({ top: 0, behavior: "smooth" });
+  window.scrollTo({ top: 0, behavior: viewId === "cameraScanView" ? "auto" : "smooth" });
 }
 
 function openLoadingModal(title) {
@@ -1464,7 +1504,7 @@ function closeModal() {
   const container = document.getElementById("modalContainer");
   container.classList.remove("scale-100", "opacity-100");
   container.classList.add("scale-95", "opacity-0");
-  setTimeout(() => modal.classList.add("hidden"), 200);
+  setTimeout(() => modal.classList.add("hidden"), 80);
 }
 
 function toggleDevMenu(forceClose) {
@@ -1500,6 +1540,14 @@ function saveGatewaySettings() {
   toggleSettingsDrawer();
   showToast("Settings saved successfully.");
   log("Settings saved to local storage.");
+
+  // After enabling PIN, lock immediately so the user can verify it works
+  if (securitySettings.enabled) {
+    isAppUnlocked = false;
+    requireSecurityAuth(() => {
+      isAppUnlocked = true;
+    }, "app");
+  }
 }
 
 function loadGatewaySettings() {
@@ -1652,4 +1700,44 @@ window.onload = function () {
   updateRefNo();
   navigateToView("homeView");
   log("Telegram Mini App Bank Engine initialised successfully.");
+
+  // Always require PIN when the Mini App is opened if lock is enabled
+  if (securitySettings.enabled) {
+    isAppUnlocked = false;
+    requireSecurityAuth(() => {
+      isAppUnlocked = true;
+    }, "app");
+  }
+
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) {
+      if (securitySettings.enabled) isAppUnlocked = false;
+      return;
+    }
+    if (securitySettings.enabled && !isAppUnlocked) {
+      requireSecurityAuth(() => {
+        isAppUnlocked = true;
+      }, "app");
+    }
+  });
+
+  if (tgApp && tgApp.onEvent) {
+    try {
+      tgApp.onEvent("visibilityChanged", function (payload) {
+        const visible =
+          typeof payload === "boolean"
+            ? payload
+            : payload && (payload.is_visible === true || payload.isVisible === true);
+        if (!visible) {
+          if (securitySettings.enabled) isAppUnlocked = false;
+          return;
+        }
+        if (securitySettings.enabled && !isAppUnlocked) {
+          requireSecurityAuth(() => {
+            isAppUnlocked = true;
+          }, "app");
+        }
+      });
+    } catch (e) {}
+  }
 };
