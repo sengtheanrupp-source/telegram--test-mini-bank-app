@@ -242,11 +242,29 @@ async function startCameraStream() {
   statusText.textContent = "Accessing camera...";
 
   let streamObtained = null;
+  let lastCameraError = null;
+
+  // iOS/WebKit requires a secure (HTTPS) context for getUserMedia; surface that clearly
+  if (!window.isSecureContext) {
+    log("Camera blocked: page is not running in a secure (HTTPS) context.");
+    statusText.textContent = "Camera requires HTTPS. Open the app via its https:// link.";
+    showToast("Camera needs a secure HTTPS connection to work.", true);
+    return;
+  }
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    log("Camera blocked: getUserMedia API unavailable on this WebView.");
+    statusText.textContent = "Camera API unavailable on this device/browser.";
+    showToast("This device/browser does not support camera scanning.", true);
+    return;
+  }
+
   for (const constraints of constraintOptions) {
     try {
       streamObtained = await navigator.mediaDevices.getUserMedia(constraints);
       if (streamObtained) break;
     } catch (err) {
+      lastCameraError = err;
       console.warn("Camera constraint attempt failed:", err);
     }
   }
@@ -274,8 +292,22 @@ async function startCameraStream() {
     }
   } else {
     log("Camera stream access denied or unavailable on device.");
-    statusText.textContent = "Camera access denied or unavailable";
-    showToast("Camera access denied. Please check permissions.", true);
+    const errName = lastCameraError && lastCameraError.name;
+    if (errName === "NotAllowedError" || errName === "SecurityError") {
+      // iOS Telegram: once denied, Safari/WKWebView will not re-prompt automatically.
+      statusText.textContent =
+        "Camera blocked. On iOS: Settings > Telegram > Camera, or Settings > Safari > Camera > Allow, then reopen the app.";
+      showToast(
+        "Camera permission is blocked. Enable it in iOS Settings for Telegram, then reopen the app.",
+        true,
+      );
+    } else if (errName === "NotFoundError" || errName === "OverconstrainedError") {
+      statusText.textContent = "No camera found on this device.";
+      showToast("No usable camera was found on this device.", true);
+    } else {
+      statusText.textContent = "Camera access denied or unavailable";
+      showToast("Camera access denied. Please check permissions.", true);
+    }
   }
 }
 
