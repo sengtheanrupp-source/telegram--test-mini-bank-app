@@ -174,6 +174,110 @@
           );
         background-size: 20px 20px;
       }
+
+      .pin-key {
+        width: 74px;
+        height: 74px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.92);
+        box-shadow: 0 8px 20px rgba(79, 70, 229, 0.12), inset 0 1px 0 rgba(255,255,255,0.8);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+      }
+      .dark .pin-key {
+        background: rgba(30, 41, 59, 0.9);
+        box-shadow: 0 8px 20px rgba(0,0,0,0.35);
+      }
+      .pin-key:active {
+        transform: scale(0.9);
+        background: #6366f1;
+        color: #fff;
+        box-shadow: 0 4px 12px rgba(99, 102, 241, 0.45);
+      }
+      .pin-key:active .pin-letters { color: rgba(255,255,255,0.8); }
+      .pin-letters {
+        font-size: 8px;
+        letter-spacing: 0.16em;
+        font-weight: 700;
+        color: #94a3b8;
+        margin-top: 1px;
+      }
+      @keyframes pinBounce {
+        0% { transform: scale(0.6); }
+        70% { transform: scale(1.18); }
+        100% { transform: scale(1); }
+      }
+      .pin-dot-on {
+        animation: pinBounce 0.18s ease-out;
+      }
+      .chat-bubble-in {
+        background: #fff;
+        border-radius: 18px 18px 18px 6px;
+      }
+      .dark .chat-bubble-in { background: #1e293b; }
+      .chat-bubble-out {
+        background: linear-gradient(135deg, #6366f1, #4f46e5);
+        color: #fff;
+        border-radius: 18px 18px 6px 18px;
+      }
+      .folder-chip.active {
+        background: #4f46e5;
+        color: #fff;
+      }
+
+      @keyframes shieldBounce {
+        0%, 100% { transform: translateY(0) scale(1); }
+        50% { transform: translateY(-4px) scale(1.04); }
+      }
+      .pin-shield {
+        animation: shieldBounce 2.2s ease-in-out infinite;
+      }
+      .pin-key {
+        min-height: 58px;
+        border-radius: 22px;
+        background: linear-gradient(180deg, #ffffff 0%, #eef2ff 100%);
+        box-shadow: 0 5px 0 #c7d2fe, 0 10px 18px rgba(79, 70, 229, 0.12);
+        transition: transform 0.08s ease, box-shadow 0.08s ease;
+      }
+      .dark .pin-key {
+        background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+        box-shadow: 0 5px 0 #312e81, 0 10px 18px rgba(0, 0, 0, 0.35);
+      }
+      .pin-key:active {
+        transform: translateY(4px) scale(0.96);
+        box-shadow: 0 1px 0 #c7d2fe, 0 4px 8px rgba(79, 70, 229, 0.12);
+      }
+      .pin-dot {
+        width: 14px;
+        height: 14px;
+        border-radius: 999px;
+        border: 2px solid #c7d2fe;
+        transition: transform 0.12s cubic-bezier(0.16, 1, 0.3, 1), background 0.12s ease, border-color 0.12s ease;
+      }
+      .pin-dot.filled {
+        background: linear-gradient(135deg, #818cf8, #4f46e5);
+        border-color: #4f46e5;
+        transform: scale(1.18);
+        box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.18);
+      }
+      .chat-bubble-in {
+        background: #ffffff;
+        border-radius: 18px 18px 18px 6px;
+      }
+      .dark .chat-bubble-in {
+        background: #1e293b;
+      }
+      .chat-bubble-out {
+        background: linear-gradient(135deg, #6366f1, #4f46e5);
+        color: #fff;
+        border-radius: 18px 18px 6px 18px;
+      }
+      .tg-banner {
+        animation: modalPop 0.16s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      }
     </style>
   </head>
   <body
@@ -224,8 +328,67 @@
           <i class="fa-solid fa-camera"></i>
           <span class="hidden sm:inline">Camera</span> Scan
         </button>
+
+        <!-- Dev & Settings Menu Toggle -->
+        <button
+          onclick="toggleDevMenu()"
+          class="w-9 h-9 flex items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-300 hover:text-indigo-600 active:scale-95 transition-all"
+        >
+          <i class="fa-solid fa-ellipsis-vertical text-sm"></i>
+        </button>
       </div>
     </header>
+
+    <!-- DEVELOPER & GATEWAY SETTINGS MENU -->
+    <div
+      id="devMenuPanel"
+      class="hidden absolute right-3 top-16 z-50 w-64 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl p-2"
+    >
+      <p
+        class="px-3 pt-2 pb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400"
+      >
+        Settings &amp; Gateway
+      </p>
+      <button
+        onclick="
+          toggleSettingsDrawer();
+          toggleDevMenu(true);
+        "
+        class="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5"
+      >
+        <i class="fa-solid fa-sliders text-indigo-500 w-4"></i> API Gateway
+        Settings
+      </button>
+      <button
+        onclick="
+          toggleDevConsole();
+          toggleDevMenu(true);
+        "
+        class="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5"
+      >
+        <i class="fa-solid fa-terminal text-indigo-500 w-4"></i> Console Logs
+      </button>
+      <div
+        class="border-t border-slate-200 dark:border-slate-800 mt-2 pt-2 px-2 flex justify-between items-center"
+      >
+        <span class="text-xs font-semibold text-slate-500">Theme</span>
+        <div class="flex gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+          <button
+            onclick="setTheme('light')"
+            class="px-2 py-1 rounded-lg text-xs hover:text-indigo-500"
+          >
+            <i class="fa-solid fa-sun"></i>
+          </button>
+          <button
+            onclick="setTheme('dark')"
+            class="px-2 py-1 rounded-lg text-xs hover:text-indigo-500"
+          >
+            <i class="fa-solid fa-moon"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- CONFIGURATION DRAWER -->
     <div
       id="settingsDrawer"
@@ -340,9 +503,6 @@
                   <input type="checkbox" id="biometricsEnabled" checked class="w-4 h-4 accent-indigo-600 rounded cursor-pointer" />
                 </div>
               </div>
-              <p class="text-[10px] text-slate-400 italic">
-                <i class="fa-solid fa-key text-indigo-500 mr-1"></i> Tap Bank Mobile logo 3-5 times to emergency reset PIN lock.
-              </p>
             </div>
 
             <div
@@ -917,6 +1077,59 @@
         </div>
       </section>
 
+      <!-- TELEGRAM-STYLE CHATS (Personal / Groups / Folders — never mixed) -->
+      <section id="chatView" class="hidden space-y-3">
+        <div id="chatListPane" class="space-y-3">
+          <div class="flex items-center justify-between">
+            <div>
+              <h2 class="text-base font-bold text-slate-900 dark:text-slate-100">Messages</h2>
+              <p class="text-[11px] text-slate-400">Personal, groups and folders stay separate</p>
+            </div>
+            <button
+              onclick="openAddChatModal()"
+              class="w-10 h-10 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shadow-lg shadow-indigo-600/30 active:scale-95"
+            >
+              <i class="fa-solid fa-plus"></i>
+            </button>
+          </div>
+          <div id="chatFolderBar" class="flex gap-2 overflow-x-auto pb-1"></div>
+          <div id="chatList" class="space-y-1.5"></div>
+        </div>
+
+        <div id="chatThreadPane" class="hidden flex flex-col h-[calc(100vh-11rem)]">
+          <div class="flex items-center gap-3 pb-2 border-b border-slate-200 dark:border-slate-800">
+            <button onclick="closeChatThread()" class="w-9 h-9 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-200">
+              <i class="fa-solid fa-chevron-left"></i>
+            </button>
+            <div id="chatThreadAvatar" class="w-10 h-10 rounded-2xl bg-indigo-500 text-white flex items-center justify-center font-bold text-sm"></div>
+            <div class="flex-1 min-w-0">
+              <p id="chatThreadTitle" class="text-sm font-bold truncate"></p>
+              <p id="chatThreadMeta" class="text-[10px] text-slate-400 truncate"></p>
+            </div>
+            <button
+              id="chatOpenTelegramBtn"
+              onclick="openCurrentChatInTelegram()"
+              class="text-indigo-500 text-sm px-2"
+              title="Open in Telegram"
+            >
+              <i class="fa-brands fa-telegram"></i>
+            </button>
+          </div>
+          <div id="chatThreadMessages" class="flex-1 overflow-y-auto space-y-2 py-3"></div>
+          <form onsubmit="sendChatReply(event)" class="flex items-end gap-2 pt-2">
+            <textarea
+              id="chatReplyInput"
+              rows="1"
+              placeholder="Message"
+              class="flex-1 resize-none bg-slate-100 dark:bg-slate-800 rounded-2xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 max-h-24"
+            ></textarea>
+            <button type="submit" class="w-11 h-11 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shadow-md active:scale-95">
+              <i class="fa-solid fa-paper-plane text-sm"></i>
+            </button>
+          </form>
+        </div>
+      </section>
+
       <!-- SYSTEM CONSOLE LOG MONITOR -->
       <section
         id="consoleSection"
@@ -963,7 +1176,7 @@ System ready...</pre
     <nav
       class="fixed bottom-0 inset-x-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 pb-[env(safe-area-inset-bottom)] shadow-lg max-w-md mx-auto"
     >
-      <div class="grid grid-cols-3">
+      <div class="grid grid-cols-4">
         <button
           id="tab-btn-home"
           onclick="navigateToView('homeView')"
@@ -979,6 +1192,16 @@ System ready...</pre
         >
           <i class="fa-solid fa-camera text-base"></i>
           <span class="text-[10px] font-bold">Scan QR</span>
+        </button>
+        <button
+          id="tab-btn-chats"
+          onclick="navigateToView('chatView')"
+          disabled
+          class="relative flex flex-col items-center justify-center gap-1 py-2.5 text-slate-400"
+        >
+          <i class="fa-solid fa-comments text-base"></i>
+          <span class="text-[10px] font-bold">Chats</span>
+          <span id="chatUnreadBadge" class="hidden absolute top-1 right-[22%] min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-black leading-4">0</span>
         </button>
         <button
           id="tab-btn-payment"
@@ -1174,51 +1397,73 @@ System ready...</pre
     <!-- PIN & TELEGRAM BIOMETRIC SECURITY LOCK MODAL -->
     <div
       id="securityLockModal"
-      class="fixed inset-0 bg-slate-950/90 backdrop-blur-xl z-50 flex items-center justify-center p-4 hidden"
+      class="fixed inset-0 z-[70] hidden"
     >
-      <div
-        class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-xs w-full p-6 text-center shadow-2xl space-y-4 animate-modal-pop relative"
-      >
-        <div class="space-y-1.5">
-          <div class="w-14 h-14 rounded-2xl bg-indigo-500/10 text-indigo-500 flex items-center justify-center mx-auto text-2xl shadow-inner">
-            <i class="fa-solid fa-shield-halved"></i>
+      <div class="absolute inset-0 bg-gradient-to-b from-indigo-100 via-white to-violet-100 dark:from-slate-950 dark:via-slate-900 dark:to-indigo-950"></div>
+      <div class="relative h-full max-w-sm mx-auto flex flex-col items-center justify-between px-6 py-8">
+        <div class="w-full flex justify-between items-center">
+          <button id="pinLockCancelBtn" onclick="closeSecurityLockModal()" class="text-xs font-semibold text-slate-400 hover:text-slate-600 px-2 py-1">Cancel</button>
+          <span></span>
+        </div>
+
+        <div class="flex flex-col items-center gap-4">
+          <button
+            type="button"
+            id="pinSecretShield"
+            onclick="handleSecretResetTap()"
+            class="w-20 h-20 rounded-[28px] bg-gradient-to-br from-indigo-500 to-violet-500 text-white flex items-center justify-center text-3xl shadow-xl shadow-indigo-500/30 active:scale-90"
+            aria-label="Security"
+          >
+            <i class="fa-solid fa-shield-heart"></i>
+          </button>
+          <div class="text-center space-y-1">
+            <h3 id="pinLockTitle" class="text-lg font-black text-slate-900 dark:text-slate-100 tracking-tight">
+              Unlock Bank Mobile
+            </h3>
+            <p id="pinLockSubtitle" class="text-xs text-slate-400">
+              Enter your 4-digit PIN
+            </p>
           </div>
-          <h3 id="pinLockTitle" class="text-base font-bold text-slate-900 dark:text-slate-100">
-            Unlock Bank Mobile
-          </h3>
-          <p id="pinLockSubtitle" class="text-xs text-slate-400">
-            Enter your 4-digit PIN to open the app
-          </p>
+          <div class="flex justify-center items-center gap-3.5 py-2">
+            <span id="pinDot0" class="w-4 h-4 rounded-full border-2 border-indigo-200 dark:border-slate-600 bg-white dark:bg-slate-800"></span>
+            <span id="pinDot1" class="w-4 h-4 rounded-full border-2 border-indigo-200 dark:border-slate-600 bg-white dark:bg-slate-800"></span>
+            <span id="pinDot2" class="w-4 h-4 rounded-full border-2 border-indigo-200 dark:border-slate-600 bg-white dark:bg-slate-800"></span>
+            <span id="pinDot3" class="w-4 h-4 rounded-full border-2 border-indigo-200 dark:border-slate-600 bg-white dark:bg-slate-800"></span>
+          </div>
         </div>
 
-        <!-- PIN Dots -->
-        <div class="flex justify-center items-center gap-3 py-1">
-          <span id="pinDot0" class="w-3.5 h-3.5 rounded-full border-2 border-slate-300 dark:border-slate-700 transition-all"></span>
-          <span id="pinDot1" class="w-3.5 h-3.5 rounded-full border-2 border-slate-300 dark:border-slate-700 transition-all"></span>
-          <span id="pinDot2" class="w-3.5 h-3.5 rounded-full border-2 border-slate-300 dark:border-slate-700 transition-all"></span>
-          <span id="pinDot3" class="w-3.5 h-3.5 rounded-full border-2 border-slate-300 dark:border-slate-700 transition-all"></span>
+        <div class="grid grid-cols-3 gap-x-5 gap-y-4 font-num pb-4 place-items-center">
+          <button type="button" onclick="pressPinNum('1')" class="pin-key"><span class="text-2xl font-bold leading-none">1</span></button>
+          <button type="button" onclick="pressPinNum('2')" class="pin-key"><span class="text-2xl font-bold leading-none">2</span><span class="pin-letters">ABC</span></button>
+          <button type="button" onclick="pressPinNum('3')" class="pin-key"><span class="text-2xl font-bold leading-none">3</span><span class="pin-letters">DEF</span></button>
+          <button type="button" onclick="pressPinNum('4')" class="pin-key"><span class="text-2xl font-bold leading-none">4</span><span class="pin-letters">GHI</span></button>
+          <button type="button" onclick="pressPinNum('5')" class="pin-key"><span class="text-2xl font-bold leading-none">5</span><span class="pin-letters">JKL</span></button>
+          <button type="button" onclick="pressPinNum('6')" class="pin-key"><span class="text-2xl font-bold leading-none">6</span><span class="pin-letters">MNO</span></button>
+          <button type="button" onclick="pressPinNum('7')" class="pin-key"><span class="text-2xl font-bold leading-none">7</span><span class="pin-letters">PQRS</span></button>
+          <button type="button" onclick="pressPinNum('8')" class="pin-key"><span class="text-2xl font-bold leading-none">8</span><span class="pin-letters">TUV</span></button>
+          <button type="button" onclick="pressPinNum('9')" class="pin-key"><span class="text-2xl font-bold leading-none">9</span><span class="pin-letters">WXYZ</span></button>
+          <button type="button" onclick="triggerBiometricScan()" class="pin-key text-indigo-500"><i class="fa-solid fa-fingerprint text-2xl"></i></button>
+          <button type="button" onclick="pressPinNum('0')" class="pin-key"><span class="text-2xl font-bold leading-none">0</span></button>
+          <button type="button" onclick="pressPinDelete()" class="pin-key text-slate-400"><i class="fa-solid fa-delete-left text-xl"></i></button>
         </div>
+      </div>
+    </div>
 
-        <!-- Keypad Grid -->
-        <div class="grid grid-cols-3 gap-2 pt-1 font-num">
-          <button onclick="pressPinNum('1')" class="min-h-[48px] py-3 bg-slate-100 dark:bg-slate-800 rounded-2xl font-bold text-lg hover:bg-indigo-500 hover:text-white active:scale-95">1</button>
-          <button onclick="pressPinNum('2')" class="min-h-[48px] py-3 bg-slate-100 dark:bg-slate-800 rounded-2xl font-bold text-lg hover:bg-indigo-500 hover:text-white active:scale-95">2</button>
-          <button onclick="pressPinNum('3')" class="min-h-[48px] py-3 bg-slate-100 dark:bg-slate-800 rounded-2xl font-bold text-lg hover:bg-indigo-500 hover:text-white active:scale-95">3</button>
-          <button onclick="pressPinNum('4')" class="min-h-[48px] py-3 bg-slate-100 dark:bg-slate-800 rounded-2xl font-bold text-lg hover:bg-indigo-500 hover:text-white active:scale-95">4</button>
-          <button onclick="pressPinNum('5')" class="min-h-[48px] py-3 bg-slate-100 dark:bg-slate-800 rounded-2xl font-bold text-lg hover:bg-indigo-500 hover:text-white active:scale-95">5</button>
-          <button onclick="pressPinNum('6')" class="min-h-[48px] py-3 bg-slate-100 dark:bg-slate-800 rounded-2xl font-bold text-lg hover:bg-indigo-500 hover:text-white active:scale-95">6</button>
-          <button onclick="pressPinNum('7')" class="min-h-[48px] py-3 bg-slate-100 dark:bg-slate-800 rounded-2xl font-bold text-lg hover:bg-indigo-500 hover:text-white active:scale-95">7</button>
-          <button onclick="pressPinNum('8')" class="min-h-[48px] py-3 bg-slate-100 dark:bg-slate-800 rounded-2xl font-bold text-lg hover:bg-indigo-500 hover:text-white active:scale-95">8</button>
-          <button onclick="pressPinNum('9')" class="min-h-[48px] py-3 bg-slate-100 dark:bg-slate-800 rounded-2xl font-bold text-lg hover:bg-indigo-500 hover:text-white active:scale-95">9</button>
-          <button onclick="triggerBiometricScan()" class="min-h-[48px] py-3 bg-slate-100 dark:bg-slate-800 rounded-2xl text-indigo-500 font-bold text-xs hover:bg-indigo-500 hover:text-white active:scale-95" title="Telegram Biometrics"><i class="fa-solid fa-fingerprint text-lg"></i></button>
-          <button onclick="pressPinNum('0')" class="min-h-[48px] py-3 bg-slate-100 dark:bg-slate-800 rounded-2xl font-bold text-lg hover:bg-indigo-500 hover:text-white active:scale-95">0</button>
-          <button onclick="pressPinDelete()" class="min-h-[48px] py-3 bg-slate-100 dark:bg-slate-800 rounded-2xl text-slate-500 font-bold text-sm hover:bg-rose-500 hover:text-white active:scale-95"><i class="fa-solid fa-delete-left"></i></button>
+    <!-- ADD CHAT / FOLDER MODAL -->
+    <div id="addChatModal" class="fixed inset-0 z-[60] hidden bg-slate-950/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div class="bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-3xl max-w-sm w-full p-5 space-y-3 animate-modal-pop">
+        <div class="flex items-center justify-between">
+          <h3 class="text-sm font-bold">New conversation</h3>
+          <button onclick="closeAddChatModal()" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button>
         </div>
-
-        <div class="flex justify-between items-center pt-2">
-          <button id="pinLockCancelBtn" onclick="closeSecurityLockModal()" class="text-xs font-semibold text-slate-400 hover:text-slate-600">Cancel</button>
-          <button onclick="handleSecretResetTap()" class="text-[10px] text-indigo-400 hover:underline">Forgot PIN? Tap Logo 3x</button>
+        <div class="grid grid-cols-3 gap-2 text-[11px] font-bold">
+          <button type="button" id="addKindPersonal" onclick="setAddChatKind('personal')" class="py-2 rounded-xl bg-indigo-600 text-white">Personal</button>
+          <button type="button" id="addKindGroup" onclick="setAddChatKind('group')" class="py-2 rounded-xl bg-slate-100 dark:bg-slate-800">Group</button>
+          <button type="button" id="addKindFolder" onclick="setAddChatKind('folder')" class="py-2 rounded-xl bg-slate-100 dark:bg-slate-800">Folder</button>
         </div>
+        <input id="addChatName" type="text" placeholder="Name" class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2.5 text-sm" />
+        <input id="addChatUsername" type="text" placeholder="@telegram (optional)" class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2.5 text-sm" />
+        <button onclick="confirmAddChat()" class="w-full bg-indigo-600 text-white font-bold py-2.5 rounded-xl text-sm">Create</button>
       </div>
     </div>
 
