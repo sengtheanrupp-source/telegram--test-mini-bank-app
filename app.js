@@ -191,9 +191,47 @@ let cameraStream = null;
 let cameraFacingMode = "environment"; // default rear camera on phones
 let isCameraScanning = false;
 
+function isIOSDevice() {
+  try {
+    const ua = (navigator.userAgent || navigator.vendor || "").toLowerCase();
+    const platform = (tgApp && tgApp.platform) ? String(tgApp.platform).toLowerCase() : "";
+    return (
+      platform === "ios" ||
+      /iphone|ipad|ipod/.test(ua) ||
+      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
+    );
+  } catch (e) {
+    return false;
+  }
+}
+
 function triggerInstantQRScan() {
-  if (tgApp && tgApp.showScanQrPopup) {
+  // On iOS the native Telegram QR popup often shows a gray/blank viewfinder
+  // when Camera permission is missing or restricted. Prefer our live HTML
+  // camera (clearer errors + auto-start) on iOS. Keep native scanner on
+  // Android / desktop where it is more reliable.
+  const preferNative = !isIOSDevice();
+
+  if (preferNative && tgApp && tgApp.showScanQrPopup) {
     try {
+      // If user closes native scanner without a result, fall back to HTML camera
+      if (tgApp.onEvent) {
+        const onClosed = function () {
+          try {
+            if (tgApp.offEvent) tgApp.offEvent("scanQrPopupClosed", onClosed);
+          } catch (e) {}
+          setTimeout(function () {
+            if (!isCameraScanning) {
+              log("Native QR popup closed without scan → opening live camera");
+              navigateToView("cameraScanView");
+            }
+          }, 250);
+        };
+        try {
+          tgApp.onEvent("scanQrPopupClosed", onClosed);
+        } catch (e) {}
+      }
+
       tgApp.showScanQrPopup(
         { text: "Point camera at KHQR code to scan" },
         function (qrText) {
@@ -213,6 +251,8 @@ function triggerInstantQRScan() {
       console.warn("Telegram native scan fallback to HTML view:", e);
     }
   }
+
+  // iOS default path + any native failure → live HTML camera (auto-starts)
   navigateToView("cameraScanView");
 }
 
