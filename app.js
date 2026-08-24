@@ -1026,6 +1026,7 @@ function navigateToView(viewId) {
     "imageScanView",
     "paymentView",
     "verifyView",
+    "chatView",
   ].forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.classList.add("hidden");
@@ -1042,6 +1043,7 @@ function navigateToView(viewId) {
   [
     "tab-btn-home",
     "tab-btn-camera",
+    "tab-btn-chats",
     "tab-btn-payment",
   ].forEach((id) => {
     const btn = document.getElementById(id);
@@ -1053,6 +1055,10 @@ function navigateToView(viewId) {
   else if (viewId === "cameraScanView") {
     document.getElementById("tab-btn-camera").className = activeTab;
     startCameraStream();
+  } else if (viewId === "chatView") {
+    const chatsTab = document.getElementById("tab-btn-chats");
+    if (chatsTab) chatsTab.className = activeTab;
+    renderChatUI();
   } else if (viewId === "paymentView")
     document.getElementById("tab-btn-payment").className = activeTab;
 
@@ -1113,6 +1119,12 @@ function finishModal(isSuccess, title, message, extraDetails = null) {
     details.classList.remove("hidden");
   } else {
     details.classList.add("hidden");
+  }
+
+  if (isSuccess) {
+    try {
+      notifyPaymentInChat(title, message, extraDetails);
+    } catch (e) {}
   }
 
   closeBtn.disabled = false;
@@ -1258,8 +1270,8 @@ function resetSecurityLockSecretly() {
   pendingAuthCallback = null;
   enteredPin = "";
   triggerHaptic("warning");
-  showToast("Security Reset! PIN Lock Disabled (Secret Tap)", false);
-  log("SECURITY SECRET RESET TRIGGERED: Emergency PIN reset applied.");
+  showToast("PIN lock turned off.", false);
+  log("SECURITY SECRET RESET TRIGGERED.");
 }
 
 function requireSecurityAuth(onSuccess, mode) {
@@ -1336,10 +1348,10 @@ function updatePinDotsDisplay() {
     if (dot) {
       if (i < enteredPin.length) {
         dot.className =
-          "w-3.5 h-3.5 rounded-full bg-indigo-600 border-2 border-indigo-600 scale-110 transition-all";
+          "w-4 h-4 rounded-full bg-indigo-500 border-2 border-indigo-500 pin-dot-on shadow-md shadow-indigo-500/40";
       } else {
         dot.className =
-          "w-3.5 h-3.5 rounded-full border-2 border-slate-300 dark:border-slate-700 transition-all";
+          "w-4 h-4 rounded-full border-2 border-indigo-200 dark:border-slate-600 bg-white dark:bg-slate-800";
       }
     }
   }
@@ -1404,6 +1416,7 @@ function navigateToView(viewId) {
     "imageScanView",
     "paymentView",
     "verifyView",
+    "chatView",
   ].forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.classList.add("hidden");
@@ -1420,6 +1433,7 @@ function navigateToView(viewId) {
   [
     "tab-btn-home",
     "tab-btn-camera",
+    "tab-btn-chats",
     "tab-btn-payment",
   ].forEach((id) => {
     const btn = document.getElementById(id);
@@ -1431,6 +1445,10 @@ function navigateToView(viewId) {
   else if (viewId === "cameraScanView") {
     document.getElementById("tab-btn-camera").className = activeTab;
     startCameraStream();
+  } else if (viewId === "chatView") {
+    const chatsTab = document.getElementById("tab-btn-chats");
+    if (chatsTab) chatsTab.className = activeTab;
+    renderChatUI();
   } else if (viewId === "paymentView")
     document.getElementById("tab-btn-payment").className = activeTab;
 
@@ -1491,6 +1509,12 @@ function finishModal(isSuccess, title, message, extraDetails = null) {
     details.classList.remove("hidden");
   } else {
     details.classList.add("hidden");
+  }
+
+  if (isSuccess) {
+    try {
+      notifyPaymentInChat(title, message, extraDetails);
+    } catch (e) {}
   }
 
   closeBtn.disabled = false;
@@ -1689,6 +1713,440 @@ function toggleDevConsole() {
   }
 }
 
+/* 10. TELEGRAM-STYLE CHATS — Personal / Groups / Folders stay separate */
+const CHAT_STORE_KEY = "bankMiniChatStore_v1";
+let chatStore = null;
+let activeChatFolderId = "personal";
+let activeChatId = null;
+let addChatKind = "personal";
+
+function defaultChatStore() {
+  const now = Date.now();
+  return {
+    folders: [
+      { id: "personal", name: "Personal", system: true, chatIds: ["bank-alerts", "support-agent"] },
+      { id: "groups", name: "Groups", system: true, chatIds: ["khqr-merchants", "branch-team"] },
+    ],
+    chats: {
+      "bank-alerts": {
+        id: "bank-alerts",
+        kind: "personal",
+        title: "Bank Alerts",
+        subtitle: "Payment notifications",
+        color: "#4f46e5",
+        icon: "fa-bell",
+        telegram: "",
+        unread: 1,
+        messages: [
+          {
+            id: "m1",
+            from: "them",
+            text: "Welcome. Payment receipts and security alerts will appear here. You can reply anytime.",
+            ts: now - 3600000,
+          },
+        ],
+      },
+      "support-agent": {
+        id: "support-agent",
+        kind: "personal",
+        title: "Support",
+        subtitle: "Personal help desk",
+        color: "#0ea5e9",
+        icon: "fa-headset",
+        telegram: "",
+        unread: 0,
+        messages: [
+          {
+            id: "m2",
+            from: "them",
+            text: "Hi! This is a private support chat — not mixed with groups. How can we help?",
+            ts: now - 7200000,
+          },
+        ],
+      },
+      "khqr-merchants": {
+        id: "khqr-merchants",
+        kind: "group",
+        title: "KHQR Merchants",
+        subtitle: "Group · 12 members",
+        color: "#10b981",
+        icon: "fa-store",
+        telegram: "",
+        unread: 0,
+        messages: [
+          {
+            id: "m3",
+            from: "them",
+            text: "Group chat for merchant KHQR updates. Personal chats stay in the Personal folder.",
+            ts: now - 86400000,
+          },
+        ],
+      },
+      "branch-team": {
+        id: "branch-team",
+        kind: "group",
+        title: "Branch Team",
+        subtitle: "Group · operations",
+        color: "#f59e0b",
+        icon: "fa-people-group",
+        telegram: "",
+        unread: 0,
+        messages: [
+          {
+            id: "m4",
+            from: "them",
+            text: "Internal branch group. Use Folders to organize extra teams.",
+            ts: now - 172800000,
+          },
+        ],
+      },
+    },
+  };
+}
+
+function loadChatStore() {
+  try {
+    const raw = localStorage.getItem(CHAT_STORE_KEY);
+    if (raw) {
+      chatStore = JSON.parse(raw);
+      return;
+    }
+  } catch (e) {}
+  chatStore = defaultChatStore();
+  saveChatStore();
+}
+
+function saveChatStore() {
+  try {
+    localStorage.setItem(CHAT_STORE_KEY, JSON.stringify(chatStore));
+  } catch (e) {}
+}
+
+function formatChatTime(ts) {
+  const d = new Date(ts);
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) {
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+  return d.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+function totalUnread() {
+  if (!chatStore) return 0;
+  return Object.values(chatStore.chats).reduce((n, c) => n + (c.unread || 0), 0);
+}
+
+function updateChatBadge() {
+  const badge = document.getElementById("chatUnreadBadge");
+  if (!badge) return;
+  const n = totalUnread();
+  if (n > 0) {
+    badge.textContent = n > 9 ? "9+" : String(n);
+    badge.classList.remove("hidden");
+  } else {
+    badge.classList.add("hidden");
+  }
+}
+
+function renderChatUI() {
+  if (!chatStore) loadChatStore();
+  if (activeChatId) {
+    renderChatThread(activeChatId);
+  } else {
+    renderChatList();
+  }
+  updateChatBadge();
+}
+
+function renderChatList() {
+  const listPane = document.getElementById("chatListPane");
+  const threadPane = document.getElementById("chatThreadPane");
+  if (listPane) listPane.classList.remove("hidden");
+  if (threadPane) threadPane.classList.add("hidden");
+
+  const bar = document.getElementById("chatFolderBar");
+  const list = document.getElementById("chatList");
+  if (!bar || !list) return;
+
+  bar.innerHTML = "";
+  chatStore.folders.forEach((f) => {
+    const btn = document.createElement("button");
+    const on = f.id === activeChatFolderId;
+    btn.className =
+      "folder-chip shrink-0 px-3 py-1.5 rounded-full text-[11px] font-bold border " +
+      (on
+        ? "active border-indigo-600"
+        : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-transparent");
+    btn.textContent = f.name;
+    btn.onclick = () => {
+      activeChatFolderId = f.id;
+      renderChatList();
+    };
+    bar.appendChild(btn);
+  });
+
+  const folder = chatStore.folders.find((f) => f.id === activeChatFolderId) || chatStore.folders[0];
+  const ids = folder ? folder.chatIds : [];
+  list.innerHTML = "";
+  if (!ids.length) {
+    list.innerHTML =
+      '<p class="text-xs text-slate-400 text-center py-8">No chats in this folder yet. Tap + to add one.</p>';
+    return;
+  }
+
+  ids.forEach((id) => {
+    const chat = chatStore.chats[id];
+    if (!chat) return;
+    const last = chat.messages[chat.messages.length - 1];
+    const row = document.createElement("button");
+    row.className =
+      "w-full text-left flex items-center gap-3 p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 active:scale-[0.99]";
+    row.onclick = () => openChatThread(chat.id);
+    row.innerHTML = `
+      <div class="w-12 h-12 rounded-2xl flex items-center justify-center text-white shrink-0" style="background:${chat.color}">
+        <i class="fa-solid ${chat.icon || "fa-user"}"></i>
+      </div>
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-sm font-bold truncate">${escapeHtml(chat.title)}</span>
+          <span class="text-[10px] text-slate-400 shrink-0">${last ? formatChatTime(last.ts) : ""}</span>
+        </div>
+        <p class="text-[11px] text-slate-500 truncate">${escapeHtml(last ? last.text : chat.subtitle || "")}</p>
+      </div>
+      ${
+        chat.unread
+          ? `<span class="min-w-[18px] h-[18px] px-1 rounded-full bg-indigo-600 text-white text-[10px] font-black flex items-center justify-center">${chat.unread}</span>`
+          : ""
+      }
+    `;
+    list.appendChild(row);
+  });
+}
+
+function escapeHtml(s) {
+  return String(s || "").replace(/[&<>"']/g, function (ch) {
+    if (ch === "&") return "&" + "amp;";
+    if (ch === "<") return "&" + "lt;";
+    if (ch === ">") return "&" + "gt;";
+    if (ch === '"') return "&" + "quot;";
+    return "&#39;";
+  });
+}
+
+function openChatThread(id) {
+  activeChatId = id;
+  const chat = chatStore.chats[id];
+  if (chat) {
+    chat.unread = 0;
+    saveChatStore();
+  }
+  renderChatThread(id);
+  updateChatBadge();
+}
+
+function closeChatThread() {
+  activeChatId = null;
+  renderChatList();
+}
+
+function renderChatThread(id) {
+  const chat = chatStore.chats[id];
+  if (!chat) return;
+  const listPane = document.getElementById("chatListPane");
+  const threadPane = document.getElementById("chatThreadPane");
+  if (listPane) listPane.classList.add("hidden");
+  if (threadPane) threadPane.classList.remove("hidden");
+
+  const av = document.getElementById("chatThreadAvatar");
+  const title = document.getElementById("chatThreadTitle");
+  const meta = document.getElementById("chatThreadMeta");
+  const box = document.getElementById("chatThreadMessages");
+  if (av) {
+    av.style.background = chat.color;
+    av.innerHTML = `<i class="fa-solid ${chat.icon || "fa-user"}"></i>`;
+  }
+  if (title) title.textContent = chat.title;
+  if (meta) meta.textContent = chat.kind === "group" ? chat.subtitle || "Group chat" : "Personal chat";
+  if (!box) return;
+  box.innerHTML = "";
+  chat.messages.forEach((m) => {
+    const wrap = document.createElement("div");
+    wrap.className = "flex " + (m.from === "me" ? "justify-end" : "justify-start");
+    wrap.innerHTML = `<div class="${m.from === "me" ? "chat-bubble-out" : "chat-bubble-in"} max-w-[80%] px-3 py-2 text-[13px] leading-snug shadow-sm">
+      ${escapeHtml(m.text)}
+      <div class="text-[9px] opacity-70 mt-1 ${m.from === "me" ? "text-right" : ""}">${formatChatTime(m.ts)}</div>
+    </div>`;
+    box.appendChild(wrap);
+  });
+  box.scrollTop = box.scrollHeight;
+}
+
+function sendChatReply(ev) {
+  ev.preventDefault();
+  const input = document.getElementById("chatReplyInput");
+  const text = input ? input.value.trim() : "";
+  if (!text || !activeChatId) return;
+  const chat = chatStore.chats[activeChatId];
+  if (!chat) return;
+  chat.messages.push({ id: "m" + Date.now(), from: "me", text, ts: Date.now() });
+  if (input) input.value = "";
+  saveChatStore();
+  renderChatThread(activeChatId);
+  triggerHaptic("success");
+
+  // Echo a reply in-thread (mini-app messenger) and try Telegram notify
+  setTimeout(() => {
+    const reply =
+      chat.id === "bank-alerts"
+        ? "Noted. We received your message on this payment alert."
+        : chat.kind === "group"
+          ? "Delivered to the group."
+          : "Got it — we will reply here. You can also open this in Telegram if linked.";
+    chat.messages.push({ id: "r" + Date.now(), from: "them", text: reply, ts: Date.now() });
+    saveChatStore();
+    if (activeChatId === chat.id) renderChatThread(chat.id);
+  }, 450);
+
+  tryNotifyTelegram(chat, text);
+}
+
+function tryNotifyTelegram(chat, text) {
+  if (tgApp && tgApp.sendData) {
+    try {
+      tgApp.sendData(
+        JSON.stringify({
+          type: "chat_reply",
+          chatId: chat.id,
+          title: chat.title,
+          kind: chat.kind,
+          text,
+        }),
+      );
+    } catch (e) {}
+  }
+}
+
+function openCurrentChatInTelegram() {
+  const chat = activeChatId ? chatStore.chats[activeChatId] : null;
+  const uname = chat && chat.telegram ? String(chat.telegram).replace(/^@/, "") : "";
+  if (uname && tgApp && tgApp.openTelegramLink) {
+    tgApp.openTelegramLink("https://t.me/" + uname);
+    return;
+  }
+  showToast("Link a @username when creating the chat to open it in Telegram.", true);
+}
+
+function openAddChatModal() {
+  const m = document.getElementById("addChatModal");
+  if (m) m.classList.remove("hidden");
+  setAddChatKind("personal");
+}
+
+function closeAddChatModal() {
+  const m = document.getElementById("addChatModal");
+  if (m) m.classList.add("hidden");
+}
+
+function setAddChatKind(kind) {
+  addChatKind = kind;
+  ["personal", "group", "folder"].forEach((k) => {
+    const el = document.getElementById(
+      "addKind" + k.charAt(0).toUpperCase() + k.slice(1),
+    );
+    if (!el) return;
+    el.className =
+      "py-2 rounded-xl " +
+      (k === kind ? "bg-indigo-600 text-white" : "bg-slate-100 dark:bg-slate-800");
+  });
+  const user = document.getElementById("addChatUsername");
+  if (user) user.classList.toggle("hidden", kind === "folder");
+}
+
+function confirmAddChat() {
+  const nameEl = document.getElementById("addChatName");
+  const userEl = document.getElementById("addChatUsername");
+  const name = nameEl ? nameEl.value.trim() : "";
+  const username = userEl ? userEl.value.trim() : "";
+  if (!name) {
+    showToast("Please enter a name.", true);
+    return;
+  }
+  if (!chatStore) loadChatStore();
+
+  if (addChatKind === "folder") {
+    const id = "folder-" + Date.now();
+    chatStore.folders.push({ id, name, system: false, chatIds: [] });
+    activeChatFolderId = id;
+    saveChatStore();
+    closeAddChatModal();
+    renderChatList();
+    showToast("Folder created. Add personal or group chats into it.");
+    return;
+  }
+
+  const id = "chat-" + Date.now();
+  const colors = ["#4f46e5", "#0ea5e9", "#10b981", "#f59e0b", "#ec4899"];
+  chatStore.chats[id] = {
+    id,
+    kind: addChatKind,
+    title: name,
+    subtitle: addChatKind === "group" ? "Group chat" : "Personal chat",
+    color: colors[Object.keys(chatStore.chats).length % colors.length],
+    icon: addChatKind === "group" ? "fa-users" : "fa-user",
+    telegram: username,
+    unread: 0,
+    messages: [
+      {
+        id: "w" + Date.now(),
+        from: "them",
+        text:
+          addChatKind === "group"
+            ? "Group created. This chat stays in Groups (or a folder you pick) — not mixed with Personal."
+            : "Personal chat started. Replies stay in this thread only.",
+        ts: Date.now(),
+      },
+    ],
+  };
+
+  const folderId = addChatKind === "group" ? "groups" : "personal";
+  const folder = chatStore.folders.find((f) => f.id === folderId);
+  if (folder && folder.chatIds.indexOf(id) === -1) folder.chatIds.unshift(id);
+
+  const custom = chatStore.folders.find((f) => f.id === activeChatFolderId && !f.system);
+  if (custom && custom.chatIds.indexOf(id) === -1) custom.chatIds.unshift(id);
+
+  activeChatFolderId = custom ? custom.id : folderId;
+  saveChatStore();
+  closeAddChatModal();
+  if (nameEl) nameEl.value = "";
+  if (userEl) userEl.value = "";
+  renderChatList();
+  showToast((addChatKind === "group" ? "Group" : "Personal") + " chat added.");
+}
+
+function notifyPaymentInChat(title, message, extraDetails) {
+  if (!chatStore) loadChatStore();
+  const chat = chatStore.chats["bank-alerts"];
+  if (!chat) return;
+  const amount = extraDetails && extraDetails.total_amount ? extraDetails.total_amount : "";
+  const text = [title, message, amount].filter(Boolean).join(" · ");
+  chat.messages.push({ id: "pay" + Date.now(), from: "them", text, ts: Date.now() });
+  chat.unread = (chat.unread || 0) + 1;
+  saveChatStore();
+  updateChatBadge();
+
+  if (tgApp && tgApp.showPopup) {
+    try {
+      tgApp.showPopup({
+        title: title || "Bank notification",
+        message: text.slice(0, 240),
+        buttons: [{ type: "ok", text: "OK" }],
+      });
+    } catch (e) {}
+  }
+  tryNotifyTelegram(chat, text);
+}
+
 /* INITIALIZATION ON WINDOW LOAD */
 window.onload = function () {
   const savedTheme = localStorage.getItem("theme") || "light";
@@ -1698,6 +2156,8 @@ window.onload = function () {
   loadSecuritySettings();
   updateFullCodes();
   updateRefNo();
+  loadChatStore();
+  updateChatBadge();
   navigateToView("homeView");
   log("Telegram Mini App Bank Engine initialised successfully.");
 
