@@ -181,13 +181,40 @@ let workflowState = {
 };
 
 let rawLogText = "";
+let payloadLogs = [];
 let batchItems = [];
 let isLogFullScreen = false;
+let lastFrameTime = 0;
 
 /* 4. LIVE CAMERA KHQR SCANNER ENGINE */
 let cameraStream = null;
 let cameraFacingMode = "environment"; // default rear camera on phones
 let isCameraScanning = false;
+
+function triggerInstantQRScan() {
+  if (tgApp && tgApp.showScanQrPopup) {
+    try {
+      tgApp.showScanQrPopup(
+        { text: "Point camera at KHQR code to scan" },
+        function (qrText) {
+          if (qrText && qrText.trim()) {
+            log("Telegram native QR scanner scanned code:", qrText);
+            triggerHaptic("success");
+            try {
+              tgApp.closeScanQrPopup();
+            } catch (e) {}
+            processDecodedQR(qrText);
+            return true;
+          }
+        },
+      );
+      return;
+    } catch (e) {
+      console.warn("Telegram native scan fallback to HTML view:", e);
+    }
+  }
+  navigateToView("cameraScanView");
+}
 
 async function startCameraStream() {
   const video = document.getElementById("cameraVideo");
@@ -196,33 +223,59 @@ async function startCameraStream() {
 
   stopCameraStream();
 
-  try {
-    log(`Starting camera stream (Facing mode: ${cameraFacingMode})...`);
-    statusText.textContent = "Accessing camera...";
-
-    const constraints = {
+  // Multi-tier iOS & WebKit constraints ladder
+  const constraintOptions = [
+    {
       video: {
         facingMode: { ideal: cameraFacingMode },
         width: { ideal: 1280 },
         height: { ideal: 720 },
       },
       audio: false,
-    };
+    },
+    { video: { facingMode: cameraFacingMode }, audio: false },
+    { video: { facingMode: "environment" }, audio: false },
+    { video: true, audio: false },
+  ];
 
-    cameraStream = await navigator.mediaDevices.getUserMedia(constraints);
-    video.srcObject = cameraStream;
-    await video.play();
+  log(`Starting camera stream (Facing mode: ${cameraFacingMode})...`);
+  statusText.textContent = "Accessing camera...";
 
-    isCameraScanning = true;
-    statusText.textContent = "Point camera at KHQR code...";
-    btnToggle.innerHTML = '<i class="fa-solid fa-stop"></i> Stop Camera';
-    btnToggle.className =
-      "bg-rose-600 hover:bg-rose-500 text-white font-bold py-3 rounded-2xl text-xs shadow-lg flex items-center justify-center gap-2";
+  let streamObtained = null;
+  for (const constraints of constraintOptions) {
+    try {
+      streamObtained = await navigator.mediaDevices.getUserMedia(constraints);
+      if (streamObtained) break;
+    } catch (err) {
+      console.warn("Camera constraint attempt failed:", err);
+    }
+  }
 
-    requestAnimationFrame(tickCameraFrame);
-  } catch (err) {
-    log("Camera stream error: " + err.message);
+  if (streamObtained) {
+    try {
+      cameraStream = streamObtained;
+      video.srcObject = cameraStream;
+      video.setAttribute("playsinline", "true");
+      video.setAttribute("webkit-playsinline", "true");
+      video.muted = true;
+      await video.play();
+
+      isCameraScanning = true;
+      statusText.textContent = "Point camera at KHQR code...";
+      btnToggle.innerHTML = '<i class="fa-solid fa-stop"></i> Stop Camera';
+      btnToggle.className =
+        "bg-rose-600 hover:bg-rose-500 text-white font-bold py-3 rounded-2xl text-xs shadow-lg flex items-center justify-center gap-2 active:scale-95 transition-all";
+
+      lastFrameTime = 0;
+      requestAnimationFrame(tickCameraFrame);
+    } catch (playErr) {
+      log("Video play error: " + playErr.message);
+      statusText.textContent = "Camera feed play failed.";
+    }
+  } else {
+    log("Camera stream access denied or unavailable on device.");
     statusText.textContent = "Camera access denied or unavailable";
+    showToast("Camera access denied. Please check permissions.", true);
   }
 }
 
@@ -236,7 +289,7 @@ function stopCameraStream() {
   if (btnToggle) {
     btnToggle.innerHTML = '<i class="fa-solid fa-video"></i> Start Camera';
     btnToggle.className =
-      "bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-2xl text-xs shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-2";
+      "bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-2xl text-xs shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-2 active:scale-95 transition-all";
   }
 }
 
@@ -246,14 +299,21 @@ function switchCameraFacing() {
   startCameraStream();
 }
 
-function tickCameraFrame() {
+function tickCameraFrame(timestamp) {
   if (!isCameraScanning) return;
+
+  // Throttle frame processing (~15fps / every 65ms) to optimize CPU speed & prevent iOS overheating
+  if (timestamp - lastFrameTime < 65) {
+    requestAnimationFrame(tickCameraFrame);
+    return;
+  }
+  lastFrameTime = timestamp;
 
   const video = document.getElementById("cameraVideo");
   const canvas = document.getElementById("cameraCanvas");
   const statusText = document.getElementById("cameraScanStatus");
 
-  if (video.readyState === video.HAVE_ENOUGH_DATA) {
+  if (video && video.readyState === video.HAVE_ENOUGH_DATA) {
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
@@ -953,6 +1013,340 @@ function closeModal() {
   setTimeout(() => modal.classList.add("hidden"), 200);
 }
 
+/* 8. SECURITY LOCK & SECRET TAP RESET ENGINE */
+let securitySettings = {
+  enabled: false,
+  pin: "1234",
+  useBiometrics: true,
+};
+let pendingAuthCallback = null;
+let enteredPin = "";
+let secretResetTapCount = 0;
+let secretResetTimer = null;
+
+function showToast(message, isError = false) {
+  const toast = document.getElementById("toastAlert");
+  const msgEl = document.getElementById("toastMsg");
+  const iconEl = document.getElementById("toastIcon");
+
+  if (!toast) return;
+  msgEl.textContent = message;
+  if (isError) {
+    iconEl.className = "fa-solid fa-triangle-exclamation text-rose-400 text-base";
+  } else {
+    iconEl.className = "fa-solid fa-circle-check text-emerald-400 text-base";
+  }
+
+  toast.classList.remove("opacity-0", "pointer-events-none");
+  toast.classList.add("opacity-100");
+
+  setTimeout(() => {
+    toast.classList.remove("opacity-100");
+    toast.classList.add("opacity-0", "pointer-events-none");
+  }, 2800);
+}
+
+function loadSecuritySettings() {
+  try {
+    const raw = localStorage.getItem("bankSecuritySettings");
+    if (!raw) return;
+    const s = JSON.parse(raw);
+    securitySettings = { ...securitySettings, ...s };
+
+    const lockToggle = document.getElementById("securityLockEnabled");
+    const pinInput = document.getElementById("securityPinValue");
+    const bioToggle = document.getElementById("biometricsEnabled");
+    const configBox = document.getElementById("pinConfigBox");
+
+    if (lockToggle) lockToggle.checked = !!securitySettings.enabled;
+    if (pinInput) pinInput.value = securitySettings.pin || "1234";
+    if (bioToggle) bioToggle.checked = !!securitySettings.useBiometrics;
+    if (configBox) configBox.classList.toggle("hidden", !securitySettings.enabled);
+  } catch (e) {}
+}
+
+function saveSecuritySettings() {
+  const lockToggle = document.getElementById("securityLockEnabled");
+  const pinInput = document.getElementById("securityPinValue");
+  const bioToggle = document.getElementById("biometricsEnabled");
+
+  securitySettings.enabled = lockToggle ? lockToggle.checked : false;
+  securitySettings.pin = pinInput ? (pinInput.value.trim() || "1234") : "1234";
+  securitySettings.useBiometrics = bioToggle ? bioToggle.checked : true;
+
+  localStorage.setItem("bankSecuritySettings", JSON.stringify(securitySettings));
+  log("Security settings saved:", securitySettings);
+}
+
+function toggleSecurityLockSetting() {
+  const lockToggle = document.getElementById("securityLockEnabled");
+  const configBox = document.getElementById("pinConfigBox");
+  if (configBox && lockToggle) {
+    configBox.classList.toggle("hidden", !lockToggle.checked);
+  }
+}
+
+function handleSecretResetTap() {
+  secretResetTapCount++;
+  triggerHaptic("impact");
+
+  if (secretResetTimer) clearTimeout(secretResetTimer);
+
+  secretResetTimer = setTimeout(() => {
+    secretResetTapCount = 0;
+  }, 2200);
+
+  if (secretResetTapCount >= 3) {
+    secretResetTapCount = 0;
+    clearTimeout(secretResetTimer);
+    resetSecurityLockSecretly();
+  }
+}
+
+function resetSecurityLockSecretly() {
+  securitySettings.enabled = false;
+  securitySettings.pin = "1234";
+  securitySettings.useBiometrics = true;
+  localStorage.setItem("bankSecuritySettings", JSON.stringify(securitySettings));
+
+  const lockToggle = document.getElementById("securityLockEnabled");
+  const pinInput = document.getElementById("securityPinValue");
+  const configBox = document.getElementById("pinConfigBox");
+
+  if (lockToggle) lockToggle.checked = false;
+  if (pinInput) pinInput.value = "1234";
+  if (configBox) configBox.classList.add("hidden");
+
+  closeSecurityLockModal();
+  triggerHaptic("warning");
+  showToast("Security Reset! PIN Lock Disabled (Secret Tap)", false);
+  log("SECURITY SECRET RESET TRIGGERED: Emergency PIN reset applied.");
+}
+
+function requireSecurityAuth(onSuccess) {
+  if (!securitySettings.enabled) {
+    onSuccess();
+    return;
+  }
+
+  pendingAuthCallback = onSuccess;
+  enteredPin = "";
+  updatePinDotsDisplay();
+
+  const modal = document.getElementById("securityLockModal");
+  if (modal) modal.classList.remove("hidden");
+
+  // Attempt Telegram biometrics if enabled
+  if (securitySettings.useBiometrics && tgApp && tgApp.BiometricManager) {
+    try {
+      tgApp.BiometricManager.init(() => {
+        if (tgApp.BiometricManager.isBiometricAvailable) {
+          triggerBiometricScan();
+        }
+      });
+    } catch (e) {}
+  }
+}
+
+function closeSecurityLockModal() {
+  const modal = document.getElementById("securityLockModal");
+  if (modal) modal.classList.add("hidden");
+  pendingAuthCallback = null;
+  enteredPin = "";
+}
+
+function pressPinNum(num) {
+  if (enteredPin.length < 4) {
+    enteredPin += num;
+    triggerHaptic("impact");
+    updatePinDotsDisplay();
+  }
+
+  if (enteredPin.length === 4) {
+    setTimeout(verifyEnteredPin, 100);
+  }
+}
+
+function pressPinDelete() {
+  if (enteredPin.length > 0) {
+    enteredPin = enteredPin.slice(0, -1);
+    triggerHaptic("impact");
+    updatePinDotsDisplay();
+  }
+}
+
+function updatePinDotsDisplay() {
+  for (let i = 0; i < 4; i++) {
+    const dot = document.getElementById(`pinDot${i}`);
+    if (dot) {
+      if (i < enteredPin.length) {
+        dot.className =
+          "w-3.5 h-3.5 rounded-full bg-indigo-600 border-2 border-indigo-600 scale-110 transition-all";
+      } else {
+        dot.className =
+          "w-3.5 h-3.5 rounded-full border-2 border-slate-300 dark:border-slate-700 transition-all";
+      }
+    }
+  }
+}
+
+function verifyEnteredPin() {
+  if (enteredPin === securitySettings.pin) {
+    triggerHaptic("success");
+    closeSecurityLockModal();
+    if (pendingAuthCallback) {
+      const cb = pendingAuthCallback;
+      pendingAuthCallback = null;
+      cb();
+    }
+  } else {
+    triggerHaptic("error");
+    enteredPin = "";
+    updatePinDotsDisplay();
+    showToast("Incorrect PIN code. Try again or reset.", true);
+  }
+}
+
+function triggerBiometricScan() {
+  if (tgApp && tgApp.BiometricManager && tgApp.BiometricManager.isBiometricAvailable) {
+    try {
+      tgApp.BiometricManager.authenticate(
+        { reason: "Authorize payment transaction" },
+        (success) => {
+          if (success) {
+            triggerHaptic("success");
+            closeSecurityLockModal();
+            if (pendingAuthCallback) {
+              const cb = pendingAuthCallback;
+              pendingAuthCallback = null;
+              cb();
+            }
+          } else {
+            showToast("Biometric verification failed. Use PIN.", true);
+          }
+        },
+      );
+      return;
+    } catch (e) {}
+  }
+  showToast("Telegram Biometrics not available on this device. Enter PIN.", true);
+}
+
+/* 9. NAV & MODAL HELPERS */
+function navigateToView(viewId) {
+  if (viewId !== "cameraScanView") {
+    stopCameraStream();
+  }
+
+  [
+    "homeView",
+    "cameraScanView",
+    "imageScanView",
+    "paymentView",
+    "verifyView",
+  ].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.classList.add("hidden");
+  });
+
+  const target = document.getElementById(viewId);
+  if (target) target.classList.remove("hidden");
+
+  // Sync Bottom Tab states
+  const idleTab =
+    "flex flex-col items-center justify-center gap-1 py-2.5 text-slate-400";
+  const activeTab =
+    "flex flex-col items-center justify-center gap-1 py-2.5 text-indigo-600 dark:text-indigo-400 font-bold";
+  [
+    "tab-btn-home",
+    "tab-btn-camera",
+    "tab-btn-payment",
+  ].forEach((id) => {
+    const btn = document.getElementById(id);
+    if (btn) btn.className = idleTab;
+  });
+
+  if (viewId === "homeView")
+    document.getElementById("tab-btn-home").className = activeTab;
+  else if (viewId === "cameraScanView") {
+    document.getElementById("tab-btn-camera").className = activeTab;
+    startCameraStream();
+  } else if (viewId === "paymentView")
+    document.getElementById("tab-btn-payment").className = activeTab;
+
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function openLoadingModal(title) {
+  const modal = document.getElementById("bankModal");
+  const container = document.getElementById("modalContainer");
+  const iconContainer = document.getElementById("modalIconContainer");
+  const icon = document.getElementById("modalIcon");
+
+  document.getElementById("modalTitle").textContent = title;
+  document.getElementById("modalMessage").textContent = "Connecting to bank API...";
+  document.getElementById("modalReceiptDetails").classList.add("hidden");
+  document.getElementById("modalCloseBtn").disabled = true;
+
+  icon.className = "fa-solid fa-spinner animate-spin text-xl text-white";
+  iconContainer.className = "w-14 h-14 rounded-full flex items-center justify-center mx-auto text-xl shadow-lg bg-white/20 text-white border border-white/30";
+
+  modal.classList.remove("hidden");
+  setTimeout(() => {
+    container.classList.remove("scale-95", "opacity-0");
+    container.classList.add("scale-100", "opacity-100");
+  }, 10);
+}
+
+function finishModal(isSuccess, title, message, extraDetails = null) {
+  document.getElementById("modalTitle").textContent = title;
+  document.getElementById("modalMessage").textContent = message;
+  const closeBtn = document.getElementById("modalCloseBtn");
+  const details = document.getElementById("modalReceiptDetails");
+  const iconContainer = document.getElementById("modalIconContainer");
+  const icon = document.getElementById("modalIcon");
+
+  if (isSuccess) {
+    icon.className = "fa-solid fa-check text-2xl text-white";
+    iconContainer.className = "w-14 h-14 rounded-full flex items-center justify-center mx-auto text-xl shadow-xl bg-emerald-500 text-white border-2 border-emerald-300 ring-pulse-success";
+  } else {
+    icon.className = "fa-solid fa-xmark text-2xl text-white";
+    iconContainer.className = "w-14 h-14 rounded-full flex items-center justify-center mx-auto text-xl shadow-xl bg-rose-500 text-white border-2 border-rose-300";
+  }
+
+  if (extraDetails) {
+    const elCode = document.getElementById("mCustomerCode");
+    const elName = document.getElementById("mCustomerName");
+    const elTotal = document.getElementById("mTotalAmount");
+    const elFee = document.getElementById("mFeeAmount");
+    const elTo = document.getElementById("mPaidTo");
+    const elDate = document.getElementById("mPaidDate");
+
+    if (elCode) elCode.textContent = extraDetails.customer_code || "-";
+    if (elName) elName.textContent = extraDetails.customer_name || "-";
+    if (elTotal) elTotal.textContent = extraDetails.total_amount || "-";
+    if (elFee) elFee.textContent = extraDetails.fee_amount || "-";
+    if (elTo) elTo.textContent = extraDetails.paid_to || "-";
+    if (elDate) elDate.textContent = extraDetails.paid_date || "-";
+    details.classList.remove("hidden");
+  } else {
+    details.classList.add("hidden");
+  }
+
+  closeBtn.disabled = false;
+  closeBtn.className =
+    "w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-2xl text-xs shadow-md active:scale-95 transition-all";
+  closeBtn.textContent = "Done / Close";
+}
+
+function closeModal() {
+  const modal = document.getElementById("bankModal");
+  const container = document.getElementById("modalContainer");
+  container.classList.remove("scale-100", "opacity-100");
+  container.classList.add("scale-95", "opacity-0");
+  setTimeout(() => modal.classList.add("hidden"), 200);
+}
+
 function toggleDevMenu(forceClose) {
   const panel = document.getElementById("devMenuPanel");
   if (forceClose) panel.classList.add("hidden");
@@ -982,7 +1376,9 @@ function saveGatewaySettings() {
     refNoDisplay: document.getElementById("refNoDisplay").value.trim(),
   };
   localStorage.setItem("bankGatewaySettings", JSON.stringify(settings));
+  saveSecuritySettings();
   toggleSettingsDrawer();
+  showToast("Settings saved successfully.");
   log("Settings saved to local storage.");
 }
 
@@ -1006,6 +1402,7 @@ function exportGatewaySettings() {
     authToken: document.getElementById("authToken").value,
     prefixCode: document.getElementById("prefixCode").value,
     refNoDisplay: document.getElementById("refNoDisplay").value,
+    security: securitySettings,
   };
   const blob = new Blob([JSON.stringify(settings, null, 2)], {
     type: "application/json",
@@ -1015,6 +1412,7 @@ function exportGatewaySettings() {
   a.href = url;
   a.download = "telegram-bank-settings.json";
   a.click();
+  showToast("Exported configuration file.");
 }
 
 function importGatewaySettings(e) {
@@ -1027,6 +1425,7 @@ function importGatewaySettings(e) {
       if (s.baseUrl) document.getElementById("baseUrl").value = s.baseUrl;
       if (s.authToken) document.getElementById("authToken").value = s.authToken;
       saveGatewaySettings();
+      showToast("Settings imported successfully.");
     } catch (err) {}
   };
   reader.readAsText(file);
@@ -1039,22 +1438,87 @@ function setTheme(mode) {
   localStorage.setItem("theme", mode);
 }
 
+/* 10. ENHANCED CONSOLE LOGGING & PAYLOAD COPY */
 function log(msg, data = null) {
   const out = document.getElementById("consoleOutput");
   const time = new Date().toLocaleTimeString();
   let text = `[${time}] ${msg}`;
-  if (data) text += `\n` + JSON.stringify(data, null, 2);
-  rawLogText = text + `\n\n` + rawLogText;
+  const entry = { timestamp: time, message: msg, payload: data || null };
+  payloadLogs.unshift(entry);
+
+  if (data) text += `\nPayload:\n` + JSON.stringify(data, null, 2);
+  rawLogText = text + `\n----------------------------------------\n` + rawLogText;
   if (out) out.textContent = rawLogText;
+}
+
+function copyConsolePayload() {
+  if (payloadLogs.length === 0) {
+    showToast("No payloads logged yet.", true);
+    return;
+  }
+
+  const formattedPayloads = JSON.stringify(payloadLogs, null, 2);
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard
+      .writeText(formattedPayloads)
+      .then(() => {
+        triggerHaptic("success");
+        showToast("Copied full request & response payloads!");
+      })
+      .catch((err) => {
+        fallbackCopyText(formattedPayloads);
+      });
+  } else {
+    fallbackCopyText(formattedPayloads);
+  }
+}
+
+function fallbackCopyText(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  document.body.appendChild(ta);
+  ta.select();
+  document.execCommand("copy");
+  document.body.removeChild(ta);
+  showToast("Copied full request & response payloads!");
+}
+
+function toggleLogFullScreen() {
+  const section = document.getElementById("consoleSection");
+  const out = document.getElementById("consoleOutput");
+  const icon = document.getElementById("logExpandIcon");
+
+  isLogFullScreen = !isLogFullScreen;
+
+  if (isLogFullScreen) {
+    section.className =
+      "fixed inset-4 z-50 bg-slate-900 border-2 border-indigo-500 rounded-3xl p-5 shadow-2xl flex flex-col justify-between animate-modal-pop";
+    out.className =
+      "bg-slate-950 text-emerald-400 border border-slate-800 rounded-2xl p-4 text-xs font-mono overflow-auto flex-1 my-3 leading-relaxed select-text";
+    if (icon) icon.className = "fa-solid fa-compress";
+  } else {
+    section.className =
+      "hidden bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-4 shadow-sm space-y-3 transition-all duration-300";
+    out.className =
+      "bg-slate-950 text-emerald-400 border border-slate-800 rounded-2xl p-3.5 text-[10px] font-mono overflow-x-auto h-36 leading-relaxed select-text";
+    if (icon) icon.className = "fa-solid fa-expand";
+  }
 }
 
 function clearLogs() {
   rawLogText = "Logs cleared.";
+  payloadLogs = [];
   document.getElementById("consoleOutput").textContent = rawLogText;
+  showToast("Console logs cleared.");
 }
 
 function toggleDevConsole() {
-  document.getElementById("consoleSection").classList.toggle("hidden");
+  const section = document.getElementById("consoleSection");
+  if (section.classList.contains("hidden")) {
+    section.classList.remove("hidden");
+  } else {
+    section.classList.add("hidden");
+  }
 }
 
 /* INITIALIZATION ON WINDOW LOAD */
@@ -1063,6 +1527,7 @@ window.onload = function () {
   setTheme(savedTheme);
   initTelegramWebApp();
   loadGatewaySettings();
+  loadSecuritySettings();
   updateFullCodes();
   updateRefNo();
   navigateToView("homeView");

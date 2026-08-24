@@ -184,8 +184,10 @@
       class="sticky top-0 z-40 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 px-4 py-3 flex items-center justify-between shadow-sm"
     >
       <div
-        class="flex items-center gap-3 cursor-pointer"
-        onclick="navigateToView('homeView')"
+        id="headerLogo"
+        class="flex items-center gap-3 cursor-pointer active:scale-95 transition-transform"
+        onclick="handleSecretResetTap()"
+        title="Tap 3-5 times to reset PIN security"
       >
         <div
           class="w-10 h-10 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shadow-lg shadow-indigo-500/30"
@@ -216,8 +218,8 @@
       <div class="flex items-center gap-2">
         <!-- Quick KHQR Scan Button -->
         <button
-          onclick="navigateToView('cameraScanView')"
-          class="px-3 py-1.5 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-xl text-xs font-bold shadow-md hover:opacity-95 transition-all flex items-center gap-1.5"
+          onclick="triggerInstantQRScan()"
+          class="px-3 py-1.5 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-xl text-xs font-bold shadow-md hover:opacity-95 active:scale-95 transition-all flex items-center gap-1.5"
         >
           <i class="fa-solid fa-camera"></i>
           <span class="hidden sm:inline">Camera</span> Scan
@@ -226,7 +228,7 @@
         <!-- Dev & Settings Menu Toggle -->
         <button
           onclick="toggleDevMenu()"
-          class="w-9 h-9 flex items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-300 hover:text-indigo-600 transition-all"
+          class="w-9 h-9 flex items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-300 hover:text-indigo-600 active:scale-95 transition-all"
         >
           <i class="fa-solid fa-ellipsis-vertical text-sm"></i>
         </button>
@@ -370,6 +372,38 @@
                 />
               </div>
             </div>
+            <!-- SECURITY SETTINGS SECTION -->
+            <div class="border-t border-slate-200 dark:border-slate-800 pt-3 space-y-2">
+              <span class="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Security &amp; Biometrics</span>
+              <div class="flex items-center justify-between bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800">
+                <div class="space-y-0.5">
+                  <span class="text-xs font-bold text-slate-800 dark:text-slate-200 block">Enable PIN Security Lock</span>
+                  <span class="text-[10px] text-slate-400 block">Authorize payments with PIN</span>
+                </div>
+                <input type="checkbox" id="securityLockEnabled" onchange="toggleSecurityLockSetting()" class="w-4 h-4 accent-indigo-600 rounded cursor-pointer" />
+              </div>
+              <div id="pinConfigBox" class="hidden space-y-2">
+                <div>
+                  <label class="block text-[10px] font-bold uppercase text-slate-400 mb-1">Set 4-Digit Security PIN</label>
+                  <input
+                    type="password"
+                    id="securityPinValue"
+                    maxLength="4"
+                    value="1234"
+                    placeholder="e.g. 1234"
+                    class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 font-mono text-center tracking-widest text-base font-bold text-indigo-500 focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+                <div class="flex items-center justify-between bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800">
+                  <span class="text-xs font-bold text-slate-800 dark:text-slate-200">Telegram Biometric Scan</span>
+                  <input type="checkbox" id="biometricsEnabled" checked class="w-4 h-4 accent-indigo-600 rounded cursor-pointer" />
+                </div>
+              </div>
+              <p class="text-[10px] text-slate-400 italic">
+                <i class="fa-solid fa-key text-indigo-500 mr-1"></i> Tap Bank Mobile logo 3-5 times to emergency reset PIN lock.
+              </p>
+            </div>
+
             <div
               class="p-3 bg-indigo-50 dark:bg-indigo-950/40 rounded-xl border border-indigo-200/60 dark:border-indigo-900/50 text-[11px] text-indigo-700 dark:text-indigo-300"
             >
@@ -718,7 +752,7 @@
           <div>
             <label
               class="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1"
-              >Consumer / Invoice Code</label
+              >Customer Code</label
             >
             <div class="relative">
               <i
@@ -934,23 +968,39 @@
       <!-- SYSTEM CONSOLE LOG MONITOR -->
       <section
         id="consoleSection"
-        class="hidden bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-4 shadow-sm space-y-2"
+        class="hidden bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-4 shadow-sm space-y-3 transition-all duration-300"
       >
-        <div class="flex justify-between items-center">
+        <div class="flex items-center justify-between">
           <span
             class="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5"
-            ><i class="fa-solid fa-terminal text-indigo-500"></i> Logs</span
+            ><i class="fa-solid fa-terminal text-indigo-500"></i> Console Logs</span
           >
-          <button
-            onclick="clearLogs()"
-            class="text-[10px] text-slate-400 hover:text-slate-600"
-          >
-            Clear
-          </button>
+          <div class="flex items-center gap-1.5">
+            <button
+              onclick="copyConsolePayload()"
+              class="px-2.5 py-1 bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 rounded-xl text-[11px] font-bold flex items-center gap-1 active:scale-95 transition-all"
+              title="Copy full JSON request & response payloads"
+            >
+              <i class="fa-solid fa-copy"></i> Copy Payloads
+            </button>
+            <button
+              onclick="toggleLogFullScreen()"
+              id="btnLogFullScreen"
+              class="px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 rounded-xl text-[11px] font-bold flex items-center gap-1 active:scale-95 transition-all"
+            >
+              <i id="logExpandIcon" class="fa-solid fa-expand"></i> Fullscreen
+            </button>
+            <button
+              onclick="clearLogs()"
+              class="px-2 py-1 text-[11px] font-bold text-slate-400 hover:text-rose-500 active:scale-95"
+            >
+              Clear
+            </button>
+          </div>
         </div>
         <pre
           id="consoleOutput"
-          class="bg-slate-950 text-emerald-400 border border-slate-800 rounded-2xl p-3 text-[10px] font-mono overflow-x-auto h-32 leading-relaxed"
+          class="bg-slate-950 text-emerald-400 border border-slate-800 rounded-2xl p-3.5 text-[10px] font-mono overflow-x-auto h-36 leading-relaxed select-text"
         >
 System ready...</pre
         >
@@ -972,7 +1022,7 @@ System ready...</pre
         </button>
         <button
           id="tab-btn-camera"
-          onclick="navigateToView('cameraScanView')"
+          onclick="triggerInstantQRScan()"
           class="flex flex-col items-center justify-center gap-1 py-2.5 text-slate-400"
         >
           <i class="fa-solid fa-camera text-base"></i>
@@ -1077,13 +1127,13 @@ System ready...</pre
         <div class="grid grid-cols-2 gap-3 pt-2">
           <button
             onclick="closeKHQRModal()"
-            class="w-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-bold py-3 rounded-2xl text-xs"
+            class="w-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-bold py-3 rounded-2xl text-xs active:scale-95 transition-all"
           >
             Cancel
           </button>
           <button
             onclick="submitQRConfirm()"
-            class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-2xl text-xs shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-1.5"
+            class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-2xl text-xs shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-1.5 active:scale-95 transition-all"
           >
             <i class="fa-solid fa-check"></i> Confirm &amp; Pay
           </button>
@@ -1161,11 +1211,73 @@ System ready...</pre
             id="modalCloseBtn"
             onclick="closeModal()"
             disabled
-            class="w-full bg-slate-300 dark:bg-slate-800 text-slate-500 font-bold py-3 rounded-2xl text-xs cursor-not-allowed"
+            class="w-full bg-slate-300 dark:bg-slate-800 text-slate-500 font-bold py-3 rounded-2xl text-xs cursor-not-allowed active:scale-95 transition-all"
           >
             Processing...
           </button>
         </div>
+      </div>
+    </div>
+
+    <!-- PIN & TELEGRAM BIOMETRIC SECURITY LOCK MODAL -->
+    <div
+      id="securityLockModal"
+      class="fixed inset-0 bg-slate-950/90 backdrop-blur-xl z-50 flex items-center justify-center p-4 hidden transition-all duration-300"
+    >
+      <div
+        class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-xs w-full p-6 text-center shadow-2xl space-y-4 animate-modal-pop relative"
+      >
+        <div class="space-y-1.5">
+          <div class="w-14 h-14 rounded-2xl bg-indigo-500/10 text-indigo-500 flex items-center justify-center mx-auto text-2xl shadow-inner">
+            <i class="fa-solid fa-shield-halved"></i>
+          </div>
+          <h3 class="text-base font-bold text-slate-900 dark:text-slate-100">
+            Security Verification
+          </h3>
+          <p class="text-xs text-slate-400">
+            Enter your 4-digit PIN to authorize payment
+          </p>
+        </div>
+
+        <!-- PIN Dots -->
+        <div class="flex justify-center items-center gap-3 py-1">
+          <span id="pinDot0" class="w-3.5 h-3.5 rounded-full border-2 border-slate-300 dark:border-slate-700 transition-all"></span>
+          <span id="pinDot1" class="w-3.5 h-3.5 rounded-full border-2 border-slate-300 dark:border-slate-700 transition-all"></span>
+          <span id="pinDot2" class="w-3.5 h-3.5 rounded-full border-2 border-slate-300 dark:border-slate-700 transition-all"></span>
+          <span id="pinDot3" class="w-3.5 h-3.5 rounded-full border-2 border-slate-300 dark:border-slate-700 transition-all"></span>
+        </div>
+
+        <!-- Keypad Grid -->
+        <div class="grid grid-cols-3 gap-2 pt-1 font-num">
+          <button onclick="pressPinNum('1')" class="py-3 bg-slate-100 dark:bg-slate-800 rounded-2xl font-bold text-base hover:bg-indigo-500 hover:text-white transition-all active:scale-95">1</button>
+          <button onclick="pressPinNum('2')" class="py-3 bg-slate-100 dark:bg-slate-800 rounded-2xl font-bold text-base hover:bg-indigo-500 hover:text-white transition-all active:scale-95">2</button>
+          <button onclick="pressPinNum('3')" class="py-3 bg-slate-100 dark:bg-slate-800 rounded-2xl font-bold text-base hover:bg-indigo-500 hover:text-white transition-all active:scale-95">3</button>
+          <button onclick="pressPinNum('4')" class="py-3 bg-slate-100 dark:bg-slate-800 rounded-2xl font-bold text-base hover:bg-indigo-500 hover:text-white transition-all active:scale-95">4</button>
+          <button onclick="pressPinNum('5')" class="py-3 bg-slate-100 dark:bg-slate-800 rounded-2xl font-bold text-base hover:bg-indigo-500 hover:text-white transition-all active:scale-95">5</button>
+          <button onclick="pressPinNum('6')" class="py-3 bg-slate-100 dark:bg-slate-800 rounded-2xl font-bold text-base hover:bg-indigo-500 hover:text-white transition-all active:scale-95">6</button>
+          <button onclick="pressPinNum('7')" class="py-3 bg-slate-100 dark:bg-slate-800 rounded-2xl font-bold text-base hover:bg-indigo-500 hover:text-white transition-all active:scale-95">7</button>
+          <button onclick="pressPinNum('8')" class="py-3 bg-slate-100 dark:bg-slate-800 rounded-2xl font-bold text-base hover:bg-indigo-500 hover:text-white transition-all active:scale-95">8</button>
+          <button onclick="pressPinNum('9')" class="py-3 bg-slate-100 dark:bg-slate-800 rounded-2xl font-bold text-base hover:bg-indigo-500 hover:text-white transition-all active:scale-95">9</button>
+          <button onclick="triggerBiometricScan()" class="py-3 bg-slate-100 dark:bg-slate-800 rounded-2xl text-indigo-500 font-bold text-xs hover:bg-indigo-500 hover:text-white transition-all active:scale-95" title="Telegram Biometrics"><i class="fa-solid fa-fingerprint text-lg"></i></button>
+          <button onclick="pressPinNum('0')" class="py-3 bg-slate-100 dark:bg-slate-800 rounded-2xl font-bold text-base hover:bg-indigo-500 hover:text-white transition-all active:scale-95">0</button>
+          <button onclick="pressPinDelete()" class="py-3 bg-slate-100 dark:bg-slate-800 rounded-2xl text-slate-500 font-bold text-sm hover:bg-rose-500 hover:text-white transition-all active:scale-95"><i class="fa-solid fa-delete-left"></i></button>
+        </div>
+
+        <div class="flex justify-between items-center pt-2">
+          <button onclick="closeSecurityLockModal()" class="text-xs font-semibold text-slate-400 hover:text-slate-600">Cancel</button>
+          <button onclick="handleSecretResetTap()" class="text-[10px] text-indigo-400 hover:underline">Forgot PIN? Tap Logo 3x</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- TOAST NOTIFICATION -->
+    <div
+      id="toastAlert"
+      class="fixed top-16 inset-x-4 z-50 max-w-xs mx-auto bg-slate-900 text-white dark:bg-white dark:text-slate-900 px-4 py-3 rounded-2xl shadow-2xl text-xs font-bold flex items-center justify-between opacity-0 pointer-events-none transition-all duration-300"
+    >
+      <div class="flex items-center gap-2.5">
+        <i id="toastIcon" class="fa-solid fa-circle-check text-emerald-400 text-base"></i>
+        <span id="toastMsg">Notification message</span>
       </div>
     </div>
 
