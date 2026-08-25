@@ -213,16 +213,6 @@
       .pin-dot-on {
         animation: pinBounce 0.18s ease-out;
       }
-      .chat-bubble-in {
-        background: #fff;
-        border-radius: 18px 18px 18px 6px;
-      }
-      .dark .chat-bubble-in { background: #1e293b; }
-      .chat-bubble-out {
-        background: linear-gradient(135deg, #6366f1, #4f46e5);
-        color: #fff;
-        border-radius: 18px 18px 6px 18px;
-      }
       .folder-chip.active {
         background: #4f46e5;
         color: #fff;
@@ -262,18 +252,6 @@
         border-color: #4f46e5;
         transform: scale(1.18);
         box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.18);
-      }
-      .chat-bubble-in {
-        background: #ffffff;
-        border-radius: 18px 18px 18px 6px;
-      }
-      .dark .chat-bubble-in {
-        background: #1e293b;
-      }
-      .chat-bubble-out {
-        background: linear-gradient(135deg, #6366f1, #4f46e5);
-        color: #fff;
-        border-radius: 18px 18px 6px 18px;
       }
       .tg-banner {
         animation: modalPop 0.16s cubic-bezier(0.16, 1, 0.3, 1) forwards;
@@ -1077,59 +1055,6 @@
         </div>
       </section>
 
-      <!-- TELEGRAM-STYLE CHATS (Personal / Groups / Folders — never mixed) -->
-      <section id="chatView" class="hidden space-y-3">
-        <div id="chatListPane" class="space-y-3">
-          <div class="flex items-center justify-between">
-            <div>
-              <h2 class="text-base font-bold text-slate-900 dark:text-slate-100">Messages</h2>
-              <p class="text-[11px] text-slate-400">Personal, groups and folders stay separate</p>
-            </div>
-            <button
-              onclick="openAddChatModal()"
-              class="w-10 h-10 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shadow-lg shadow-indigo-600/30 active:scale-95"
-            >
-              <i class="fa-solid fa-plus"></i>
-            </button>
-          </div>
-          <div id="chatFolderBar" class="flex gap-2 overflow-x-auto pb-1"></div>
-          <div id="chatList" class="space-y-1.5"></div>
-        </div>
-
-        <div id="chatThreadPane" class="hidden flex flex-col h-[calc(100vh-11rem)]">
-          <div class="flex items-center gap-3 pb-2 border-b border-slate-200 dark:border-slate-800">
-            <button onclick="closeChatThread()" class="w-9 h-9 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-200">
-              <i class="fa-solid fa-chevron-left"></i>
-            </button>
-            <div id="chatThreadAvatar" class="w-10 h-10 rounded-2xl bg-indigo-500 text-white flex items-center justify-center font-bold text-sm"></div>
-            <div class="flex-1 min-w-0">
-              <p id="chatThreadTitle" class="text-sm font-bold truncate"></p>
-              <p id="chatThreadMeta" class="text-[10px] text-slate-400 truncate"></p>
-            </div>
-            <button
-              id="chatOpenTelegramBtn"
-              onclick="openCurrentChatInTelegram()"
-              class="text-indigo-500 text-sm px-2"
-              title="Open in Telegram"
-            >
-              <i class="fa-brands fa-telegram"></i>
-            </button>
-          </div>
-          <div id="chatThreadMessages" class="flex-1 overflow-y-auto space-y-2 py-3"></div>
-          <form onsubmit="sendChatReply(event)" class="flex items-end gap-2 pt-2">
-            <textarea
-              id="chatReplyInput"
-              rows="1"
-              placeholder="Message"
-              class="flex-1 resize-none bg-slate-100 dark:bg-slate-800 rounded-2xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 max-h-24"
-            ></textarea>
-            <button type="submit" class="w-11 h-11 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shadow-md active:scale-95">
-              <i class="fa-solid fa-paper-plane text-sm"></i>
-            </button>
-          </form>
-        </div>
-      </section>
-
       <!-- SYSTEM CONSOLE LOG MONITOR -->
       <section
         id="consoleSection"
@@ -1176,7 +1101,7 @@ System ready...</pre
     <nav
       class="fixed bottom-0 inset-x-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 pb-[env(safe-area-inset-bottom)] shadow-lg max-w-md mx-auto"
     >
-      <div class="grid grid-cols-4">
+      <div class="grid grid-cols-3">
         <button
           id="tab-btn-home"
           onclick="navigateToView('homeView')"
@@ -1192,16 +1117,6 @@ System ready...</pre
         >
           <i class="fa-solid fa-camera text-base"></i>
           <span class="text-[10px] font-bold">Scan QR</span>
-        </button>
-        <button
-          id="tab-btn-chats"
-          onclick="navigateToView('chatView')"
-          disabled hidden
-          class="relative flex flex-col items-center justify-center gap-1 py-2.5 text-slate-400"
-        >
-          <i class="fa-solid fa-comments text-base"></i>
-          <span class="text-[10px] font-bold" aria-disabled="true">Chats</span>
-          <!-- <span id="chatUnreadBadge" disabled class="hidden absolute top-1 right-[22%] min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-black leading-4">0 </span>-->
         </button>
         <button
           id="tab-btn-payment"
@@ -1449,28 +1364,10 @@ System ready...</pre
       </div>
     </div>
 
-    <!-- ADD CHAT / FOLDER MODAL -->
-    <div id="addChatModal" class="fixed inset-0 z-[60] hidden bg-slate-950/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-      <div class="bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-3xl max-w-sm w-full p-5 space-y-3 animate-modal-pop">
-        <div class="flex items-center justify-between">
-          <h3 class="text-sm font-bold">New conversation</h3>
-          <button onclick="closeAddChatModal()" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button>
-        </div>
-        <div class="grid grid-cols-3 gap-2 text-[11px] font-bold">
-          <button type="button" id="addKindPersonal" onclick="setAddChatKind('personal')" class="py-2 rounded-xl bg-indigo-600 text-white">Personal</button>
-          <button type="button" id="addKindGroup" onclick="setAddChatKind('group')" class="py-2 rounded-xl bg-slate-100 dark:bg-slate-800">Group</button>
-          <button type="button" id="addKindFolder" onclick="setAddChatKind('folder')" class="py-2 rounded-xl bg-slate-100 dark:bg-slate-800">Folder</button>
-        </div>
-        <input id="addChatName" type="text" placeholder="Name" class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2.5 text-sm" />
-        <input id="addChatUsername" type="text" placeholder="@telegram (optional)" class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2.5 text-sm" />
-        <button onclick="confirmAddChat()" class="w-full bg-indigo-600 text-white font-bold py-2.5 rounded-xl text-sm">Create</button>
-      </div>
-    </div>
-
     <!-- TOAST NOTIFICATION -->
     <div
       id="toastAlert"
-      class="fixed top-16 inset-x-4 z-50 max-w-xs mx-auto bg-slate-900 text-white dark:bg-white dark:text-slate-900 px-4 py-3 rounded-2xl shadow-2xl text-xs font-bold flex items-center justify-between opacity-0 pointer-events-none transition-all duration-300"
+      class="fixed top-16 inset-x-4 z-[80] max-w-xs mx-auto bg-slate-900 text-white dark:bg-white dark:text-slate-900 px-4 py-3 rounded-2xl shadow-2xl text-xs font-bold flex items-center justify-between opacity-0 pointer-events-none transition-all duration-300"
     >
       <div class="flex items-center gap-2.5">
         <i id="toastIcon" class="fa-solid fa-circle-check text-emerald-400 text-base"></i>
