@@ -256,6 +256,22 @@
       .tg-banner {
         animation: modalPop 0.16s cubic-bezier(0.16, 1, 0.3, 1) forwards;
       }
+
+      /* Settings modal: mobile drill-down vs tablet/desktop split-view.
+         Both panes are flex by default (needed for the always-visible
+         tablet+ split layout); below the sm breakpoint, JS toggles the
+         .settings-view-content class on #settingsDrawer to swap which
+         single pane is shown. Using ID-scoped rules here (instead of
+         toggling Tailwind's plain "hidden" class) avoids any ambiguity
+         with the unprefixed "flex" utility already on these elements. */
+      @media (max-width: 639px) {
+        #settingsDrawer:not(.settings-view-content) #settingsContentPane {
+          display: none;
+        }
+        #settingsDrawer.settings-view-content #settingsSidebar {
+          display: none;
+        }
+      }
     </style>
   </head>
   <body
@@ -367,106 +383,285 @@
       </div>
     </div>
 
-    <!-- CONFIGURATION DRAWER -->
+    <!-- CONFIGURATION DRAWER / SETTINGS MODAL
+         Mobile (<640px): drill-down — menu list screen, tap an item to open its panel with a Back button.
+         Tablet & up (>=640px): persistent sidebar + content split-view (master/detail), centered dialog. -->
     <div
       id="settingsDrawer"
-      class="fixed inset-0 z-50 pointer-events-none transition-all duration-300"
+      class="hidden fixed inset-0 z-50 sm:items-center sm:justify-center sm:p-4 md:p-6"
     >
       <div
         id="drawerBackdrop"
         onclick="toggleSettingsDrawer()"
         class="absolute inset-0 bg-slate-950/60 backdrop-blur-sm opacity-0 transition-opacity duration-300"
       ></div>
+
       <div
         id="drawerPanel"
-        class="absolute top-0 right-0 w-full max-w-sm h-full bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 p-5 shadow-2xl transform translate-x-full transition-transform duration-300 ease-in-out pointer-events-auto flex flex-col"
+        class="relative w-full h-full sm:h-auto sm:max-h-[88vh] sm:w-auto sm:max-w-2xl md:max-w-3xl bg-white dark:bg-slate-900 sm:border sm:border-slate-200 dark:sm:border-slate-800 sm:rounded-3xl shadow-2xl transform translate-x-full sm:translate-x-0 sm:scale-95 sm:opacity-0 transition-all duration-300 ease-in-out pointer-events-auto flex flex-row overflow-hidden"
       >
-        <div class="space-y-4 flex-1 overflow-y-auto overscroll-contain pb-4">
+        <!-- SIDEBAR / MOBILE MENU-LIST SCREEN -->
+        <nav
+          id="settingsSidebar"
+          class="w-full sm:w-56 md:w-64 shrink-0 flex flex-col sm:border-r border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/40 overflow-y-auto overscroll-contain"
+        >
           <div
-            class="flex justify-between items-center border-b border-slate-200 dark:border-slate-800 pb-3 sticky top-0 bg-white dark:bg-slate-900 z-10"
+            class="flex items-center justify-between px-4 py-3.5 border-b border-slate-200 dark:border-slate-800 sticky top-0 bg-slate-50/90 dark:bg-slate-950/60 backdrop-blur z-10 shrink-0"
           >
-            <div class="flex items-center gap-2">
-              <i class="fa-solid fa-sliders text-indigo-500"></i>
-              <h2
-                class="font-bold text-xs uppercase tracking-wider text-slate-800 dark:text-slate-200"
-              >
-                API Gateway Settings
-              </h2>
-            </div>
+            <h2
+              class="font-bold text-xs uppercase tracking-wider text-slate-800 dark:text-slate-200 flex items-center gap-2"
+            >
+              <i class="fa-solid fa-sliders text-indigo-500"></i> Settings
+            </h2>
             <button
               onclick="toggleSettingsDrawer()"
-              class="text-slate-400 hover:text-slate-600 text-lg"
+              class="text-slate-400 hover:text-slate-600 text-base w-7 h-7 flex items-center justify-center rounded-full hover:bg-slate-200/60 dark:hover:bg-slate-800"
             >
               <i class="fa-solid fa-xmark"></i>
             </button>
           </div>
 
-          <div class="space-y-3 text-xs">
-            <div>
-              <label
-                class="block text-[10px] font-bold uppercase text-slate-400 mb-1"
-                >Base Gateway URL</label
-              >
-              <input
-                type="text"
-                id="baseUrl"
-                value="https://staging.bill24.io:22080"
-                class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 font-mono text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500"
-              />
-            </div>
-            <div>
-              <label
-                class="block text-[10px] font-bold uppercase text-slate-400 mb-1"
-                >Auth Token</label
-              >
-              <input
-                type="text"
-                id="authToken"
-                value="47292bfb76de468c9d76dcc88cd6eb60"
-                class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 font-mono text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500"
-              />
-            </div>
-            <div class="grid grid-cols-2 gap-2">
+          <div class="p-2.5 sm:p-3 space-y-1 flex-1">
+            <button
+              type="button"
+              data-section="gateway"
+              onclick="showSettingsSection('gateway')"
+              class="settings-menu-item w-full flex items-center gap-3 px-2.5 py-3 sm:py-2.5 rounded-2xl text-left hover:bg-white dark:hover:bg-slate-900 transition-all"
+            >
+              <span
+                class="w-9 h-9 rounded-xl bg-indigo-500/10 text-indigo-500 flex items-center justify-center text-sm shrink-0"
+                ><i class="fa-solid fa-server"></i
+              ></span>
+              <span class="flex-1 min-w-0">
+                <span
+                  class="block text-xs font-bold text-slate-800 dark:text-slate-200"
+                  >API Gateway</span
+                >
+                <span class="block text-[10px] text-slate-400 truncate"
+                  >Base URL, token &amp; ref codes</span
+                >
+              </span>
+              <i
+                class="fa-solid fa-chevron-right text-[10px] text-slate-300 sm:hidden"
+              ></i>
+            </button>
+
+            <button
+              type="button"
+              data-section="security"
+              onclick="showSettingsSection('security')"
+              class="settings-menu-item w-full flex items-center gap-3 px-2.5 py-3 sm:py-2.5 rounded-2xl text-left hover:bg-white dark:hover:bg-slate-900 transition-all"
+            >
+              <span
+                class="w-9 h-9 rounded-xl bg-indigo-500/10 text-indigo-500 flex items-center justify-center text-sm shrink-0"
+                ><i class="fa-solid fa-shield-halved"></i
+              ></span>
+              <span class="flex-1 min-w-0">
+                <span
+                  class="block text-xs font-bold text-slate-800 dark:text-slate-200"
+                  >Security &amp; PIN</span
+                >
+                <span class="block text-[10px] text-slate-400 truncate"
+                  >App lock &amp; biometrics</span
+                >
+              </span>
+              <i
+                class="fa-solid fa-chevron-right text-[10px] text-slate-300 sm:hidden"
+              ></i>
+            </button>
+
+            <button
+              type="button"
+              data-section="camera"
+              onclick="showSettingsSection('camera')"
+              class="settings-menu-item w-full flex items-center gap-3 px-2.5 py-3 sm:py-2.5 rounded-2xl text-left hover:bg-white dark:hover:bg-slate-900 transition-all"
+            >
+              <span
+                class="w-9 h-9 rounded-xl bg-indigo-500/10 text-indigo-500 flex items-center justify-center text-sm shrink-0"
+                ><i class="fa-solid fa-camera"></i
+              ></span>
+              <span class="flex-1 min-w-0">
+                <span
+                  class="block text-xs font-bold text-slate-800 dark:text-slate-200"
+                  >Camera &amp; Voice</span
+                >
+                <span class="block text-[10px] text-slate-400 truncate"
+                  >Auto-allow camera, Khmer voice</span
+                >
+              </span>
+              <i
+                class="fa-solid fa-chevron-right text-[10px] text-slate-300 sm:hidden"
+              ></i>
+            </button>
+
+            <button
+              type="button"
+              data-section="appearance"
+              onclick="showSettingsSection('appearance')"
+              class="settings-menu-item w-full flex items-center gap-3 px-2.5 py-3 sm:py-2.5 rounded-2xl text-left hover:bg-white dark:hover:bg-slate-900 transition-all"
+            >
+              <span
+                class="w-9 h-9 rounded-xl bg-indigo-500/10 text-indigo-500 flex items-center justify-center text-sm shrink-0"
+                ><i class="fa-solid fa-palette"></i
+              ></span>
+              <span class="flex-1 min-w-0">
+                <span
+                  class="block text-xs font-bold text-slate-800 dark:text-slate-200"
+                  >Appearance</span
+                >
+                <span class="block text-[10px] text-slate-400 truncate"
+                  >Light / dark theme</span
+                >
+              </span>
+              <i
+                class="fa-solid fa-chevron-right text-[10px] text-slate-300 sm:hidden"
+              ></i>
+            </button>
+
+            <button
+              type="button"
+              data-section="data"
+              onclick="showSettingsSection('data')"
+              class="settings-menu-item w-full flex items-center gap-3 px-2.5 py-3 sm:py-2.5 rounded-2xl text-left hover:bg-white dark:hover:bg-slate-900 transition-all"
+            >
+              <span
+                class="w-9 h-9 rounded-xl bg-indigo-500/10 text-indigo-500 flex items-center justify-center text-sm shrink-0"
+                ><i class="fa-solid fa-database"></i
+              ></span>
+              <span class="flex-1 min-w-0">
+                <span
+                  class="block text-xs font-bold text-slate-800 dark:text-slate-200"
+                  >Backup &amp; Data</span
+                >
+                <span class="block text-[10px] text-slate-400 truncate"
+                  >Export / import configuration</span
+                >
+              </span>
+              <i
+                class="fa-solid fa-chevron-right text-[10px] text-slate-300 sm:hidden"
+              ></i>
+            </button>
+          </div>
+        </nav>
+
+        <!-- CONTENT PANE (hidden on mobile until a menu item is tapped; always visible from sm: up) -->
+        <div
+          id="settingsContentPane"
+          class="flex flex-col flex-1 min-w-0 min-h-0"
+        >
+          <div
+            class="flex items-center gap-3 px-4 py-3.5 border-b border-slate-200 dark:border-slate-800 shrink-0"
+          >
+            <button
+              onclick="backToSettingsMenu()"
+              class="sm:hidden w-7 h-7 flex items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0"
+              aria-label="Back to settings menu"
+            >
+              <i class="fa-solid fa-chevron-left"></i>
+            </button>
+            <h3
+              id="settingsContentTitle"
+              class="font-bold text-xs sm:text-sm text-slate-900 dark:text-slate-100 flex-1"
+            >
+              API Gateway
+            </h3>
+            <button
+              onclick="toggleSettingsDrawer()"
+              class="hidden sm:flex text-slate-400 hover:text-slate-600 text-base w-7 h-7 items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800"
+            >
+              <i class="fa-solid fa-xmark"></i>
+            </button>
+          </div>
+
+          <div
+            class="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5 space-y-3 text-xs"
+          >
+            <!-- PANEL: API GATEWAY -->
+            <div id="settingsPanel-gateway" class="settings-panel space-y-3">
               <div>
                 <label
                   class="block text-[10px] font-bold uppercase text-slate-400 mb-1"
-                  >Prefix Code</label
+                  >Base Gateway URL</label
                 >
                 <input
                   type="text"
-                  id="prefixCode"
-                  value="5316"
-                  oninput="updateFullCodes()"
-                  class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 font-mono focus:outline-none focus:border-indigo-500"
+                  id="baseUrl"
+                  value="https://staging.bill24.io:22080"
+                  class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 font-mono text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500"
                 />
               </div>
               <div>
                 <label
                   class="block text-[10px] font-bold uppercase text-slate-400 mb-1"
-                  >Default Ref No</label
+                  >Auth Token</label
                 >
                 <input
                   type="text"
-                  id="refNoDisplay"
-                  value=""
-                  oninput="updateRefNo()"
-                  class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 font-mono text-indigo-500 font-bold focus:outline-none focus:border-indigo-500"
+                  id="authToken"
+                  value="47292bfb76de468c9d76dcc88cd6eb60"
+                  class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 font-mono text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500"
                 />
               </div>
-            </div>
-            <!-- SECURITY SETTINGS SECTION -->
-            <div class="border-t border-slate-200 dark:border-slate-800 pt-3 space-y-2">
-              <span class="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Security &amp; Biometrics</span>
-              <div class="flex items-center justify-between bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800">
-                <div class="space-y-0.5">
-                  <span class="text-xs font-bold text-slate-800 dark:text-slate-200 block">Enable PIN Security Lock</span>
-                  <span class="text-[10px] text-slate-400 block">Lock app on open and authorize payments</span>
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <label
+                    class="block text-[10px] font-bold uppercase text-slate-400 mb-1"
+                    >Prefix Code</label
+                  >
+                  <input
+                    type="text"
+                    id="prefixCode"
+                    value="5316"
+                    oninput="updateFullCodes()"
+                    class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 font-mono focus:outline-none focus:border-indigo-500"
+                  />
                 </div>
-                <input type="checkbox" id="securityLockEnabled" onchange="toggleSecurityLockSetting()" class="w-4 h-4 accent-indigo-600 rounded cursor-pointer" />
+                <div>
+                  <label
+                    class="block text-[10px] font-bold uppercase text-slate-400 mb-1"
+                    >Default Ref No</label
+                  >
+                  <input
+                    type="text"
+                    id="refNoDisplay"
+                    value=""
+                    oninput="updateRefNo()"
+                    class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 font-mono text-indigo-500 font-bold focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <!-- PANEL: SECURITY & PIN -->
+            <div
+              id="settingsPanel-security"
+              class="settings-panel hidden space-y-2"
+            >
+              <div
+                class="flex items-center justify-between bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800"
+              >
+                <div class="space-y-0.5 pr-2">
+                  <span
+                    class="text-xs font-bold text-slate-800 dark:text-slate-200 block"
+                    >Enable PIN Security Lock</span
+                  >
+                  <span class="text-[10px] text-slate-400 block"
+                    >Lock app on open and authorize payments</span
+                  >
+                </div>
+                <input
+                  type="checkbox"
+                  id="securityLockEnabled"
+                  onchange="toggleSecurityLockSetting()"
+                  class="w-4 h-4 accent-indigo-600 rounded cursor-pointer shrink-0"
+                />
               </div>
               <div id="pinConfigBox" class="hidden space-y-2">
                 <div>
-                  <label class="block text-[10px] font-bold uppercase text-slate-400 mb-1">Set 4-Digit Security PIN</label>
+                  <label
+                    class="block text-[10px] font-bold uppercase text-slate-400 mb-1"
+                    >Set 4-Digit Security PIN</label
+                  >
                   <input
                     type="password"
                     id="securityPinValue"
@@ -476,74 +671,167 @@
                     class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 font-mono text-center tracking-widest text-base font-bold text-indigo-500 focus:outline-none focus:border-indigo-500"
                   />
                 </div>
-                <div class="flex items-center justify-between bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800">
-                  <span class="text-xs font-bold text-slate-800 dark:text-slate-200">Telegram Biometric Scan</span>
-                  <input type="checkbox" id="biometricsEnabled" checked class="w-4 h-4 accent-indigo-600 rounded cursor-pointer" />
+                <div
+                  class="flex items-center justify-between bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800"
+                >
+                  <span class="text-xs font-bold text-slate-800 dark:text-slate-200"
+                    >Telegram Biometric Scan</span
+                  >
+                  <input
+                    type="checkbox"
+                    id="biometricsEnabled"
+                    checked
+                    class="w-4 h-4 accent-indigo-600 rounded cursor-pointer"
+                  />
                 </div>
               </div>
             </div>
 
-            <!-- CAMERA & VOICE SETTINGS SECTION -->
-            <div class="border-t border-slate-200 dark:border-slate-800 pt-3 space-y-2">
-              <span class="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Camera &amp; Voice</span>
-              <div class="flex items-center justify-between bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800">
-                <div class="space-y-0.5 pr-2">
-                  <span class="text-xs font-bold text-slate-800 dark:text-slate-200 block">Auto-Allow Camera</span>
-                  <span class="text-[10px] text-slate-400 block">Pre-request camera permission automatically on Android &amp; iOS so scanning starts instantly</span>
-                </div>
-                <input type="checkbox" id="autoCameraEnabled" checked onchange="toggleAutoCameraSetting()" class="w-4 h-4 accent-indigo-600 rounded cursor-pointer shrink-0" />
-              </div>
-              <div class="flex items-center justify-between bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800">
-                <div class="space-y-0.5 pr-2">
-                  <span class="text-xs font-bold text-slate-800 dark:text-slate-200 block">Voice Payment Confirmation</span>
-                  <span class="text-[10px] text-slate-400 block">Speak the paid amount in Khmer after Pay Bill &amp; KHQR success</span>
-                </div>
-                <input type="checkbox" id="voiceConfirmEnabled" checked onchange="toggleVoiceConfirmSetting()" class="w-4 h-4 accent-indigo-600 rounded cursor-pointer shrink-0" />
-              </div>
-            </div>
-
+            <!-- PANEL: CAMERA & VOICE -->
             <div
-              class="p-3 bg-indigo-50 dark:bg-indigo-950/40 rounded-xl border border-indigo-200/60 dark:border-indigo-900/50 text-[11px] text-indigo-700 dark:text-indigo-300"
+              id="settingsPanel-camera"
+              class="settings-panel hidden space-y-2"
             >
-              <i class="fa-solid fa-circle-check mr-1"></i> Saved locally in
-              browser storage
+              <div
+                class="flex items-center justify-between bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800"
+              >
+                <div class="space-y-0.5 pr-2">
+                  <span
+                    class="text-xs font-bold text-slate-800 dark:text-slate-200 block"
+                    >Auto-Allow Camera</span
+                  >
+                  <span class="text-[10px] text-slate-400 block"
+                    >Pre-request camera permission automatically on Android
+                    &amp; iOS so scanning starts instantly</span
+                  >
+                </div>
+                <input
+                  type="checkbox"
+                  id="autoCameraEnabled"
+                  checked
+                  onchange="toggleAutoCameraSetting()"
+                  class="w-4 h-4 accent-indigo-600 rounded cursor-pointer shrink-0"
+                />
+              </div>
+              <div
+                class="flex items-center justify-between bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800"
+              >
+                <div class="space-y-0.5 pr-2">
+                  <span
+                    class="text-xs font-bold text-slate-800 dark:text-slate-200 block"
+                    >Voice Payment Confirmation</span
+                  >
+                  <span class="text-[10px] text-slate-400 block"
+                    >Speak paid amount in Khmer (e.g. ទឹកប្រាក់បានទូទាត់ចំនួនប្រាំ ដុល្លារ / រៀល)</span
+                  >
+                </div>
+                <input
+                  type="checkbox"
+                  id="voiceConfirmEnabled"
+                  checked
+                  onchange="toggleVoiceConfirmSetting()"
+                  class="w-4 h-4 accent-indigo-600 rounded cursor-pointer shrink-0"
+                />
+              </div>
+              <div class="grid grid-cols-2 gap-2 pt-1">
+                <button
+                  type="button"
+                  onclick="testVoiceConfirmation('USD')"
+                  class="bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 text-indigo-600 dark:text-indigo-300 font-bold py-2 rounded-xl text-[11px] border border-indigo-200 dark:border-indigo-900/50 flex items-center justify-center gap-1.5 active:scale-95 transition-all"
+                >
+                  <i class="fa-solid fa-volume-high"></i> Test 5 USD (ដុល្លារ)
+                </button>
+                <button
+                  type="button"
+                  onclick="testVoiceConfirmation('KHR')"
+                  class="bg-teal-50 dark:bg-teal-950/60 hover:bg-teal-100 text-teal-600 dark:text-teal-300 font-bold py-2 rounded-xl text-[11px] border border-teal-200 dark:border-teal-900/50 flex items-center justify-center gap-1.5 active:scale-95 transition-all"
+                >
+                  <i class="fa-solid fa-volume-high"></i> Test 5,000 KHR (រៀល)
+                </button>
+              </div>
+            </div>
+
+            <!-- PANEL: APPEARANCE -->
+            <div
+              id="settingsPanel-appearance"
+              class="settings-panel hidden space-y-2"
+            >
+              <div
+                class="flex items-center justify-between bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800"
+              >
+                <div class="space-y-0.5 pr-2">
+                  <span
+                    class="text-xs font-bold text-slate-800 dark:text-slate-200 block"
+                    >Theme</span
+                  >
+                  <span class="text-[10px] text-slate-400 block"
+                    >Choose light or dark appearance</span
+                  >
+                </div>
+                <div class="flex gap-1 bg-white dark:bg-slate-900 p-1 rounded-xl border border-slate-200 dark:border-slate-800 shrink-0">
+                  <button
+                    onclick="setTheme('light')"
+                    class="px-3 py-1.5 rounded-lg text-xs hover:text-indigo-500"
+                  >
+                    <i class="fa-solid fa-sun"></i>
+                  </button>
+                  <button
+                    onclick="setTheme('dark')"
+                    class="px-3 py-1.5 rounded-lg text-xs hover:text-indigo-500"
+                  >
+                    <i class="fa-solid fa-moon"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- PANEL: BACKUP & DATA -->
+            <div id="settingsPanel-data" class="settings-panel hidden space-y-3">
+              <div class="grid grid-cols-2 gap-2">
+                <button
+                  onclick="exportGatewaySettings()"
+                  class="w-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-bold py-2.5 rounded-xl text-[11px]"
+                >
+                  <i class="fa-solid fa-download"></i> Export
+                </button>
+                <label
+                  class="w-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-bold py-2.5 rounded-xl text-[11px] text-center cursor-pointer"
+                >
+                  <i class="fa-solid fa-upload"></i> Import
+                  <input
+                    type="file"
+                    id="settingsImportInput"
+                    accept="application/json"
+                    onchange="importGatewaySettings(event)"
+                    class="hidden"
+                  />
+                </label>
+              </div>
+              <div
+                class="p-3 bg-indigo-50 dark:bg-indigo-950/40 rounded-xl border border-indigo-200/60 dark:border-indigo-900/50 text-[11px] text-indigo-700 dark:text-indigo-300"
+              >
+                <i class="fa-solid fa-circle-check mr-1"></i> Saved locally
+                in browser storage
+              </div>
             </div>
           </div>
-        </div>
 
-        <div class="space-y-2 pt-4">
-          <button
-            onclick="saveGatewaySettings()"
-            class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 rounded-xl text-xs shadow-md transition-all"
+          <div
+            class="p-4 sm:p-5 border-t border-slate-200 dark:border-slate-800 shrink-0"
           >
-            Save &amp; Close Settings
-          </button>
-          <div class="grid grid-cols-2 gap-2">
             <button
-              onclick="exportGatewaySettings()"
-              class="w-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-bold py-2 rounded-xl text-[11px]"
+              onclick="saveGatewaySettings()"
+              class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 rounded-xl text-xs shadow-md transition-all"
             >
-              <i class="fa-solid fa-download"></i> Export
+              Save &amp; Close Settings
             </button>
-            <label
-              class="w-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-bold py-2 rounded-xl text-[11px] text-center cursor-pointer"
-            >
-              <i class="fa-solid fa-upload"></i> Import
-              <input
-                type="file"
-                id="settingsImportInput"
-                accept="application/json"
-                onchange="importGatewaySettings(event)"
-                class="hidden"
-              />
-            </label>
           </div>
         </div>
       </div>
     </div>
 
     <!-- MAIN APP VIEWPORTS CONTAINER -->
-    <main class="flex-1 max-w-md mx-auto w-full p-4 pb-24 space-y-5">
+    <main class="flex-1 max-w-md sm:max-w-xl md:max-w-2xl mx-auto w-full p-4 sm:p-6 pb-24 space-y-5">
       <!-- 1. HOME DASHBOARD VIEW -->
       <section id="homeView" class="space-y-4">
         <!-- Digital Bank Card -->
@@ -1126,7 +1414,7 @@ System ready...</pre
 
     <!-- BOTTOM MOBILE NAVIGATION BAR (BANK APP STYLE) -->
     <nav
-      class="fixed bottom-0 inset-x-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 pb-[env(safe-area-inset-bottom)] shadow-lg max-w-md mx-auto"
+      class="fixed bottom-0 inset-x-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 pb-[env(safe-area-inset-bottom)] shadow-lg max-w-md sm:max-w-xl md:max-w-2xl mx-auto"
     >
       <div class="grid grid-cols-3">
         <button

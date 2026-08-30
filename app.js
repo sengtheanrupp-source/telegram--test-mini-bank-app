@@ -1128,42 +1128,153 @@ function toggleVoiceConfirmSetting() {
   );
 }
 
-/* Speak a short Khmer confirmation after a successful Pay Bill / KHQR
-   payment — similar to the voice prompt used by Cambodian banking apps
-   (e.g. "ទឹកប្រាក់ចំនួន ៥.០០ ដុល្លារ ត្រូវបានទូទាត់ដោយជោគជ័យ"). */
+/* Khmer Number-to-Words Converter for natural voice confirmation */
+function khmerNumberToWords(num) {
+  if (num === null || num === undefined || isNaN(num)) return "";
+  const numericVal = parseFloat(num);
+  if (isNaN(numericVal)) return String(num);
+
+  const digits = ["សូន្យ", "មួយ", "ពីរ", "បី", "បួន", "ប្រាំ", "ប្រាំមួយ", "ប្រាំពីរ", "ប្រាំបី", "ប្រាំបួន"];
+  const tens = ["", "ដប់", "ម្ភៃ", "សាមសិប", "សែសិប", "ហាសិប", "ហុកសិប", "ចិត្តសិប", "ប៉ែតសិប", "កៅសិប"];
+
+  function convertUnderThousand(n) {
+    if (n === 0) return "";
+    let str = "";
+    const h = Math.floor(n / 100);
+    const rem = n % 100;
+    if (h > 0) {
+      str += digits[h] + "រយ";
+    }
+    if (rem > 0) {
+      if (rem < 10) {
+        str += digits[rem];
+      } else {
+        const t = Math.floor(rem / 10);
+        const d = rem % 10;
+        str += tens[t];
+        if (d > 0) str += digits[d];
+      }
+    }
+    return str;
+  }
+
+  function convertInteger(n) {
+    if (n === 0) return digits[0];
+    if (n < 0) return "ដក " + convertInteger(Math.abs(n));
+
+    let str = "";
+    if (n >= 1000000) {
+      const mil = Math.floor(n / 1000000);
+      str += convertInteger(mil) + "លាន";
+      n %= 1000000;
+    }
+    if (n >= 100000) {
+      const hundredK = Math.floor(n / 100000);
+      str += digits[hundredK] + "សែន";
+      n %= 100000;
+    }
+    if (n >= 10000) {
+      const tenK = Math.floor(n / 10000);
+      str += digits[tenK] + "ម៉ឺន";
+      n %= 10000;
+    }
+    if (n >= 1000) {
+      const k = Math.floor(n / 1000);
+      str += digits[k] + "ពាន់";
+      n %= 1000;
+    }
+    if (n > 0) {
+      str += convertUnderThousand(n);
+    }
+    return str;
+  }
+
+  const parts = Number(numericVal.toFixed(2)).toString().split(".");
+  const intPart = parseInt(parts[0], 10);
+  const decPart = parts[1] ? parseInt(parts[1], 10) : 0;
+
+  let result = convertInteger(intPart);
+  if (decPart > 0) {
+    const decStr = parts[1].length === 1 ? parts[1] + "0" : parts[1];
+    const decVal = parseInt(decStr, 10);
+    result += " ចុច " + convertInteger(decVal);
+  }
+  return result;
+}
+
+/* Speak a short Khmer voice confirmation after a successful Pay Bill / KHQR payment:
+   "ទឹកប្រាក់បានទូទាត់ចំនួន[ចំនួនជាអក្សរ] ដុល្លារ" (USD)
+   "ទឹកប្រាក់បានទូទាត់ចំនួន[ចំនួនជាអក្សរ] រៀល" (KHR) */
 function speakPaymentSuccess(amount, currency) {
   try {
     if (!appPreferences.voiceConfirm) return;
-    if (!("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") {
-      log("Voice confirmation skipped: speechSynthesis not supported.");
-      return;
-    }
 
     const numericAmount = parseFloat(amount);
-    const amountText = isNaN(numericAmount) ? String(amount) : numericAmount.toFixed(2);
-    const curr = (currency || "USD").toUpperCase();
-    const currencyKhmer = curr === "KHR" ? "រៀល" : "ដុល្លារ";
-    const phrase = `ទឹកប្រាក់ចំនួន ${amountText} ${currencyKhmer} ត្រូវបានទូទាត់ដោយជោគជ័យ`;
+    const curr = String(currency || "USD").toUpperCase();
+    const currencyKhmer = (curr === "KHR" || curr === "116") ? "រៀល" : "ដុល្លារ";
+    const khmerWords = khmerNumberToWords(numericAmount);
+    
+    // Exact phrase structure requested by user
+    const phrase = `ទឹកប្រាក់បានទូទាត់ចំនួន${khmerWords} ${currencyKhmer}`;
 
-    const utterance = new SpeechSynthesisUtterance(phrase);
-    utterance.lang = "km-KH";
-    utterance.rate = 0.92;
-    utterance.pitch = 1;
-    utterance.volume = 1;
+    log(`Voice Confirmation triggering Khmer speech: "${phrase}"`);
 
-    const voices = window.speechSynthesis.getVoices();
-    const khmerVoice = voices.find(
-      (v) => v.lang && v.lang.toLowerCase().startsWith("km"),
-    );
-    if (khmerVoice) utterance.voice = khmerVoice;
+    // 1. WebSpeech API with native/system Khmer voice search
+    if ("speechSynthesis" in window && typeof SpeechSynthesisUtterance !== "undefined") {
+      window.speechSynthesis.cancel(); // Cancel any existing audio speech queue
 
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(utterance);
-    log(`Voice confirmation spoken: "${phrase}"${khmerVoice ? "" : " (fallback voice — no Khmer voice installed)"}`);
+      const utterance = new SpeechSynthesisUtterance(phrase);
+      utterance.lang = "km-KH";
+      utterance.rate = 0.88; // clear speed for Khmer speech engine
+      utterance.pitch = 1.0;
+      utterance.volume = 1.0;
+
+      const voices = window.speechSynthesis.getVoices();
+      const khmerVoice = voices.find(
+        (v) => v.lang && (v.lang.toLowerCase().startsWith("km") || (v.name && v.name.toLowerCase().includes("khmer"))),
+      );
+
+      if (khmerVoice) {
+        utterance.voice = khmerVoice;
+        log(`Using WebSpeech native Khmer voice: ${khmerVoice.name}`);
+        window.speechSynthesis.speak(utterance);
+        return;
+      }
+    }
+
+    // 2. Fallback to Khmer TTS audio player if WebSpeech lacks Khmer voice
+    speakKhmerAudioFallback(phrase);
   } catch (e) {
     log("Voice confirmation failed: " + (e && e.message));
   }
 }
+
+function speakKhmerAudioFallback(phrase) {
+  try {
+    log(`Playing online Khmer TTS voice fallback for: "${phrase}"`);
+    const audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(phrase)}&tl=km&client=tw-ob`;
+    const audio = new Audio(audioUrl);
+    audio.play().catch((err) => {
+      console.warn("TTS Audio fallback play failed:", err);
+      if ("speechSynthesis" in window && typeof SpeechSynthesisUtterance !== "undefined") {
+        const fallbackUtterance = new SpeechSynthesisUtterance(phrase);
+        fallbackUtterance.lang = "km-KH";
+        window.speechSynthesis.speak(fallbackUtterance);
+      }
+    });
+  } catch (err) {
+    console.warn("TTS Audio fallback error:", err);
+  }
+}
+
+function testVoiceConfirmation(currency = "USD") {
+  const amount = currency === "KHR" ? 5000 : 5;
+  speakPaymentSuccess(amount, currency);
+  const words = khmerNumberToWords(amount);
+  const currText = currency === "KHR" ? "រៀល" : "ដុល្លារ";
+  showToast(`🔊 ទឹកប្រាក់បានទូទាត់ចំនួន${words} ${currText}`);
+}
+
 
 /* 8. SECURITY LOCK & SECRET TAP RESET ENGINE */
 let securitySettings = {
@@ -1553,15 +1664,68 @@ function toggleSettingsDrawer() {
   const drawer = document.getElementById("settingsDrawer");
   const backdrop = document.getElementById("drawerBackdrop");
   const panel = document.getElementById("drawerPanel");
-  if (panel.classList.contains("translate-x-full")) {
-    drawer.classList.remove("pointer-events-none");
-    backdrop.classList.remove("opacity-0");
-    panel.classList.remove("translate-x-full");
+
+  if (drawer.classList.contains("hidden")) {
+    // OPEN — reset to the menu-list screen on mobile; on tablet/desktop the
+    // sidebar + content split-view are always both visible regardless.
+    backToSettingsMenu();
+    drawer.classList.remove("hidden");
+    drawer.classList.add("flex");
+    requestAnimationFrame(() => {
+      backdrop.classList.remove("opacity-0");
+      panel.classList.remove("translate-x-full", "sm:opacity-0", "sm:scale-95");
+    });
   } else {
-    panel.classList.add("translate-x-full");
     backdrop.classList.add("opacity-0");
-    setTimeout(() => drawer.classList.add("pointer-events-none"), 300);
+    panel.classList.add("translate-x-full", "sm:opacity-0", "sm:scale-95");
+    setTimeout(() => {
+      drawer.classList.add("hidden");
+      drawer.classList.remove("flex");
+    }, 300);
   }
+}
+
+/* SETTINGS SECTION ROUTER — powers the mobile drill-down menu and the
+   tablet/desktop persistent sidebar split-view from the same markup. */
+const SETTINGS_SECTIONS = {
+  gateway: "API Gateway",
+  security: "Security & PIN",
+  camera: "Camera & Voice",
+  appearance: "Appearance",
+  data: "Backup & Data",
+};
+
+function showSettingsSection(sectionId) {
+  if (!SETTINGS_SECTIONS[sectionId]) sectionId = "gateway";
+
+  Object.keys(SETTINGS_SECTIONS).forEach((id) => {
+    const panel = document.getElementById(`settingsPanel-${id}`);
+    if (panel) panel.classList.toggle("hidden", id !== sectionId);
+  });
+
+  document.querySelectorAll(".settings-menu-item").forEach((btn) => {
+    const isActive = btn.dataset.section === sectionId;
+    btn.classList.toggle("bg-white", isActive);
+    btn.classList.toggle("dark:bg-slate-900", isActive);
+    btn.classList.toggle("shadow-sm", isActive);
+    btn.classList.toggle("ring-1", isActive);
+    btn.classList.toggle("ring-indigo-100", isActive);
+    btn.classList.toggle("dark:ring-indigo-900/40", isActive);
+  });
+
+  const titleEl = document.getElementById("settingsContentTitle");
+  if (titleEl) titleEl.textContent = SETTINGS_SECTIONS[sectionId];
+
+  // Mobile drill-down: swap from the menu-list screen to the content pane.
+  // (On tablet/desktop, both panes stay visible regardless of this class —
+  // see the .settings-view-content media rule in the stylesheet.)
+  const drawer = document.getElementById("settingsDrawer");
+  if (drawer) drawer.classList.add("settings-view-content");
+}
+
+function backToSettingsMenu() {
+  const drawer = document.getElementById("settingsDrawer");
+  if (drawer) drawer.classList.remove("settings-view-content");
 }
 
 function saveGatewaySettings() {
@@ -1734,6 +1898,7 @@ window.onload = function () {
   loadGatewaySettings();
   loadSecuritySettings();
   loadAppPreferences();
+  showSettingsSection("gateway");
   updateFullCodes();
   updateRefNo();
   navigateToView("homeView");
