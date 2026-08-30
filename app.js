@@ -225,22 +225,14 @@ async function startCameraStream() {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     log("getUserMedia not available (insecure context or old browser).");
     if (statusText) statusText.textContent = "Camera API unavailable on this device";
-    showToast("Camera not supported here. Use Telegram Scan or Image Upload.", true);
+    showToast("Camera not supported here. Use Image Upload instead.", true);
     return;
   }
 
-  // Fast-first constraints: 640x480 starts quicker and decodes faster than 1280x720
+  // Clean, robust constraints that avoid triggering repeated Telegram permission dialogs
   const constraintOptions = [
-    {
-      video: {
-        facingMode: { ideal: cameraFacingMode },
-        width: { ideal: 640 },
-        height: { ideal: 480 },
-      },
-      audio: false,
-    },
-    { video: { facingMode: { ideal: cameraFacingMode } }, audio: false },
-    { video: true, audio: false },
+    { video: { facingMode: cameraFacingMode === "user" ? "user" : { ideal: "environment" } }, audio: false },
+    { video: true, audio: false }
   ];
 
   log(`Starting camera stream (Facing mode: ${cameraFacingMode})...`);
@@ -283,6 +275,10 @@ async function startCameraStream() {
       });
 
       isCameraScanning = true;
+      cameraPermissionPrimed = true;
+      localStorage.setItem("cameraPermissionGranted", "true");
+      updateCameraPermissionStatusUI(true);
+
       if (statusText) statusText.textContent = "Point camera at KHQR code...";
       if (btnToggle) {
         btnToggle.innerHTML = '<i class="fa-solid fa-stop"></i> Stop Camera';
@@ -295,7 +291,7 @@ async function startCameraStream() {
     } catch (playErr) {
       log("Video play error: " + (playErr && playErr.message));
       if (statusText) statusText.textContent = "Camera feed play failed.";
-      showToast("Camera started but playback failed. Try Flip Camera.", true);
+      showToast("Camera started but playback failed.", true);
     }
   } else {
     const errName = (lastError && lastError.name) || "";
@@ -303,10 +299,7 @@ async function startCameraStream() {
     log("Camera stream access denied or unavailable: " + errName + " - " + errMsg);
     if (errName === "NotAllowedError" || errName === "PermissionDeniedError") {
       if (statusText) statusText.textContent = "Camera permission denied";
-      showToast(
-        "Camera access denied on iOS. Open Settings → Telegram → Camera (Allow), then reopen this Mini App.",
-        true,
-      );
+      showToast("Camera permission denied. Allow camera access in Telegram settings.", true);
     } else if (errName === "NotFoundError" || errName === "DevicesNotFoundError") {
       if (statusText) statusText.textContent = "No camera found on device";
       showToast("No camera detected. Use Image Upload instead.", true);
@@ -315,7 +308,7 @@ async function startCameraStream() {
       showToast("Camera busy. Close other apps using the camera and retry.", true);
     } else {
       if (statusText) statusText.textContent = "Camera access denied or unavailable";
-      showToast("Camera access denied. Please check permissions or use Telegram Scan.", true);
+      showToast("Camera access denied. Please check permissions.", true);
     }
   }
 }
@@ -335,8 +328,8 @@ function stopCameraStream() {
 }
 
 function switchCameraFacing() {
-  cameraFacingMode =
-    cameraFacingMode === "environment" ? "user" : "environment";
+  cameraFacingMode = cameraFacingMode === "environment" ? "user" : "environment";
+  log(`Flipping camera facing mode to: ${cameraFacingMode}`);
   startCameraStream();
 }
 
