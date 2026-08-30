@@ -1226,7 +1226,7 @@ function khmerNumberToWords(num) {
 /* Speak a short Khmer voice confirmation after a successful Pay Bill / KHQR payment:
    "ទឹកប្រាក់បានទូទាត់ចំនួន[ចំនួនជាអក្សរ] ដុល្លារ" (USD)
    "ទឹកប្រាក់បានទូទាត់ចំនួន[ចំនួនជាអក្សរ] រៀល" (KHR) */
-function speakPaymentSuccess(amount, currency) {
+async function speakPaymentSuccess(amount, currency) {
   try {
     if (!appPreferences.voiceConfirm) return;
 
@@ -1238,67 +1238,80 @@ function speakPaymentSuccess(amount, currency) {
     const currencyKhmer = (curr === "KHR" || curr === "116") ? "រៀល" : "ដុល្លារ";
     const khmerWords = khmerNumberToWords(numericAmount);
     
-    // Exact phrase structure requested by user
+    // Exact phrase structure requested by user (ACLEDA / ABA Mobile style)
     const phrase = `ទឹកប្រាក់បានទូទាត់ចំនួន${khmerWords} ${currencyKhmer}`;
 
-    log(`Voice Confirmation triggering Khmer speech: "${phrase}"`);
+    log(`Voice Confirmation triggering Khmer human speech: "${phrase}"`);
 
-    // 1. Primary: WebSpeech API with native/system Khmer voice search
-    if ("speechSynthesis" in window && typeof SpeechSynthesisUtterance !== "undefined") {
-      try {
-        window.speechSynthesis.cancel(); // Reset speech queue
-
-        const utterance = new SpeechSynthesisUtterance(phrase);
-        utterance.lang = "km-KH";
-        utterance.rate = 0.88;
-        utterance.pitch = 1.0;
-        utterance.volume = 1.0;
-
-        const voices = window.speechSynthesis.getVoices();
-        const khmerVoice = voices.find(
-          (v) => v.lang && (v.lang.toLowerCase().startsWith("km") || (v.name && v.name.toLowerCase().includes("khmer"))),
-        );
-
-        if (khmerVoice) {
-          utterance.voice = khmerVoice;
-          log(`Using WebSpeech native Khmer voice: ${khmerVoice.name}`);
-        } else {
-          log("WebSpeech using default km-KH voice fallback.");
-        }
-
-        window.speechSynthesis.speak(utterance);
-        return;
-      } catch (speechErr) {
-        console.warn("WebSpeech synthesis error:", speechErr);
-      }
-    }
-
-    // 2. Secondary: Fallback Khmer TTS audio player
-    speakKhmerAudioFallback(phrase);
+    // Play human Khmer voice MP3 (SoundOfText / StreamElements / WebSpeech)
+    await speakKhmerAudioFallback(phrase);
   } catch (e) {
     log("Voice confirmation failed: " + (e && e.message));
   }
 }
 
-function speakKhmerAudioFallback(phrase) {
-  try {
-    log(`Playing online Khmer TTS audio fallback for: "${phrase}"`);
-    const audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(phrase)}&tl=km&client=tw-ob`;
-    const player = document.getElementById("khmerVoicePlayer");
+async function speakKhmerAudioFallback(phrase) {
+  const player = document.getElementById("khmerVoicePlayer");
 
-    if (player) {
-      player.src = audioUrl;
-      player.play().catch((err) => {
-        console.warn("khmerVoicePlayer play fail, trying dynamic Audio:", err);
-        const dynamicAudio = new Audio(audioUrl);
-        dynamicAudio.play().catch(() => {});
-      });
-    } else {
-      const dynamicAudio = new Audio(audioUrl);
-      dynamicAudio.play().catch(() => {});
+  // 1. Primary: SoundOfText API (CORS-free, public MP3 generated via Google Khmer TTS)
+  try {
+    log(`Fetching SoundOfText Khmer human voice MP3 for: "${phrase}"...`);
+    const response = await fetch("https://api.soundoftext.com/sounds", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        engine: "Google",
+        data: { text: phrase, voice: "km" },
+      }),
+    });
+    const data = await response.json();
+    if (data && data.success && data.id) {
+      const audioUrl = `https://files.soundoftext.com/${data.id}.mp3`;
+      log(`Playing SoundOfText Khmer Audio: ${audioUrl}`);
+      if (player) {
+        player.src = audioUrl;
+        await player.play();
+        return;
+      } else {
+        const audio = new Audio(audioUrl);
+        await audio.play();
+        return;
+      }
     }
   } catch (err) {
-    console.warn("TTS Audio fallback error:", err);
+    console.warn("SoundOfText TTS API attempt failed:", err);
+  }
+
+  // 2. Secondary: StreamElements CORS-free Khmer TTS endpoint
+  try {
+    const streamUrl = `https://api.streamelements.com/kappa/v2/speech?voice=Khmer&text=${encodeURIComponent(phrase)}`;
+    log(`Playing StreamElements Khmer audio stream: ${streamUrl}`);
+    if (player) {
+      player.src = streamUrl;
+      await player.play();
+      return;
+    } else {
+      const audio = new Audio(streamUrl);
+      await audio.play();
+      return;
+    }
+  } catch (err) {
+    console.warn("StreamElements TTS attempt failed:", err);
+  }
+
+  // 3. Tertiary: System WebSpeech API fallback
+  if ("speechSynthesis" in window && typeof SpeechSynthesisUtterance !== "undefined") {
+    try {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(phrase);
+      utterance.lang = "km-KH";
+      utterance.rate = 0.88;
+      utterance.pitch = 1.0;
+      utterance.volume = 1.0;
+      window.speechSynthesis.speak(utterance);
+    } catch (speechErr) {
+      console.warn("WebSpeech synthesis fallback failed:", speechErr);
+    }
   }
 }
 
