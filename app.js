@@ -209,33 +209,8 @@ function isIOSDevice() {
 }
 
 function triggerInstantQRScan() {
-  // If native Telegram scanner is available and non-iOS, open native popup cleanly.
-  // DO NOT attach onClosed auto-fallbacks that trigger a second camera prompt on Android.
-  const preferNative = !isIOSDevice();
-
-  if (preferNative && tgApp && tgApp.showScanQrPopup) {
-    try {
-      tgApp.showScanQrPopup(
-        { text: "Point camera at KHQR code to scan" },
-        function (qrText) {
-          if (qrText && qrText.trim()) {
-            log("Telegram native QR scanner scanned code:", qrText);
-            triggerHaptic("success");
-            try {
-              tgApp.closeScanQrPopup();
-            } catch (e) {}
-            processDecodedQR(qrText);
-            return true;
-          }
-        },
-      );
-      return;
-    } catch (e) {
-      console.warn("Telegram native scanner error, switching to HTML camera view:", e);
-    }
-  }
-
-  // Open live HTML camera scanner
+  // Always open our HTML live camera scanner directly.
+  // Bypassing tgApp.showScanQrPopup eliminates Telegram's "allow bot access your camera" popup prompt.
   navigateToView("cameraScanView");
 }
 
@@ -1309,18 +1284,19 @@ function speakKhmerAudioFallback(phrase) {
   try {
     log(`Playing online Khmer TTS audio fallback for: "${phrase}"`);
     const audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(phrase)}&tl=km&client=tw-ob`;
-    const audio = new Audio();
-    audio.crossOrigin = "anonymous";
-    audio.src = audioUrl;
-    audio.play().catch((err) => {
-      console.warn("TTS Audio fallback play failed:", err);
-      // Absolute fallback: trigger WebSpeech utterance
-      if ("speechSynthesis" in window && typeof SpeechSynthesisUtterance !== "undefined") {
-        const u = new SpeechSynthesisUtterance(phrase);
-        u.lang = "km-KH";
-        window.speechSynthesis.speak(u);
-      }
-    });
+    const player = document.getElementById("khmerVoicePlayer");
+
+    if (player) {
+      player.src = audioUrl;
+      player.play().catch((err) => {
+        console.warn("khmerVoicePlayer play fail, trying dynamic Audio:", err);
+        const dynamicAudio = new Audio(audioUrl);
+        dynamicAudio.play().catch(() => {});
+      });
+    } else {
+      const dynamicAudio = new Audio(audioUrl);
+      dynamicAudio.play().catch(() => {});
+    }
   } catch (err) {
     console.warn("TTS Audio fallback error:", err);
   }
@@ -1518,6 +1494,7 @@ function closeSecurityLockModal() {
 }
 
 function pressPinNum(num) {
+  unlockAudioEngine();
   if (enteredPin.length < 4) {
     enteredPin += num;
     triggerHaptic("impact");
