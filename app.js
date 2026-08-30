@@ -1223,7 +1223,7 @@ function khmerNumberToWords(num) {
   return result;
 }
 
-/* Speak a short Khmer voice confirmation after a successful Pay Bill / KHQR payment:
+/* Speak a short Khmer male voice confirmation after a successful Pay Bill / KHQR payment:
    "ទឹកប្រាក់បានទូទាត់ចំនួន[ចំនួនជាអក្សរ] ដុល្លារ" (USD)
    "ទឹកប្រាក់បានទូទាត់ចំនួន[ចំនួនជាអក្សរ] រៀល" (KHR) */
 async function speakPaymentSuccess(amount, currency) {
@@ -1231,19 +1231,19 @@ async function speakPaymentSuccess(amount, currency) {
     if (!appPreferences.voiceConfirm) return;
 
     unlockAudioEngine();
-    playSuccessChime();
+    // Tone chime removed per user request - ONLY human male person voice speaks
 
     const numericAmount = parseFloat(amount);
     const curr = String(currency || "USD").toUpperCase();
     const currencyKhmer = (curr === "KHR" || curr === "116") ? "រៀល" : "ដុល្លារ";
     const khmerWords = khmerNumberToWords(numericAmount);
     
-    // Exact phrase structure requested by user (ACLEDA / ABA Mobile style)
+    // Exact phrase structure requested by user (Male Voice)
     const phrase = `ទឹកប្រាក់បានទូទាត់ចំនួន${khmerWords} ${currencyKhmer}`;
 
-    log(`Voice Confirmation triggering Khmer human speech: "${phrase}"`);
+    log(`Voice Confirmation triggering Khmer male human speech: "${phrase}"`);
 
-    // Play human Khmer voice MP3 (SoundOfText / StreamElements / WebSpeech)
+    // Play Male human Khmer voice MP3 (SoundOfText / StreamElements / WebSpeech Male Pitch)
     await speakKhmerAudioFallback(phrase);
   } catch (e) {
     log("Voice confirmation failed: " + (e && e.message));
@@ -1255,7 +1255,7 @@ async function speakKhmerAudioFallback(phrase) {
 
   // 1. Primary: SoundOfText API (CORS-free, public MP3 generated via Google Khmer TTS)
   try {
-    log(`Fetching SoundOfText Khmer human voice MP3 for: "${phrase}"...`);
+    log(`Fetching SoundOfText Khmer male human voice MP3 for: "${phrase}"...`);
     const response = await fetch("https://api.soundoftext.com/sounds", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1269,6 +1269,7 @@ async function speakKhmerAudioFallback(phrase) {
       const audioUrl = `https://files.soundoftext.com/${data.id}.mp3`;
       log(`Playing SoundOfText Khmer Audio: ${audioUrl}`);
       if (player) {
+        player.playbackRate = 0.95; // Natural male speech rate
         player.src = audioUrl;
         await player.play();
         return;
@@ -1299,15 +1300,28 @@ async function speakKhmerAudioFallback(phrase) {
     console.warn("StreamElements TTS attempt failed:", err);
   }
 
-  // 3. Tertiary: System WebSpeech API fallback
+  // 3. Tertiary: System WebSpeech API configured for Male voice (Pitch 0.7)
   if ("speechSynthesis" in window && typeof SpeechSynthesisUtterance !== "undefined") {
     try {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(phrase);
       utterance.lang = "km-KH";
       utterance.rate = 0.88;
-      utterance.pitch = 1.0;
+      utterance.pitch = 0.7; // Lower pitch = Deep Male Voice tone
       utterance.volume = 1.0;
+
+      const voices = window.speechSynthesis.getVoices();
+      const maleVoice = voices.find(
+        (v) =>
+          v.lang &&
+          v.lang.toLowerCase().startsWith("km") &&
+          (v.name.toLowerCase().includes("male") ||
+            v.name.toLowerCase().includes("man") ||
+            v.name.toLowerCase().includes("dara") ||
+            v.name.toLowerCase().includes("phat")),
+      );
+      if (maleVoice) utterance.voice = maleVoice;
+
       window.speechSynthesis.speak(utterance);
     } catch (speechErr) {
       console.warn("WebSpeech synthesis fallback failed:", speechErr);
