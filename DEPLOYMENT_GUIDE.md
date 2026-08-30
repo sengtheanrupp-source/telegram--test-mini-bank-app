@@ -23,7 +23,7 @@ Follow this simple step-by-step guide to push your Telegram Mini App code to Git
 
    ```bash
    git add .
-   git commit -m "feat: Telegram Mini App with Bank Payment & Live Camera KHQR Scanner"
+ 
    ```
 
 4. **Create a Repository on GitHub**:

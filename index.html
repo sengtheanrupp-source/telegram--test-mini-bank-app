@@ -483,6 +483,25 @@
               </div>
             </div>
 
+            <!-- CAMERA & VOICE SETTINGS SECTION -->
+            <div class="border-t border-slate-200 dark:border-slate-800 pt-3 space-y-2">
+              <span class="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Camera &amp; Voice</span>
+              <div class="flex items-center justify-between bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800">
+                <div class="space-y-0.5 pr-2">
+                  <span class="text-xs font-bold text-slate-800 dark:text-slate-200 block">Auto-Allow Camera</span>
+                  <span class="text-[10px] text-slate-400 block">Pre-request camera permission automatically on Android &amp; iOS so scanning starts instantly</span>
+                </div>
+                <input type="checkbox" id="autoCameraEnabled" checked onchange="toggleAutoCameraSetting()" class="w-4 h-4 accent-indigo-600 rounded cursor-pointer shrink-0" />
+              </div>
+              <div class="flex items-center justify-between bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800">
+                <div class="space-y-0.5 pr-2">
+                  <span class="text-xs font-bold text-slate-800 dark:text-slate-200 block">Voice Payment Confirmation</span>
+                  <span class="text-[10px] text-slate-400 block">Speak the paid amount in Khmer after Pay Bill &amp; KHQR success</span>
+                </div>
+                <input type="checkbox" id="voiceConfirmEnabled" checked onchange="toggleVoiceConfirmSetting()" class="w-4 h-4 accent-indigo-600 rounded cursor-pointer shrink-0" />
+              </div>
+            </div>
+
             <div
               class="p-3 bg-indigo-50 dark:bg-indigo-950/40 rounded-xl border border-indigo-200/60 dark:border-indigo-900/50 text-[11px] text-indigo-700 dark:text-indigo-300"
             >
@@ -663,13 +682,21 @@
           </button>
         </div>
 
-        <!-- iOS camera permission tip -->
+        <!-- iOS / Android camera permission tip -->
         <div
           id="iosCameraTip"
           class="text-[11px] leading-snug text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/50 rounded-2xl px-3 py-2.5"
         >
           <i class="fa-solid fa-circle-info text-amber-500 mr-1"></i>
           <strong>iOS:</strong> Gray preview? Settings → Telegram → Camera → On, then reopen.
+          <strong class="ml-1">Android:</strong> Tap Allow when prompted, or enable it in Chrome/Telegram site settings.
+          <span class="block mt-1 text-amber-700/80 dark:text-amber-300/70">Tip: turn on <strong>Auto-Allow Camera</strong> in Settings so this is requested automatically next time.</span>
+        </div>
+        <div
+          id="cameraPermissionStatus"
+          class="hidden text-[11px] leading-snug text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/50 rounded-2xl px-3 py-2.5"
+        >
+          <i class="fa-solid fa-circle-check text-emerald-500 mr-1"></i> Camera access already allowed on this device.
         </div>
 
         <!-- Viewfinder Camera Frame -->

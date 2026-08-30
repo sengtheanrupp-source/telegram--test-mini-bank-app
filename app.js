@@ -384,6 +384,60 @@ function switchCameraFacing() {
   startCameraStream();
 }
 
+/* 4B. AUTO-ALLOW CAMERA (ANDROID & iOS) — silently pre-authorize camera
+   permission on app open so the live scanner opens instantly instead of
+   showing a gray preview / permission prompt the first time it's used. */
+let cameraPermissionPrimed = false;
+
+async function requestCameraPermissionEarly(silent = true) {
+  if (!appPreferences.autoCamera) return;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    log("Auto-Allow Camera skipped: getUserMedia unavailable on this device.");
+    return;
+  }
+
+  try {
+    const primerStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: cameraFacingMode } },
+      audio: false,
+    });
+    // Immediately release the camera — this call's only purpose is to
+    // trigger/confirm the OS-level permission prompt ahead of time.
+    primerStream.getTracks().forEach((track) => track.stop());
+    cameraPermissionPrimed = true;
+    log("Auto-Allow Camera: permission pre-authorized successfully.");
+    updateCameraPermissionStatusUI(true);
+  } catch (err) {
+    cameraPermissionPrimed = false;
+    const errName = (err && err.name) || "unknown";
+    log("Auto-Allow Camera: permission not yet granted (" + errName + ").");
+    updateCameraPermissionStatusUI(false);
+    if (!silent) {
+      if (errName === "NotAllowedError" || errName === "PermissionDeniedError") {
+        showToast(
+          "Camera permission denied. Allow it in your browser/Telegram site settings.",
+          true,
+        );
+      } else if (errName === "NotFoundError" || errName === "DevicesNotFoundError") {
+        showToast("No camera detected on this device.", true);
+      }
+    }
+  }
+}
+
+function updateCameraPermissionStatusUI(granted) {
+  const tip = document.getElementById("iosCameraTip");
+  const statusBox = document.getElementById("cameraPermissionStatus");
+  if (!tip || !statusBox) return;
+  if (granted) {
+    tip.classList.add("hidden");
+    statusBox.classList.remove("hidden");
+  } else {
+    tip.classList.remove("hidden");
+    statusBox.classList.add("hidden");
+  }
+}
+
 function tickCameraFrame(timestamp) {
   if (!isCameraScanning) return;
 
@@ -574,6 +628,10 @@ async function submitQRConfirmAfterAuth() {
         "KHQR Payment Successful",
         jsonData.message || "Transaction confirmed with bank.",
         metaDetails,
+      );
+      speakPaymentSuccess(
+        data.total_amount !== undefined ? data.total_amount : payload.amount,
+        data.currency || payload.currency,
       );
     } else {
       triggerHaptic("error");
@@ -967,6 +1025,7 @@ async function runSmartPaymentFlowAfterAuth() {
         jsonData.message || `Transaction ${autoRef} completed.`,
         metaDetails,
       );
+      speakPaymentSuccess(totalAmt, curr);
     } else {
       triggerHaptic("error");
       finishModal(
@@ -1011,6 +1070,98 @@ async function runVerifyTxn() {
     finishModal(true, "Verified Active", "Transaction reference confirmed.");
   } catch (err) {
     finishModal(false, "Connection Error", err.message);
+  }
+}
+
+/* 7B. APP PREFERENCES — AUTO-ALLOW CAMERA & KHMER VOICE CONFIRMATION */
+let appPreferences = {
+  autoCamera: true, // default ON: pre-request camera permission (Android & iOS)
+  voiceConfirm: true, // default ON: speak Khmer confirmation on payment success
+};
+
+function loadAppPreferences() {
+  try {
+    const raw = localStorage.getItem("bankAppPreferences");
+    if (raw) appPreferences = { ...appPreferences, ...JSON.parse(raw) };
+  } catch (e) {}
+
+  const autoCamToggle = document.getElementById("autoCameraEnabled");
+  const voiceToggle = document.getElementById("voiceConfirmEnabled");
+  if (autoCamToggle) autoCamToggle.checked = !!appPreferences.autoCamera;
+  if (voiceToggle) voiceToggle.checked = !!appPreferences.voiceConfirm;
+
+  // Warm up the speechSynthesis voice list early (Chrome/Android loads it async)
+  if ("speechSynthesis" in window) {
+    try {
+      window.speechSynthesis.getVoices();
+    } catch (e) {}
+  }
+
+  if (appPreferences.autoCamera) requestCameraPermissionEarly(true);
+}
+
+function saveAppPreferences() {
+  const autoCamToggle = document.getElementById("autoCameraEnabled");
+  const voiceToggle = document.getElementById("voiceConfirmEnabled");
+  appPreferences.autoCamera = autoCamToggle ? autoCamToggle.checked : true;
+  appPreferences.voiceConfirm = voiceToggle ? voiceToggle.checked : true;
+  localStorage.setItem("bankAppPreferences", JSON.stringify(appPreferences));
+  log("App preferences saved:", appPreferences);
+}
+
+function toggleAutoCameraSetting() {
+  saveAppPreferences();
+  if (appPreferences.autoCamera) {
+    requestCameraPermissionEarly(false);
+    showToast("Auto-Allow Camera enabled.");
+  } else {
+    showToast("Auto-Allow Camera disabled.");
+  }
+}
+
+function toggleVoiceConfirmSetting() {
+  saveAppPreferences();
+  showToast(
+    appPreferences.voiceConfirm
+      ? "Voice payment confirmation enabled."
+      : "Voice payment confirmation disabled.",
+  );
+}
+
+/* Speak a short Khmer confirmation after a successful Pay Bill / KHQR
+   payment — similar to the voice prompt used by Cambodian banking apps
+   (e.g. "ទឹកប្រាក់ចំនួន ៥.០០ ដុល្លារ ត្រូវបានទូទាត់ដោយជោគជ័យ"). */
+function speakPaymentSuccess(amount, currency) {
+  try {
+    if (!appPreferences.voiceConfirm) return;
+    if (!("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") {
+      log("Voice confirmation skipped: speechSynthesis not supported.");
+      return;
+    }
+
+    const numericAmount = parseFloat(amount);
+    const amountText = isNaN(numericAmount) ? String(amount) : numericAmount.toFixed(2);
+    const curr = (currency || "USD").toUpperCase();
+    const currencyKhmer = curr === "KHR" ? "រៀល" : "ដុល្លារ";
+    const phrase = `ទឹកប្រាក់ចំនួន ${amountText} ${currencyKhmer} ត្រូវបានទូទាត់ដោយជោគជ័យ`;
+
+    const utterance = new SpeechSynthesisUtterance(phrase);
+    utterance.lang = "km-KH";
+    utterance.rate = 0.92;
+    utterance.pitch = 1;
+    utterance.volume = 1;
+
+    const voices = window.speechSynthesis.getVoices();
+    const khmerVoice = voices.find(
+      (v) => v.lang && v.lang.toLowerCase().startsWith("km"),
+    );
+    if (khmerVoice) utterance.voice = khmerVoice;
+
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utterance);
+    log(`Voice confirmation spoken: "${phrase}"${khmerVoice ? "" : " (fallback voice — no Khmer voice installed)"}`);
+  } catch (e) {
+    log("Voice confirmation failed: " + (e && e.message));
   }
 }
 
@@ -1422,6 +1573,7 @@ function saveGatewaySettings() {
   };
   localStorage.setItem("bankGatewaySettings", JSON.stringify(settings));
   saveSecuritySettings();
+  saveAppPreferences();
   toggleSettingsDrawer();
   showToast("Settings saved successfully.");
   log("Settings saved to local storage.");
@@ -1581,6 +1733,7 @@ window.onload = function () {
   initTelegramWebApp();
   loadGatewaySettings();
   loadSecuritySettings();
+  loadAppPreferences();
   updateFullCodes();
   updateRefNo();
   navigateToView("homeView");
