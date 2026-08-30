@@ -209,31 +209,12 @@ function isIOSDevice() {
 }
 
 function triggerInstantQRScan() {
-  // On iOS the native Telegram QR popup often shows a gray/blank viewfinder
-  // when Camera permission is missing or restricted. Prefer our live HTML
-  // camera (clearer errors + auto-start) on iOS. Keep native scanner on
-  // Android / desktop where it is more reliable.
+  // If native Telegram scanner is available and non-iOS, open native popup cleanly.
+  // DO NOT attach onClosed auto-fallbacks that trigger a second camera prompt on Android.
   const preferNative = !isIOSDevice();
 
   if (preferNative && tgApp && tgApp.showScanQrPopup) {
     try {
-      if (tgApp.onEvent) {
-        const onClosed = function () {
-          try {
-            if (tgApp.offEvent) tgApp.offEvent("scanQrPopupClosed", onClosed);
-          } catch (e) {}
-          setTimeout(function () {
-            if (!isCameraScanning) {
-              log("Native QR popup closed without scan → opening live camera");
-              navigateToView("cameraScanView");
-            }
-          }, 60);
-        };
-        try {
-          tgApp.onEvent("scanQrPopupClosed", onClosed);
-        } catch (e) {}
-      }
-
       tgApp.showScanQrPopup(
         { text: "Point camera at KHQR code to scan" },
         function (qrText) {
@@ -250,11 +231,11 @@ function triggerInstantQRScan() {
       );
       return;
     } catch (e) {
-      console.warn("Telegram native scan fallback to HTML view:", e);
+      console.warn("Telegram native scanner error, switching to HTML camera view:", e);
     }
   }
 
-  // iOS default path + any native failure → live HTML camera (auto-starts)
+  // Open live HTML camera scanner
   navigateToView("cameraScanView");
 }
 
@@ -1079,6 +1060,41 @@ let appPreferences = {
   voiceConfirm: true, // default ON: speak Khmer confirmation on payment success
 };
 
+/* AUDIO ENGINE PRE-UNLOCK & VOICE PREPARATION */
+let isAudioEngineUnlocked = false;
+
+function unlockAudioEngine() {
+  if (isAudioEngineUnlocked) return;
+  try {
+    if ("speechSynthesis" in window) {
+      window.speechSynthesis.getVoices();
+      const u = new SpeechSynthesisUtterance("");
+      u.volume = 0;
+      window.speechSynthesis.speak(u);
+    }
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (AudioContext) {
+      const dummyCtx = new AudioContext();
+      if (dummyCtx.state === "suspended") dummyCtx.resume();
+    }
+    isAudioEngineUnlocked = true;
+    log("Audio & Speech synthesis pre-unlocked by user gesture.");
+  } catch (e) {}
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("pointerdown", unlockAudioEngine, { passive: true });
+  window.addEventListener("touchstart", unlockAudioEngine, { passive: true });
+  window.addEventListener("click", unlockAudioEngine, { passive: true });
+  if ("speechSynthesis" in window) {
+    try {
+      window.speechSynthesis.onvoiceschanged = function () {
+        window.speechSynthesis.getVoices();
+      };
+    } catch (e) {}
+  }
+}
+
 function loadAppPreferences() {
   try {
     const raw = localStorage.getItem("bankAppPreferences");
@@ -1090,14 +1106,12 @@ function loadAppPreferences() {
   if (autoCamToggle) autoCamToggle.checked = !!appPreferences.autoCamera;
   if (voiceToggle) voiceToggle.checked = !!appPreferences.voiceConfirm;
 
-  // Warm up the speechSynthesis voice list early (Chrome/Android loads it async)
+  // Warm up voices silently without prompting OS camera permissions
   if ("speechSynthesis" in window) {
     try {
       window.speechSynthesis.getVoices();
     } catch (e) {}
   }
-
-  if (appPreferences.autoCamera) requestCameraPermissionEarly(true);
 }
 
 function saveAppPreferences() {
@@ -1111,12 +1125,11 @@ function saveAppPreferences() {
 
 function toggleAutoCameraSetting() {
   saveAppPreferences();
-  if (appPreferences.autoCamera) {
-    requestCameraPermissionEarly(false);
-    showToast("Auto-Allow Camera enabled.");
-  } else {
-    showToast("Auto-Allow Camera disabled.");
-  }
+  showToast(
+    appPreferences.autoCamera
+      ? "Auto camera view enabled."
+      : "Auto camera view disabled.",
+  );
 }
 
 function toggleVoiceConfirmSetting() {
@@ -1126,6 +1139,39 @@ function toggleVoiceConfirmSetting() {
       ? "Voice payment confirmation enabled."
       : "Voice payment confirmation disabled.",
   );
+}
+
+/* Play pleasant mobile bank confirmation chime via Web Audio API */
+function playSuccessChime() {
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    if (ctx.state === "suspended") ctx.resume();
+    const now = ctx.currentTime;
+
+    const osc1 = ctx.createOscillator();
+    const gain1 = ctx.createGain();
+    osc1.type = "sine";
+    osc1.frequency.setValueAtTime(659.25, now); // E5
+    gain1.gain.setValueAtTime(0.18, now);
+    gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+    osc1.connect(gain1);
+    gain1.connect(ctx.destination);
+    osc1.start(now);
+    osc1.stop(now + 0.3);
+
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.type = "sine";
+    osc2.frequency.setValueAtTime(880.0, now + 0.12); // A5
+    gain2.gain.setValueAtTime(0.22, now + 0.12);
+    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+    osc2.connect(gain2);
+    gain2.connect(ctx.destination);
+    osc2.start(now + 0.12);
+    osc2.stop(now + 0.5);
+  } catch (e) {}
 }
 
 /* Khmer Number-to-Words Converter for natural voice confirmation */
@@ -1209,6 +1255,9 @@ function speakPaymentSuccess(amount, currency) {
   try {
     if (!appPreferences.voiceConfirm) return;
 
+    unlockAudioEngine();
+    playSuccessChime();
+
     const numericAmount = parseFloat(amount);
     const curr = String(currency || "USD").toUpperCase();
     const currencyKhmer = (curr === "KHR" || curr === "116") ? "រៀល" : "ដុល្លារ";
@@ -1219,30 +1268,37 @@ function speakPaymentSuccess(amount, currency) {
 
     log(`Voice Confirmation triggering Khmer speech: "${phrase}"`);
 
-    // 1. WebSpeech API with native/system Khmer voice search
+    // 1. Primary: WebSpeech API with native/system Khmer voice search
     if ("speechSynthesis" in window && typeof SpeechSynthesisUtterance !== "undefined") {
-      window.speechSynthesis.cancel(); // Cancel any existing audio speech queue
+      try {
+        window.speechSynthesis.cancel(); // Reset speech queue
 
-      const utterance = new SpeechSynthesisUtterance(phrase);
-      utterance.lang = "km-KH";
-      utterance.rate = 0.88; // clear speed for Khmer speech engine
-      utterance.pitch = 1.0;
-      utterance.volume = 1.0;
+        const utterance = new SpeechSynthesisUtterance(phrase);
+        utterance.lang = "km-KH";
+        utterance.rate = 0.88;
+        utterance.pitch = 1.0;
+        utterance.volume = 1.0;
 
-      const voices = window.speechSynthesis.getVoices();
-      const khmerVoice = voices.find(
-        (v) => v.lang && (v.lang.toLowerCase().startsWith("km") || (v.name && v.name.toLowerCase().includes("khmer"))),
-      );
+        const voices = window.speechSynthesis.getVoices();
+        const khmerVoice = voices.find(
+          (v) => v.lang && (v.lang.toLowerCase().startsWith("km") || (v.name && v.name.toLowerCase().includes("khmer"))),
+        );
 
-      if (khmerVoice) {
-        utterance.voice = khmerVoice;
-        log(`Using WebSpeech native Khmer voice: ${khmerVoice.name}`);
+        if (khmerVoice) {
+          utterance.voice = khmerVoice;
+          log(`Using WebSpeech native Khmer voice: ${khmerVoice.name}`);
+        } else {
+          log("WebSpeech using default km-KH voice fallback.");
+        }
+
         window.speechSynthesis.speak(utterance);
         return;
+      } catch (speechErr) {
+        console.warn("WebSpeech synthesis error:", speechErr);
       }
     }
 
-    // 2. Fallback to Khmer TTS audio player if WebSpeech lacks Khmer voice
+    // 2. Secondary: Fallback Khmer TTS audio player
     speakKhmerAudioFallback(phrase);
   } catch (e) {
     log("Voice confirmation failed: " + (e && e.message));
@@ -1251,15 +1307,18 @@ function speakPaymentSuccess(amount, currency) {
 
 function speakKhmerAudioFallback(phrase) {
   try {
-    log(`Playing online Khmer TTS voice fallback for: "${phrase}"`);
+    log(`Playing online Khmer TTS audio fallback for: "${phrase}"`);
     const audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(phrase)}&tl=km&client=tw-ob`;
-    const audio = new Audio(audioUrl);
+    const audio = new Audio();
+    audio.crossOrigin = "anonymous";
+    audio.src = audioUrl;
     audio.play().catch((err) => {
       console.warn("TTS Audio fallback play failed:", err);
+      // Absolute fallback: trigger WebSpeech utterance
       if ("speechSynthesis" in window && typeof SpeechSynthesisUtterance !== "undefined") {
-        const fallbackUtterance = new SpeechSynthesisUtterance(phrase);
-        fallbackUtterance.lang = "km-KH";
-        window.speechSynthesis.speak(fallbackUtterance);
+        const u = new SpeechSynthesisUtterance(phrase);
+        u.lang = "km-KH";
+        window.speechSynthesis.speak(u);
       }
     });
   } catch (err) {
@@ -1268,6 +1327,7 @@ function speakKhmerAudioFallback(phrase) {
 }
 
 function testVoiceConfirmation(currency = "USD") {
+  unlockAudioEngine();
   const amount = currency === "KHR" ? 5000 : 5;
   speakPaymentSuccess(amount, currency);
   const words = khmerNumberToWords(amount);
