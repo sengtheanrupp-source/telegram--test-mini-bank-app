@@ -1548,72 +1548,112 @@ System ready...</pre
       </div>
     </div>
 
-    <!-- GENERAL TRANSACTION RECEIPT MODAL -->
+    <!-- GENERAL TRANSACTION RECEIPT MODAL (2026 PAYMENT SUCCESS & STATUS MODAL) -->
     <div
       id="bankModal"
       class="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4 hidden transition-all duration-300"
     >
       <div
         id="modalContainer"
-        class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-sm w-full text-center shadow-2xl relative overflow-hidden transform scale-95 opacity-0"
+        class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-[32px] max-w-sm w-full text-center shadow-2xl relative overflow-hidden transform scale-95 opacity-0 transition-all duration-300"
       >
+        <!-- Modal Top Header Banner with Dynamic Gradient -->
         <div
-          class="bg-gradient-to-br from-indigo-600 to-violet-700 pt-6 pb-10 px-6"
+          id="modalHeaderBg"
+          class="bg-gradient-to-br from-emerald-600 via-teal-600 to-indigo-700 pt-7 pb-11 px-6 relative transition-colors duration-300"
         >
+          <!-- Glowing Animated Tick Icon -->
           <div
             id="modalIconContainer"
-            class="w-14 h-14 rounded-full flex items-center justify-center mx-auto text-xl shadow-lg bg-white/20 text-white border border-white/30"
+            class="w-16 h-16 rounded-full flex items-center justify-center mx-auto text-2xl shadow-xl bg-emerald-500 text-white border-2 border-emerald-300 ring-pulse-success relative z-10 transition-all"
           >
-            <i id="modalIcon" class="fa-solid fa-spinner animate-spin"></i>
+            <i id="modalIcon" class="fa-solid fa-check text-2xl text-white"></i>
           </div>
         </div>
-        <div class="px-5 -mt-5 relative z-10">
-          <div class="bg-white dark:bg-slate-900 rounded-2xl shadow p-4">
+
+        <div class="px-5 -mt-6 relative z-10 space-y-3">
+          <!-- Thank You Badge & Title Container -->
+          <div class="bg-white dark:bg-slate-900 rounded-2xl shadow-lg border border-slate-100 dark:border-slate-800/80 p-4 space-y-2">
+            <!-- 2026 "Thank You!" Icon Badge -->
+            <div
+              id="modalThankYouBadge"
+              class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-600 dark:text-emerald-400 font-bold text-[11px] shadow-sm"
+            >
+              <i class="fa-solid fa-heart text-rose-500 text-xs animate-bounce"></i>
+              <span>Thank You for your payment!</span>
+            </div>
+
             <h3
               id="modalTitle"
-              class="text-sm font-bold text-slate-900 dark:text-slate-100"
+              class="text-base font-extrabold text-slate-900 dark:text-slate-100 tracking-tight"
             >
-              Processing
+              Payment Successful
             </h3>
-            <p id="modalMessage" class="text-xs text-slate-500 mt-1">
-              Communicating with bank API...
+            <p id="modalMessage" class="text-xs text-slate-500 font-medium">
+              Transaction reference confirmed with bank.
             </p>
           </div>
-        </div>
-        <div class="p-5 space-y-3">
+
+          <!-- Digital Receipt Details Card -->
           <div
             id="modalReceiptDetails"
-            class="hidden text-left bg-slate-50 dark:bg-slate-950 p-3 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-1.5 text-xs"
+            class="hidden text-left bg-slate-50 dark:bg-slate-950 p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 space-y-2 text-xs shadow-inner"
           >
-            <div class="flex justify-between">
-              <span class="text-slate-400">Customer</span
-              ><span id="mCustomerCode" class="font-bold font-mono">-</span>
+            <!-- Prominent Amount Banner -->
+            <div class="flex items-center justify-between bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200/60 dark:border-slate-800">
+              <div>
+                <span class="text-[9px] font-extrabold tracking-wider uppercase text-slate-400 block">Total Amount Paid</span>
+                <span id="mTotalAmount" class="text-xl font-black font-num text-emerald-600 dark:text-emerald-400">$0.00</span>
+              </div>
+              <span id="mPaidStatusTag" class="text-[9px] font-bold uppercase px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
+                <i class="fa-solid fa-circle-check text-[10px]"></i> Paid
+              </span>
             </div>
-            <div class="flex justify-between">
-              <span class="text-slate-400">Name</span
-              ><span id="mCustomerName" class="font-bold">-</span>
-            </div>
-            <div class="flex justify-between">
-              <span class="text-slate-400">Total Paid</span
-              ><span
-                id="mTotalAmount"
-                class="font-black text-emerald-600 font-num"
-                >-</span
-              >
-            </div>
-            <div class="flex justify-between">
-              <span class="text-slate-400">Fee</span
-              ><span id="mFeeAmount" class="font-bold font-num">-</span>
-            </div>
-            <div class="flex justify-between">
-              <span class="text-slate-400">Paid To</span
-              ><span id="mPaidTo" class="font-bold">-</span>
-            </div>
-            <div class="flex justify-between">
-              <span class="text-slate-400">Date</span
-              ><span id="mPaidDate" class="font-bold text-[10px]">-</span>
+
+            <!-- Detailed Key-Value Breakdown -->
+            <div class="space-y-1.5 pt-1 text-[11px]">
+              <div class="flex justify-between items-center">
+                <span class="text-slate-400">Paid To</span>
+                <span id="mPaidTo" class="font-bold text-slate-800 dark:text-slate-200 truncate max-w-[170px]">-</span>
+              </div>
+              <div class="flex justify-between items-center">
+                <span class="text-slate-400">Customer Code</span>
+                <span id="mCustomerCode" class="font-bold font-mono text-slate-800 dark:text-slate-200 truncate max-w-[170px]">-</span>
+              </div>
+              <div class="flex justify-between items-center">
+                <span class="text-slate-400">Customer Name</span>
+                <span id="mCustomerName" class="font-bold text-slate-800 dark:text-slate-200 truncate max-w-[170px]">-</span>
+              </div>
+              <div class="flex justify-between items-center">
+                <span class="text-slate-400">Processing Fee</span>
+                <span id="mFeeAmount" class="font-bold font-num text-slate-700 dark:text-slate-300">-</span>
+              </div>
+              <div class="flex justify-between items-center">
+                <span class="text-slate-400">Date &amp; Time</span>
+                <span id="mPaidDate" class="font-bold text-[10px] text-slate-600 dark:text-slate-400 font-num">-</span>
+              </div>
             </div>
           </div>
+        </div>
+
+        <div class="p-5 space-y-2.5">
+          <div id="modalSuccessActions" class="grid grid-cols-2 gap-2 hidden">
+            <button
+              type="button"
+              onclick="copyModalReceipt()"
+              class="w-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 font-bold py-3 rounded-2xl text-xs flex items-center justify-center gap-1.5 active:scale-95 transition-all"
+            >
+              <i class="fa-solid fa-share-nodes text-indigo-500"></i> Share
+            </button>
+            <button
+              type="button"
+              onclick="closeModal()"
+              class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-2xl text-xs shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-1.5 active:scale-95 transition-all"
+            >
+              <i class="fa-solid fa-check"></i> Done
+            </button>
+          </div>
+
           <button
             id="modalCloseBtn"
             onclick="closeModal()"

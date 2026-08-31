@@ -420,7 +420,7 @@ function tickCameraFrame(timestamp) {
 
     const imageData = scanCanvasCtx.getImageData(0, 0, dw, dw);
     const code = jsQR(imageData.data, dw, dw, {
-      inversionAttempts: "dontInvert",
+      inversionAttempts: "attemptBoth",
     });
 
     if (code && code.data && code.data.trim()) {
@@ -658,18 +658,59 @@ function loadCapturedImage(src) {
 function scanImageElement(img) {
   const canvas = document.getElementById("hiddenCanvas");
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  canvas.width = img.naturalWidth;
-  canvas.height = img.naturalHeight;
-  ctx.drawImage(img, 0, 0);
+  
+  const nw = img.naturalWidth || img.width;
+  const nh = img.naturalHeight || img.height;
+  if (!nw || !nh) return false;
 
-  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const code = jsQR(imageData.data, imageData.width, imageData.height, {
-    inversionAttempts: "attemptBoth",
-  });
-  if (code && code.data) {
+  // Pass 1: Scaled scan (max 1000px) — ultra-fast for Android 12MP photos
+  const MAX_DIM = 1000;
+  let scale = 1.0;
+  if (nw > MAX_DIM || nh > MAX_DIM) {
+    scale = Math.min(MAX_DIM / nw, MAX_DIM / nh);
+  }
+  const sw = Math.floor(nw * scale);
+  const sh = Math.floor(nh * scale);
+
+  canvas.width = sw;
+  canvas.height = sh;
+  ctx.drawImage(img, 0, 0, sw, sh);
+
+  let imageData = ctx.getImageData(0, 0, sw, sh);
+  let code = jsQR(imageData.data, sw, sh, { inversionAttempts: "attemptBoth" });
+  if (code && code.data && code.data.trim()) {
+    log("Multi-pass QR scan succeeded (pass 1 downscaled):", code.data);
     processDecodedQR(code.data);
     return true;
   }
+
+  // Pass 2: Full resolution scan if downscale missed
+  if (scale !== 1.0 && nw <= 2400 && nh <= 2400) {
+    canvas.width = nw;
+    canvas.height = nh;
+    ctx.drawImage(img, 0, 0);
+    imageData = ctx.getImageData(0, 0, nw, nh);
+    code = jsQR(imageData.data, nw, nh, { inversionAttempts: "attemptBoth" });
+    if (code && code.data && code.data.trim()) {
+      log("Multi-pass QR scan succeeded (pass 2 full resolution):", code.data);
+      processDecodedQR(code.data);
+      return true;
+    }
+  }
+
+  // Pass 3: Center 60% crop scan (in case KHQR is centered in a larger document/photo)
+  const cropW = Math.floor(sw * 0.7);
+  const cropH = Math.floor(sh * 0.7);
+  const cropX = Math.floor((sw - cropW) / 2);
+  const cropY = Math.floor((sh - cropH) / 2);
+  const cropData = ctx.getImageData(cropX, cropY, cropW, cropH);
+  code = jsQR(cropData.data, cropW, cropH, { inversionAttempts: "attemptBoth" });
+  if (code && code.data && code.data.trim()) {
+    log("Multi-pass QR scan succeeded (pass 3 center crop):", code.data);
+    processDecodedQR(code.data);
+    return true;
+  }
+
   return false;
 }
 
@@ -688,82 +729,127 @@ function scanCroppedArea() {
   const hiddenCanvas = document.getElementById("hiddenCanvas");
   const ctx = hiddenCanvas.getContext("2d", { willReadFrequently: true });
 
+  const nw = img.naturalWidth || img.width;
+  const nh = img.naturalHeight || img.height;
+
   let srcX = 0,
     srcY = 0,
-    srcW = img.naturalWidth,
-    srcH = img.naturalHeight;
+    srcW = nw,
+    srcH = nh;
 
   if (cropRect.width > 10 && cropRect.height > 10) {
-    const scaleX = img.naturalWidth / cropRect.containerWidth;
-    const scaleY = img.naturalHeight / cropRect.containerHeight;
-    srcX = cropRect.left * scaleX;
-    srcY = cropRect.top * scaleY;
-    srcW = cropRect.width * scaleX;
-    srcH = cropRect.height * scaleY;
+    const scaleX = nw / cropRect.containerWidth;
+    const scaleY = nh / cropRect.containerHeight;
+    srcX = Math.floor(cropRect.left * scaleX);
+    srcY = Math.floor(cropRect.top * scaleY);
+    srcW = Math.floor(cropRect.width * scaleX);
+    srcH = Math.floor(cropRect.height * scaleY);
   }
 
-  hiddenCanvas.width = srcW;
-  hiddenCanvas.height = srcH;
-  ctx.drawImage(img, srcX, srcY, srcW, srcH, 0, 0, srcW, srcH);
+  // Scale down crop if huge
+  const MAX_CROP = 1000;
+  let targetW = srcW;
+  let targetH = srcH;
+  if (srcW > MAX_CROP || srcH > MAX_CROP) {
+    const scale = Math.min(MAX_CROP / srcW, MAX_CROP / srcH);
+    targetW = Math.floor(srcW * scale);
+    targetH = Math.floor(srcH * scale);
+  }
 
-  const imageData = ctx.getImageData(0, 0, srcW, srcH);
-  const code = jsQR(imageData.data, imageData.width, imageData.height, {
+  hiddenCanvas.width = targetW;
+  hiddenCanvas.height = targetH;
+  ctx.drawImage(img, srcX, srcY, srcW, srcH, 0, 0, targetW, targetH);
+
+  const imageData = ctx.getImageData(0, 0, targetW, targetH);
+  const code = jsQR(imageData.data, targetW, targetH, {
     inversionAttempts: "attemptBoth",
   });
-  if (code && code.data) {
+  if (code && code.data && code.data.trim()) {
+    log("Cropped region QR detected successfully:", code.data);
     processDecodedQR(code.data);
   } else {
     log("Cropped region did not contain a readable QR code.");
+    showToast("No QR code detected in cropped area. Try selecting closer to the QR code.", true);
   }
 }
 
-// Drag listener for snipping
+// Touch & Mouse Drag listeners for Android & Desktop snipping
 const snipContainer = document.getElementById("snipContainer");
 const snipBox = document.getElementById("snipBox");
+
+function startSnipDrag(clientX, clientY) {
+  const img = document.getElementById("snipPreviewImg");
+  if (!img || img.classList.contains("hidden")) return;
+  const rect = snipContainer.getBoundingClientRect();
+  startX = clientX - rect.left;
+  startY = clientY - rect.top;
+  isDragging = true;
+  snipBox.style.left = `${startX}px`;
+  snipBox.style.top = `${startY}px`;
+  snipBox.style.width = `0px`;
+  snipBox.style.height = `0px`;
+  snipBox.classList.remove("hidden");
+}
+
+function moveSnipDrag(clientX, clientY) {
+  if (!isDragging) return;
+  const rect = snipContainer.getBoundingClientRect();
+  const currentX = Math.max(0, Math.min(clientX - rect.left, rect.width));
+  const currentY = Math.max(0, Math.min(clientY - rect.top, rect.height));
+  const width = Math.abs(currentX - startX);
+  const height = Math.abs(currentY - startY);
+  const left = Math.min(startX, currentX);
+  const top = Math.min(startY, currentY);
+  snipBox.style.left = `${left}px`;
+  snipBox.style.top = `${top}px`;
+  snipBox.style.width = `${width}px`;
+  snipBox.style.height = `${height}px`;
+  cropRect = {
+    left,
+    top,
+    width,
+    height,
+    containerWidth: rect.width,
+    containerHeight: rect.height,
+  };
+}
+
+function endSnipDrag() {
+  if (isDragging) {
+    isDragging = false;
+    if (cropRect.width > 10 && cropRect.height > 10) scanCroppedArea();
+  }
+}
+
 if (snipContainer) {
-  snipContainer.addEventListener("mousedown", (e) => {
-    const img = document.getElementById("snipPreviewImg");
-    if (img.classList.contains("hidden")) return;
-    const rect = snipContainer.getBoundingClientRect();
-    startX = e.clientX - rect.left;
-    startY = e.clientY - rect.top;
-    isDragging = true;
-    snipBox.style.left = `${startX}px`;
-    snipBox.style.top = `${startY}px`;
-    snipBox.style.width = `0px`;
-    snipBox.style.height = `0px`;
-    snipBox.classList.remove("hidden");
-  });
+  // Mouse events
+  snipContainer.addEventListener("mousedown", (e) => startSnipDrag(e.clientX, e.clientY));
+  snipContainer.addEventListener("mousemove", (e) => moveSnipDrag(e.clientX, e.clientY));
+  window.addEventListener("mouseup", endSnipDrag);
 
-  snipContainer.addEventListener("mousemove", (e) => {
-    if (!isDragging) return;
-    const rect = snipContainer.getBoundingClientRect();
-    const currentX = e.clientX - rect.left;
-    const currentY = e.clientY - rect.top;
-    const width = Math.abs(currentX - startX);
-    const height = Math.abs(currentY - startY);
-    const left = Math.min(startX, currentX);
-    const top = Math.min(startY, currentY);
-    snipBox.style.left = `${left}px`;
-    snipBox.style.top = `${top}px`;
-    snipBox.style.width = `${width}px`;
-    snipBox.style.height = `${height}px`;
-    cropRect = {
-      left,
-      top,
-      width,
-      height,
-      containerWidth: rect.width,
-      containerHeight: rect.height,
-    };
-  });
+  // Touch events (for Android and iOS mobile devices)
+  snipContainer.addEventListener(
+    "touchstart",
+    (e) => {
+      if (e.touches && e.touches[0]) {
+        startSnipDrag(e.touches[0].clientX, e.touches[0].clientY);
+      }
+    },
+    { passive: true },
+  );
 
-  window.addEventListener("mouseup", () => {
-    if (isDragging) {
-      isDragging = false;
-      if (cropRect.width > 10 && cropRect.height > 10) scanCroppedArea();
-    }
-  });
+  snipContainer.addEventListener(
+    "touchmove",
+    (e) => {
+      if (e.touches && e.touches[0]) {
+        moveSnipDrag(e.touches[0].clientX, e.touches[0].clientY);
+      }
+    },
+    { passive: true },
+  );
+
+  window.addEventListener("touchend", endSnipDrag, { passive: true });
+  window.addEventListener("touchcancel", endSnipDrag, { passive: true });
 }
 
 /* 7. INQUIRY & SINGLE PAYMENT FLOWS */
@@ -1246,9 +1332,83 @@ async function speakPaymentSuccess(amount, currency) {
 async function speakKhmerAudioFallback(phrase) {
   const player = document.getElementById("khmerVoicePlayer");
 
-  // 1. Primary: SoundOfText API (CORS-free, public MP3 generated via Google Khmer TTS)
+  // 1. Primary: System WebSpeech API configured specifically for Khmer Male Voice
+  if ("speechSynthesis" in window && typeof SpeechSynthesisUtterance !== "undefined") {
+    try {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(phrase);
+      utterance.lang = "km-KH";
+      utterance.rate = 0.84; // Natural male cadence
+      utterance.pitch = 0.72; // Deep Male Voice pitch
+      utterance.volume = 1.0;
+
+      const voices = window.speechSynthesis.getVoices();
+      const maleVoice = voices.find(
+        (v) =>
+          v.lang &&
+          v.lang.toLowerCase().startsWith("km") &&
+          (v.name.toLowerCase().includes("male") ||
+            v.name.toLowerCase().includes("man") ||
+            v.name.toLowerCase().includes("piseth") ||
+            v.name.toLowerCase().includes("dara") ||
+            v.name.toLowerCase().includes("phat")),
+      );
+      if (maleVoice) utterance.voice = maleVoice;
+
+      window.speechSynthesis.speak(utterance);
+      log(`WebSpeech Khmer Male voice spoken: pitch 0.72, voice: ${maleVoice ? maleVoice.name : "System default"}`);
+      return;
+    } catch (speechErr) {
+      console.warn("WebSpeech synthesis attempt failed:", speechErr);
+    }
+  }
+
+  // Helper: Apply Web Audio API male acoustic DSP filter (chest resonance + pitch shift) to TTS audio stream
+  async function playWithMaleAudioDSP(audioUrl) {
+    try {
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContext) throw new Error("No AudioContext");
+      
+      const audioCtx = new AudioContext();
+      if (audioCtx.state === "suspended") await audioCtx.resume();
+
+      const response = await fetch(audioUrl);
+      const arrayBuffer = await response.arrayBuffer();
+      const decodedData = await audioCtx.decodeAudioData(arrayBuffer);
+
+      const source = audioCtx.createBufferSource();
+      source.buffer = decodedData;
+
+      // Lower playback rate slightly (0.84x) to shift vocal fundamental into male register (220Hz -> 165Hz)
+      source.playbackRate.value = 0.84;
+
+      // Low-shelf filter for deep male chest resonance (180Hz +7dB)
+      const lowShelf = audioCtx.createBiquadFilter();
+      lowShelf.type = "lowshelf";
+      lowShelf.frequency.value = 180;
+      lowShelf.gain.value = 7.0;
+
+      // Low-pass filter to dampen high female sibilance frequencies above 3000Hz
+      const lowPass = audioCtx.createBiquadFilter();
+      lowPass.type = "lowpass";
+      lowPass.frequency.value = 3000;
+
+      source.connect(lowShelf);
+      lowShelf.connect(lowPass);
+      lowPass.connect(audioCtx.destination);
+
+      source.start(0);
+      log(`Played Khmer male voice audio via Web Audio DSP (pitch shifted 0.84x + chest filter).`);
+      return true;
+    } catch (dspErr) {
+      console.warn("Web Audio DSP fallback failed:", dspErr);
+      return false;
+    }
+  }
+
+  // 2. Secondary: SoundOfText API with Web Audio Male DSP Filter
   try {
-    log(`Fetching SoundOfText Khmer male human voice MP3 for: "${phrase}"...`);
+    log(`Fetching SoundOfText Khmer TTS for male voice processing: "${phrase}"...`);
     const response = await fetch("https://api.soundoftext.com/sounds", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1260,15 +1420,14 @@ async function speakKhmerAudioFallback(phrase) {
     const data = await response.json();
     if (data && data.success && data.id) {
       const audioUrl = `https://files.soundoftext.com/${data.id}.mp3`;
-      log(`Playing SoundOfText Khmer Audio: ${audioUrl}`);
+      const dspSuccess = await playWithMaleAudioDSP(audioUrl);
+      if (dspSuccess) return;
+
+      // Direct fallback if AudioContext DSP is blocked
       if (player) {
-        player.playbackRate = 0.95; // Natural male speech rate
+        player.playbackRate = 0.84;
         player.src = audioUrl;
         await player.play();
-        return;
-      } else {
-        const audio = new Audio(audioUrl);
-        await audio.play();
         return;
       }
     }
@@ -1276,49 +1435,19 @@ async function speakKhmerAudioFallback(phrase) {
     console.warn("SoundOfText TTS API attempt failed:", err);
   }
 
-  // 2. Secondary: StreamElements CORS-free Khmer TTS endpoint
+  // 3. Tertiary: StreamElements CORS-free Khmer TTS endpoint with pitch shift
   try {
     const streamUrl = `https://api.streamelements.com/kappa/v2/speech?voice=Khmer&text=${encodeURIComponent(phrase)}`;
-    log(`Playing StreamElements Khmer audio stream: ${streamUrl}`);
+    const dspSuccess = await playWithMaleAudioDSP(streamUrl);
+    if (dspSuccess) return;
+
     if (player) {
+      player.playbackRate = 0.84;
       player.src = streamUrl;
       await player.play();
-      return;
-    } else {
-      const audio = new Audio(streamUrl);
-      await audio.play();
-      return;
     }
   } catch (err) {
     console.warn("StreamElements TTS attempt failed:", err);
-  }
-
-  // 3. Tertiary: System WebSpeech API configured for Male voice (Pitch 0.7)
-  if ("speechSynthesis" in window && typeof SpeechSynthesisUtterance !== "undefined") {
-    try {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(phrase);
-      utterance.lang = "km-KH";
-      utterance.rate = 0.88;
-      utterance.pitch = 0.7; // Lower pitch = Deep Male Voice tone
-      utterance.volume = 1.0;
-
-      const voices = window.speechSynthesis.getVoices();
-      const maleVoice = voices.find(
-        (v) =>
-          v.lang &&
-          v.lang.toLowerCase().startsWith("km") &&
-          (v.name.toLowerCase().includes("male") ||
-            v.name.toLowerCase().includes("man") ||
-            v.name.toLowerCase().includes("dara") ||
-            v.name.toLowerCase().includes("phat")),
-      );
-      if (maleVoice) utterance.voice = maleVoice;
-
-      window.speechSynthesis.speak(utterance);
-    } catch (speechErr) {
-      console.warn("WebSpeech synthesis fallback failed:", speechErr);
-    }
   }
 }
 
@@ -1644,16 +1773,30 @@ function navigateToView(viewId) {
 function openLoadingModal(title) {
   const modal = document.getElementById("bankModal");
   const container = document.getElementById("modalContainer");
+  const headerBg = document.getElementById("modalHeaderBg");
   const iconContainer = document.getElementById("modalIconContainer");
   const icon = document.getElementById("modalIcon");
+  const thankYouBadge = document.getElementById("modalThankYouBadge");
+  const successActions = document.getElementById("modalSuccessActions");
+  const closeBtn = document.getElementById("modalCloseBtn");
 
   document.getElementById("modalTitle").textContent = title;
-  document.getElementById("modalMessage").textContent = "Connecting to bank API...";
+  document.getElementById("modalMessage").textContent = "Communicating with bank API...";
   document.getElementById("modalReceiptDetails").classList.add("hidden");
-  document.getElementById("modalCloseBtn").disabled = true;
 
-  icon.className = "fa-solid fa-spinner animate-spin text-xl text-white";
-  iconContainer.className = "w-14 h-14 rounded-full flex items-center justify-center mx-auto text-xl shadow-lg bg-white/20 text-white border border-white/30";
+  if (headerBg) headerBg.className = "bg-gradient-to-br from-indigo-600 to-violet-700 pt-7 pb-11 px-6 relative transition-colors duration-300";
+  if (thankYouBadge) thankYouBadge.classList.add("hidden");
+  if (successActions) successActions.classList.add("hidden");
+  
+  if (closeBtn) {
+    closeBtn.classList.remove("hidden");
+    closeBtn.disabled = true;
+    closeBtn.textContent = "Processing...";
+    closeBtn.className = "w-full bg-slate-300 dark:bg-slate-800 text-slate-500 font-bold py-3 rounded-2xl text-xs cursor-not-allowed transition-all";
+  }
+
+  icon.className = "fa-solid fa-spinner animate-spin text-2xl text-white";
+  iconContainer.className = "w-16 h-16 rounded-full flex items-center justify-center mx-auto text-2xl shadow-lg bg-white/20 text-white border border-white/30";
 
   modal.classList.remove("hidden");
   setTimeout(() => {
@@ -1663,19 +1806,39 @@ function openLoadingModal(title) {
 }
 
 function finishModal(isSuccess, title, message, extraDetails = null) {
-  document.getElementById("modalTitle").textContent = title;
-  document.getElementById("modalMessage").textContent = message;
-  const closeBtn = document.getElementById("modalCloseBtn");
-  const details = document.getElementById("modalReceiptDetails");
+  const headerBg = document.getElementById("modalHeaderBg");
   const iconContainer = document.getElementById("modalIconContainer");
   const icon = document.getElementById("modalIcon");
+  const thankYouBadge = document.getElementById("modalThankYouBadge");
+  const successActions = document.getElementById("modalSuccessActions");
+  const closeBtn = document.getElementById("modalCloseBtn");
+  const details = document.getElementById("modalReceiptDetails");
+
+  document.getElementById("modalTitle").textContent = title;
+  document.getElementById("modalMessage").textContent = message;
 
   if (isSuccess) {
+    if (headerBg) headerBg.className = "bg-gradient-to-br from-emerald-600 via-teal-600 to-indigo-700 pt-7 pb-11 px-6 relative transition-colors duration-300";
     icon.className = "fa-solid fa-check text-2xl text-white";
-    iconContainer.className = "w-14 h-14 rounded-full flex items-center justify-center mx-auto text-xl shadow-xl bg-emerald-500 text-white border-2 border-emerald-300 ring-pulse-success";
+    iconContainer.className = "w-16 h-16 rounded-full flex items-center justify-center mx-auto text-2xl shadow-xl bg-emerald-500 text-white border-2 border-emerald-300 ring-pulse-success relative z-10";
+    
+    if (thankYouBadge) thankYouBadge.classList.remove("hidden");
+    if (successActions) successActions.classList.remove("hidden");
+    if (closeBtn) closeBtn.classList.add("hidden");
   } else {
+    if (headerBg) headerBg.className = "bg-gradient-to-br from-rose-600 via-rose-700 to-amber-700 pt-7 pb-11 px-6 relative transition-colors duration-300";
     icon.className = "fa-solid fa-xmark text-2xl text-white";
-    iconContainer.className = "w-14 h-14 rounded-full flex items-center justify-center mx-auto text-xl shadow-xl bg-rose-500 text-white border-2 border-rose-300";
+    iconContainer.className = "w-16 h-16 rounded-full flex items-center justify-center mx-auto text-2xl shadow-xl bg-rose-500 text-white border-2 border-rose-300 relative z-10";
+    
+    if (thankYouBadge) thankYouBadge.classList.add("hidden");
+    if (successActions) successActions.classList.add("hidden");
+    
+    if (closeBtn) {
+      closeBtn.classList.remove("hidden");
+      closeBtn.disabled = false;
+      closeBtn.textContent = "Dismiss / Close";
+      closeBtn.className = "w-full bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 font-bold py-3 rounded-2xl text-xs shadow-md active:scale-95 transition-all";
+    }
   }
 
   if (extraDetails) {
@@ -1691,16 +1854,12 @@ function finishModal(isSuccess, title, message, extraDetails = null) {
     if (elTotal) elTotal.textContent = extraDetails.total_amount || "-";
     if (elFee) elFee.textContent = extraDetails.fee_amount || "-";
     if (elTo) elTo.textContent = extraDetails.paid_to || "-";
-    if (elDate) elDate.textContent = extraDetails.paid_date || "-";
-    details.classList.remove("hidden");
+    if (elDate) elDate.textContent = extraDetails.paid_date || new Date().toLocaleString();
+    
+    if (details) details.classList.remove("hidden");
   } else {
-    details.classList.add("hidden");
+    if (details) details.classList.add("hidden");
   }
-
-  closeBtn.disabled = false;
-  closeBtn.className =
-    "w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-2xl text-xs shadow-md active:scale-95 transition-all";
-  closeBtn.textContent = "Done / Close";
 }
 
 function closeModal() {
@@ -1709,6 +1868,26 @@ function closeModal() {
   container.classList.remove("scale-100", "opacity-100");
   container.classList.add("scale-95", "opacity-0");
   setTimeout(() => modal.classList.add("hidden"), 80);
+}
+
+function copyModalReceipt() {
+  const code = document.getElementById("mCustomerCode") ? document.getElementById("mCustomerCode").textContent : "-";
+  const name = document.getElementById("mCustomerName") ? document.getElementById("mCustomerName").textContent : "-";
+  const total = document.getElementById("mTotalAmount") ? document.getElementById("mTotalAmount").textContent : "-";
+  const fee = document.getElementById("mFeeAmount") ? document.getElementById("mFeeAmount").textContent : "-";
+  const to = document.getElementById("mPaidTo") ? document.getElementById("mPaidTo").textContent : "-";
+  const date = document.getElementById("mPaidDate") ? document.getElementById("mPaidDate").textContent : "-";
+
+  const receiptTxt = `--- BANK MOBILE RECEIPT ---\nStatus: SUCCESSFUL\nPaid To: ${to}\nTotal Paid: ${total}\nCustomer Code: ${code}\nCustomer Name: ${name}\nFee: ${fee}\nDate: ${date}\n---------------------------`;
+
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(receiptTxt).then(() => {
+      triggerHaptic("success");
+      showToast("Receipt details copied!");
+    }).catch(() => fallbackCopyText(receiptTxt));
+  } else {
+    fallbackCopyText(receiptTxt);
+  }
 }
 
 function toggleDevMenu(forceClose) {
