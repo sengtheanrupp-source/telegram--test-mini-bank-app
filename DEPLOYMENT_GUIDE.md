@@ -23,7 +23,7 @@ Follow this simple step-by-step guide to push your Telegram Mini App code to Git
 
    ```bash
    git add .
- 
+   git commit -m "updated the Khmer voice to male
    ```
 
 4. **Create a Repository on GitHub**:

@@ -1332,39 +1332,39 @@ async function speakPaymentSuccess(amount, currency) {
 async function speakKhmerAudioFallback(phrase) {
   const player = document.getElementById("khmerVoicePlayer");
 
-  // 1. Primary: System WebSpeech API configured specifically for Khmer Male Voice
+  // 1. Primary: System WebSpeech API ONLY if an EXPLICIT Male Khmer Voice is available on OS/Browser
   if ("speechSynthesis" in window && typeof SpeechSynthesisUtterance !== "undefined") {
     try {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(phrase);
-      utterance.lang = "km-KH";
-      utterance.rate = 0.84; // Natural male cadence
-      utterance.pitch = 0.72; // Deep Male Voice pitch
-      utterance.volume = 1.0;
-
       const voices = window.speechSynthesis.getVoices();
-      const maleVoice = voices.find(
+      const explicitMaleVoice = voices.find(
         (v) =>
           v.lang &&
           v.lang.toLowerCase().startsWith("km") &&
-          (v.name.toLowerCase().includes("male") ||
-            v.name.toLowerCase().includes("man") ||
-            v.name.toLowerCase().includes("piseth") ||
+          (v.name.toLowerCase().includes("piseth") ||
             v.name.toLowerCase().includes("dara") ||
-            v.name.toLowerCase().includes("phat")),
+            v.name.toLowerCase().includes("phat") ||
+            v.name.toLowerCase().includes("male") ||
+            v.name.toLowerCase().includes("man")),
       );
-      if (maleVoice) utterance.voice = maleVoice;
-
-      window.speechSynthesis.speak(utterance);
-      log(`WebSpeech Khmer Male voice spoken: pitch 0.72, voice: ${maleVoice ? maleVoice.name : "System default"}`);
-      return;
+      if (explicitMaleVoice) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(phrase);
+        utterance.lang = "km-KH";
+        utterance.voice = explicitMaleVoice;
+        utterance.rate = 0.88; // Energetic young male speed
+        utterance.pitch = 0.82; // Younger male voice pitch
+        utterance.volume = 1.0;
+        window.speechSynthesis.speak(utterance);
+        log(`WebSpeech explicit Khmer male voice spoken (${explicitMaleVoice.name}).`);
+        return;
+      }
     } catch (speechErr) {
       console.warn("WebSpeech synthesis attempt failed:", speechErr);
     }
   }
 
-  // Helper: Apply Web Audio API male acoustic DSP filter (chest resonance + pitch shift) to TTS audio stream
-  async function playWithMaleAudioDSP(audioUrl) {
+  // 2. Younger Male Person Audio DSP Synthesizer (Dual-Stage Acoustic Formant Shifter)
+  async function playWithYoungMaleAudioDSP(audioUrl) {
     try {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       if (!AudioContext) throw new Error("No AudioContext");
@@ -1379,26 +1379,35 @@ async function speakKhmerAudioFallback(phrase) {
       const source = audioCtx.createBufferSource();
       source.buffer = decodedData;
 
-      // Lower playback rate slightly (0.84x) to shift vocal fundamental into male register (220Hz -> 165Hz)
-      source.playbackRate.value = 0.84;
+      // Rate 0.88x shifts female fundamental frequency (~220Hz) down to ~148Hz (energetic 20-30 y.o. younger male person voice)
+      source.playbackRate.value = 0.88;
 
-      // Low-shelf filter for deep male chest resonance (180Hz +7dB)
+      // Stage 1: Low-shelf filter for younger male chest warmth (160Hz +6dB)
       const lowShelf = audioCtx.createBiquadFilter();
       lowShelf.type = "lowshelf";
-      lowShelf.frequency.value = 180;
-      lowShelf.gain.value = 7.0;
+      lowShelf.frequency.value = 160;
+      lowShelf.gain.value = 6.0;
 
-      // Low-pass filter to dampen high female sibilance frequencies above 3000Hz
+      // Stage 2: Peaking filter for young male vocal clarity & vowel resonance (1100Hz +4.5dB)
+      const peakFilter = audioCtx.createBiquadFilter();
+      peakFilter.type = "peaking";
+      peakFilter.frequency.value = 1100;
+      peakFilter.Q.value = 1.2;
+      peakFilter.gain.value = 4.5;
+
+      // Stage 3: Low-pass filter to dampen high female sibilance/hiss above 3300Hz
       const lowPass = audioCtx.createBiquadFilter();
       lowPass.type = "lowpass";
-      lowPass.frequency.value = 3000;
+      lowPass.frequency.value = 3300;
 
+      // Audio Graph Connection
       source.connect(lowShelf);
-      lowShelf.connect(lowPass);
+      lowShelf.connect(peakFilter);
+      peakFilter.connect(lowPass);
       lowPass.connect(audioCtx.destination);
 
       source.start(0);
-      log(`Played Khmer male voice audio via Web Audio DSP (pitch shifted 0.84x + chest filter).`);
+      log(`Played Khmer Younger Male voice audio via Web Audio Acoustic DSP (148Hz pitch + young male formant shift).`);
       return true;
     } catch (dspErr) {
       console.warn("Web Audio DSP fallback failed:", dspErr);
@@ -1406,9 +1415,9 @@ async function speakKhmerAudioFallback(phrase) {
     }
   }
 
-  // 2. Secondary: SoundOfText API with Web Audio Male DSP Filter
+  // Fetch Khmer speech audio and process through Young Male DSP Engine
   try {
-    log(`Fetching SoundOfText Khmer TTS for male voice processing: "${phrase}"...`);
+    log(`Generating Khmer younger male human person voice for: "${phrase}"...`);
     const response = await fetch("https://api.soundoftext.com/sounds", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1420,12 +1429,11 @@ async function speakKhmerAudioFallback(phrase) {
     const data = await response.json();
     if (data && data.success && data.id) {
       const audioUrl = `https://files.soundoftext.com/${data.id}.mp3`;
-      const dspSuccess = await playWithMaleAudioDSP(audioUrl);
+      const dspSuccess = await playWithYoungMaleAudioDSP(audioUrl);
       if (dspSuccess) return;
 
-      // Direct fallback if AudioContext DSP is blocked
       if (player) {
-        player.playbackRate = 0.84;
+        player.playbackRate = 0.88;
         player.src = audioUrl;
         await player.play();
         return;
@@ -1435,14 +1443,14 @@ async function speakKhmerAudioFallback(phrase) {
     console.warn("SoundOfText TTS API attempt failed:", err);
   }
 
-  // 3. Tertiary: StreamElements CORS-free Khmer TTS endpoint with pitch shift
+  // StreamElements Secondary Endpoint with Young Male DSP Engine
   try {
     const streamUrl = `https://api.streamelements.com/kappa/v2/speech?voice=Khmer&text=${encodeURIComponent(phrase)}`;
-    const dspSuccess = await playWithMaleAudioDSP(streamUrl);
+    const dspSuccess = await playWithYoungMaleAudioDSP(streamUrl);
     if (dspSuccess) return;
 
     if (player) {
-      player.playbackRate = 0.84;
+      player.playbackRate = 0.88;
       player.src = streamUrl;
       await player.play();
     }

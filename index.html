@@ -1551,45 +1551,46 @@ System ready...</pre
     <!-- GENERAL TRANSACTION RECEIPT MODAL (2026 PAYMENT SUCCESS & STATUS MODAL) -->
     <div
       id="bankModal"
-      class="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4 hidden transition-all duration-300"
+      class="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4 sm:p-6 md:p-8 hidden transition-all duration-300 overflow-y-auto"
     >
       <div
         id="modalContainer"
-        class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-[32px] max-w-sm w-full text-center shadow-2xl relative overflow-hidden transform scale-95 opacity-0 transition-all duration-300"
+        class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-[32px] sm:rounded-[36px] w-full max-w-sm sm:max-w-md md:max-w-lg text-center shadow-2xl relative overflow-hidden transform scale-95 opacity-0 transition-all duration-300 max-h-[90vh] flex flex-col my-auto"
       >
         <!-- Modal Top Header Banner with Dynamic Gradient -->
         <div
           id="modalHeaderBg"
-          class="bg-gradient-to-br from-emerald-600 via-teal-600 to-indigo-700 pt-7 pb-11 px-6 relative transition-colors duration-300"
+          class="bg-gradient-to-br from-emerald-600 via-teal-600 to-indigo-700 pt-7 pb-11 px-6 relative transition-colors duration-300 shrink-0"
         >
           <!-- Glowing Animated Tick Icon -->
           <div
             id="modalIconContainer"
-            class="w-16 h-16 rounded-full flex items-center justify-center mx-auto text-2xl shadow-xl bg-emerald-500 text-white border-2 border-emerald-300 ring-pulse-success relative z-10 transition-all"
+            class="w-16 h-16 sm:w-20 sm:h-20 rounded-full flex items-center justify-center mx-auto text-2xl sm:text-3xl shadow-xl bg-emerald-500 text-white border-2 border-emerald-300 ring-pulse-success relative z-10 transition-all"
           >
-            <i id="modalIcon" class="fa-solid fa-check text-2xl text-white"></i>
+            <i id="modalIcon" class="fa-solid fa-check text-2xl sm:text-3xl text-white"></i>
           </div>
         </div>
 
-        <div class="px-5 -mt-6 relative z-10 space-y-3">
+        <!-- Scrollable Modal Body for Tablets & Mobile -->
+        <div class="px-5 sm:px-7 -mt-6 relative z-10 space-y-3.5 overflow-y-auto flex-1 py-1">
           <!-- Thank You Badge & Title Container -->
           <div class="bg-white dark:bg-slate-900 rounded-2xl shadow-lg border border-slate-100 dark:border-slate-800/80 p-4 space-y-2">
             <!-- 2026 "Thank You!" Icon Badge -->
             <div
               id="modalThankYouBadge"
-              class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-600 dark:text-emerald-400 font-bold text-[11px] shadow-sm"
+              class="inline-flex items-center gap-1.5 px-3 py-1 sm:px-4 sm:py-1.5 rounded-full bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-600 dark:text-emerald-400 font-bold text-[11px] sm:text-xs shadow-sm"
             >
-              <i class="fa-solid fa-heart text-rose-500 text-xs animate-bounce"></i>
+              <i class="fa-solid fa-heart text-rose-500 text-xs sm:text-sm animate-bounce"></i>
               <span>Thank You for your payment!</span>
             </div>
 
             <h3
               id="modalTitle"
-              class="text-base font-extrabold text-slate-900 dark:text-slate-100 tracking-tight"
+              class="text-base sm:text-lg font-extrabold text-slate-900 dark:text-slate-100 tracking-tight"
             >
               Payment Successful
             </h3>
-            <p id="modalMessage" class="text-xs text-slate-500 font-medium">
+            <p id="modalMessage" class="text-xs sm:text-sm text-slate-500 font-medium">
               Transaction reference confirmed with bank.
             </p>
           </div>
@@ -1597,32 +1598,32 @@ System ready...</pre
           <!-- Digital Receipt Details Card -->
           <div
             id="modalReceiptDetails"
-            class="hidden text-left bg-slate-50 dark:bg-slate-950 p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 space-y-2 text-xs shadow-inner"
+            class="hidden text-left bg-slate-50 dark:bg-slate-950 p-4 sm:p-5 rounded-2xl border border-slate-200/80 dark:border-slate-800 space-y-2.5 text-xs sm:text-sm shadow-inner"
           >
             <!-- Prominent Amount Banner -->
-            <div class="flex items-center justify-between bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200/60 dark:border-slate-800">
+            <div class="flex items-center justify-between bg-white dark:bg-slate-900 p-3.5 sm:p-4 rounded-xl border border-slate-200/60 dark:border-slate-800">
               <div>
-                <span class="text-[9px] font-extrabold tracking-wider uppercase text-slate-400 block">Total Amount Paid</span>
-                <span id="mTotalAmount" class="text-xl font-black font-num text-emerald-600 dark:text-emerald-400">$0.00</span>
+                <span class="text-[9px] sm:text-[10px] font-extrabold tracking-wider uppercase text-slate-400 block">Total Amount Paid</span>
+                <span id="mTotalAmount" class="text-xl sm:text-2xl font-black font-num text-emerald-600 dark:text-emerald-400">$0.00</span>
               </div>
-              <span id="mPaidStatusTag" class="text-[9px] font-bold uppercase px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
-                <i class="fa-solid fa-circle-check text-[10px]"></i> Paid
+              <span id="mPaidStatusTag" class="text-[9px] sm:text-[10px] font-bold uppercase px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
+                <i class="fa-solid fa-circle-check text-[10px] sm:text-xs"></i> Paid
               </span>
             </div>
 
             <!-- Detailed Key-Value Breakdown -->
-            <div class="space-y-1.5 pt-1 text-[11px]">
+            <div class="space-y-2 pt-1 text-[11px] sm:text-xs">
               <div class="flex justify-between items-center">
                 <span class="text-slate-400">Paid To</span>
-                <span id="mPaidTo" class="font-bold text-slate-800 dark:text-slate-200 truncate max-w-[170px]">-</span>
+                <span id="mPaidTo" class="font-bold text-slate-800 dark:text-slate-200 truncate max-w-[200px] sm:max-w-[260px]">-</span>
               </div>
               <div class="flex justify-between items-center">
                 <span class="text-slate-400">Customer Code</span>
-                <span id="mCustomerCode" class="font-bold font-mono text-slate-800 dark:text-slate-200 truncate max-w-[170px]">-</span>
+                <span id="mCustomerCode" class="font-bold font-mono text-slate-800 dark:text-slate-200 truncate max-w-[200px] sm:max-w-[260px]">-</span>
               </div>
               <div class="flex justify-between items-center">
                 <span class="text-slate-400">Customer Name</span>
-                <span id="mCustomerName" class="font-bold text-slate-800 dark:text-slate-200 truncate max-w-[170px]">-</span>
+                <span id="mCustomerName" class="font-bold text-slate-800 dark:text-slate-200 truncate max-w-[200px] sm:max-w-[260px]">-</span>
               </div>
               <div class="flex justify-between items-center">
                 <span class="text-slate-400">Processing Fee</span>
@@ -1630,25 +1631,25 @@ System ready...</pre
               </div>
               <div class="flex justify-between items-center">
                 <span class="text-slate-400">Date &amp; Time</span>
-                <span id="mPaidDate" class="font-bold text-[10px] text-slate-600 dark:text-slate-400 font-num">-</span>
+                <span id="mPaidDate" class="font-bold text-[10px] sm:text-xs text-slate-600 dark:text-slate-400 font-num">-</span>
               </div>
             </div>
           </div>
         </div>
 
-        <div class="p-5 space-y-2.5">
-          <div id="modalSuccessActions" class="grid grid-cols-2 gap-2 hidden">
+        <div class="p-5 sm:p-6 space-y-2.5 shrink-0 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800/60">
+          <div id="modalSuccessActions" class="grid grid-cols-2 gap-2.5 hidden">
             <button
               type="button"
               onclick="copyModalReceipt()"
-              class="w-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 font-bold py-3 rounded-2xl text-xs flex items-center justify-center gap-1.5 active:scale-95 transition-all"
+              class="w-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 font-bold py-3 sm:py-3.5 rounded-2xl text-xs sm:text-sm flex items-center justify-center gap-1.5 active:scale-95 transition-all"
             >
               <i class="fa-solid fa-share-nodes text-indigo-500"></i> Share
             </button>
             <button
               type="button"
               onclick="closeModal()"
-              class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-2xl text-xs shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-1.5 active:scale-95 transition-all"
+              class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 sm:py-3.5 rounded-2xl text-xs sm:text-sm shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-1.5 active:scale-95 transition-all"
             >
               <i class="fa-solid fa-check"></i> Done
             </button>
@@ -1658,7 +1659,7 @@ System ready...</pre
             id="modalCloseBtn"
             onclick="closeModal()"
             disabled
-            class="w-full bg-slate-300 dark:bg-slate-800 text-slate-500 font-bold py-3 rounded-2xl text-xs cursor-not-allowed active:scale-95 transition-all"
+            class="w-full bg-slate-300 dark:bg-slate-800 text-slate-500 font-bold py-3 sm:py-3.5 rounded-2xl text-xs sm:text-sm cursor-not-allowed active:scale-95 transition-all"
           >
             Processing...
           </button>
