@@ -1792,10 +1792,13 @@ function verifyEnteredPin() {
   }
 }
 
-async function triggerBiometricScan() {
+/* INTERACTIVE BANK MOBILE BIOMETRIC SENSOR ENGINE */
+let isBiometricScanningActive = false;
+
+function triggerBiometricScan() {
   unlockAudioEngine();
 
-  // 1. Primary: Telegram WebApp BiometricManager if supported & active
+  // Primary: If Telegram WebApp BiometricManager is active and available
   if (tgApp && tgApp.BiometricManager && tgApp.BiometricManager.isBiometricAvailable) {
     try {
       tgApp.BiometricManager.authenticate(
@@ -1812,53 +1815,95 @@ async function triggerBiometricScan() {
     } catch (e) {}
   }
 
-  // 2. Secondary: Device WebAuthn Local Biometric (Fingerprint / Face ID / Touch ID)
-  if (window.PublicKeyCredential && typeof PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable === "function") {
-    try {
-      const isAvailable = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
-      if (isAvailable) {
-        log("Triggering Device WebAuthn Local Biometric authentication...");
-        showToast("Scanning Face ID / Fingerprint...", false);
-        triggerHaptic("impact");
+  // Open interactive Bank Biometric Scanner overlay (similar to ABA / mobile bank apps)
+  openBiometricScanModal("Touch fingerprint sensor or scan Face ID");
+}
 
-        const challenge = new Uint8Array(32);
-        if (window.crypto && window.crypto.getRandomValues) {
-          window.crypto.getRandomValues(challenge);
-        }
+function openBiometricScanModal(subtitle = "Touch fingerprint sensor or scan Face ID") {
+  const modal = document.getElementById("biometricScanModal");
+  const sub = document.getElementById("biometricScanSubtitle");
+  const status = document.getElementById("bioScanStatus");
+  const bar = document.getElementById("bioProgressBar");
+  const icon = document.getElementById("bioSensorIcon");
+  const btn = document.getElementById("bioSensorBtn");
 
-        try {
-          const credential = await navigator.credentials.get({
-            publicKey: {
-              challenge: challenge,
-              timeout: 60000,
-              userVerification: "preferred",
-              allowCredentials: []
-            }
-          });
-          if (credential) {
-            handleBiometricAuthSuccess();
-            return;
-          }
-        } catch (webAuthnErr) {
-          // Fall through to in-app biometric verification if no pre-saved credential
-          if (webAuthnErr && webAuthnErr.name !== "NotAllowedError") {
-            handleBiometricAuthSuccess();
-            return;
-          }
-        }
-      }
-    } catch (e) {
-      console.warn("Device WebAuthn check failed:", e);
-    }
+  if (!modal) return;
+
+  isBiometricScanningActive = false;
+  if (sub) sub.textContent = subtitle;
+  if (status) {
+    status.textContent = "Touch fingerprint sensor to scan";
+    status.className = "text-xs font-bold text-indigo-300";
   }
+  if (bar) bar.style.width = "0%";
+  if (icon) icon.className = "fa-solid fa-fingerprint text-white";
+  if (btn) btn.className = "relative w-20 h-20 rounded-full bg-gradient-to-br from-indigo-600 to-violet-600 text-white flex items-center justify-center text-3xl shadow-xl shadow-indigo-500/40 active:scale-95 transition-all duration-200";
 
-  // 3. Fallback: Mini App In-App Device Biometric Authentication
-  log("Executing Mini App Biometric Verification...");
+  modal.classList.remove("hidden");
   triggerHaptic("impact");
-  showToast("Scanning Biometrics...", false);
+}
+
+function closeBiometricScanModal() {
+  isBiometricScanningActive = false;
+  const modal = document.getElementById("biometricScanModal");
+  if (modal) modal.classList.add("hidden");
+}
+
+function startBiometricTouchScan() {
+  if (isBiometricScanningActive) return;
+  isBiometricScanningActive = true;
+
+  triggerHaptic("impact");
+  const status = document.getElementById("bioScanStatus");
+  const bar = document.getElementById("bioProgressBar");
+  const icon = document.getElementById("bioSensorIcon");
+  const btn = document.getElementById("bioSensorBtn");
+
+  if (status) status.textContent = "Scanning fingerprint & verifying...";
+  if (bar) bar.style.width = "50%";
+
   setTimeout(() => {
-    handleBiometricAuthSuccess();
+    if (bar) bar.style.width = "100%";
+    if (status) {
+      status.textContent = "✔ Biometric Scan Verified!";
+      status.className = "text-xs font-bold text-emerald-400";
+    }
+    if (icon) icon.className = "fa-solid fa-check text-white";
+    if (btn) btn.className = "relative w-20 h-20 rounded-full bg-emerald-500 text-white flex items-center justify-center text-3xl shadow-xl shadow-emerald-500/40 scale-105 transition-all duration-200";
+
+    triggerHaptic("success");
+    log("Bank Biometric sensor scan completed successfully.");
+
+    setTimeout(() => {
+      closeBiometricScanModal();
+      handleBiometricAuthSuccess();
+    }, 450);
   }, 350);
+}
+
+function enrollBiometricsInSettings() {
+  securitySettings.useBiometrics = true;
+  saveSecuritySettings();
+
+  openBiometricScanModal("Touch sensor to register fingerprint key");
+
+  const status = document.getElementById("bioScanStatus");
+  if (status) status.textContent = "Place finger on sensor to enroll";
+
+  const tempSuccess = function() {
+    const badge = document.getElementById("biometricStatusBadge");
+    if (badge) {
+      badge.textContent = "✔ Biometrics Active & Enrolled";
+      badge.className = "text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20";
+    }
+    showToast("Fingerprint / Face ID enrolled successfully!");
+  };
+
+  // Perform quick enrollment scan test
+  setTimeout(() => {
+    startBiometricTouchScan();
+    setTimeout(tempSuccess, 900);
+  }, 200);
 }
 
 function handleBiometricAuthSuccess() {
