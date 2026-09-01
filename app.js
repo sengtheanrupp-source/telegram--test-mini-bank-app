@@ -237,8 +237,44 @@ function isIOSDevice() {
 }
 
 function triggerInstantQRScan() {
-  // Always open our HTML live camera scanner directly.
-  // Bypassing tgApp.showScanQrPopup eliminates Telegram's "allow bot access your camera" popup prompt.
+  if (tgApp && typeof tgApp.showScanQrPopup === "function") {
+    try {
+      log("Opening Telegram Native QR Scanner window...");
+
+      // Register event listener for Telegram SDK event 'qrTextReceived'
+      if (typeof tgApp.onEvent === "function") {
+        const qrHandler = function (eventData) {
+          const scannedText = typeof eventData === "string" ? eventData : (eventData && eventData.data);
+          if (scannedText && typeof scannedText === "string" && scannedText.trim()) {
+            log("Telegram Native QR Scanner event received:", scannedText);
+            triggerHaptic("success");
+            try { tgApp.closeScanQrPopup(); } catch (e) {}
+            try { tgApp.offEvent("qrTextReceived", qrHandler); } catch (e) {}
+            processDecodedQR(scannedText.trim());
+          }
+        };
+        try { tgApp.onEvent("qrTextReceived", qrHandler); } catch (e) {}
+      }
+
+      tgApp.showScanQrPopup(
+        { text: "Point camera at KHQR code to scan" },
+        function (qrText) {
+          if (qrText && typeof qrText === "string" && qrText.trim()) {
+            log("Telegram Native QR Scanner callback decoded:", qrText);
+            triggerHaptic("success");
+            processDecodedQR(qrText.trim());
+            return true; // closes native scanner modal
+          }
+          return false;
+        }
+      );
+      return;
+    } catch (e) {
+      log("Telegram native QR scanner invoke warning: " + (e && e.message));
+    }
+  }
+
+  // Fallback to HTML live camera view for non-Telegram web browsers
   navigateToView("cameraScanView");
 }
 
@@ -267,30 +303,14 @@ async function startCameraStream() {
     } catch (e) {}
   }
 
-  // High-definition camera constraints for sharp focus on high-DPI smartphone screens (iPhone)
+  // Robust, compatible camera constraints for mobile WebViews (Android & iOS)
   const constraintOptions = [
-    {
-      video: {
-        facingMode: cameraFacingMode === "user" ? "user" : { ideal: "environment" },
-        width: { ideal: 1920, min: 1280 },
-        height: { ideal: 1080, min: 720 },
-        focusMode: { ideal: "continuous" }
-      },
-      audio: false
-    },
-    {
-      video: {
-        facingMode: cameraFacingMode === "user" ? "user" : { ideal: "environment" },
-        width: { ideal: 1280 },
-        height: { ideal: 720 }
-      },
-      audio: false
-    },
-    { video: { facingMode: cameraFacingMode === "user" ? "user" : { ideal: "environment" } }, audio: false },
+    { video: { facingMode: { ideal: cameraFacingMode === "user" ? "user" : "environment" } }, audio: false },
+    { video: { facingMode: cameraFacingMode === "user" ? "user" : "environment" }, audio: false },
     { video: true, audio: false }
   ];
 
-  log(`Starting camera stream (Facing mode: ${cameraFacingMode})...`);
+  log(`Starting web camera stream (Facing mode: ${cameraFacingMode})...`);
   if (statusText) statusText.textContent = "Opening camera...";
 
   let streamObtained = null;
@@ -308,11 +328,12 @@ async function startCameraStream() {
   if (streamObtained) {
     try {
       cameraStream = streamObtained;
+
+      // Ensure muted and playsInline are assigned BEFORE srcObject for iOS/Android WebView autoplay
+      video.muted = true;
+      video.playsInline = true;
       video.setAttribute("playsinline", "true");
       video.setAttribute("webkit-playsinline", "true");
-      video.playsInline = true;
-      video.muted = true;
-      video.autoplay = true;
       video.srcObject = cameraStream;
 
       await new Promise((resolve) => {
@@ -322,12 +343,14 @@ async function startCameraStream() {
           resolve();
         };
         video.onloadedmetadata = done;
-        setTimeout(done, 180);
+        setTimeout(done, 200);
       });
-      await video.play().catch((e) => {
-        log("video.play() soft fail (retrying): " + (e && e.message));
-        return video.play();
-      });
+
+      try {
+        await video.play();
+      } catch (playErr) {
+        log("video.play() initial catch: " + (playErr && playErr.message));
+      }
 
       isCameraScanning = true;
       cameraPermissionPrimed = true;
@@ -343,10 +366,10 @@ async function startCameraStream() {
 
       lastFrameTime = 0;
       requestAnimationFrame(tickCameraFrame);
-    } catch (playErr) {
-      log("Video play error: " + (playErr && playErr.message));
-      if (statusText) statusText.textContent = "Camera feed play failed.";
-      showToast("Camera started but playback failed.", true);
+    } catch (err) {
+      log("Video setup error: " + (err && err.message));
+      if (statusText) statusText.textContent = "Camera feed setup failed.";
+      showToast("Camera started but feed playback failed.", true);
     }
   } else {
     const errName = (lastError && lastError.name) || "";
