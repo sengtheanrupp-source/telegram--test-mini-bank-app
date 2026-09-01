@@ -186,8 +186,36 @@ let batchItems = [];
 let isLogFullScreen = false;
 let lastFrameTime = 0;
 let scanCanvasCtx = null;
-const SCAN_MAX_SIZE = 400;
+const SCAN_MAX_SIZE = 720; // Upgraded to 720 for high-density KHQR codes on iPhone screens
 const SCAN_INTERVAL_MS = 22;
+
+/* Helper: Dynamic contrast boost & luminance normalization for iPhone OLED screen glare */
+function applyContrastBoost(imageData) {
+  if (!imageData || !imageData.data) return null;
+  const data = imageData.data;
+  const len = data.length;
+  let minL = 255;
+  let maxL = 0;
+  for (let i = 0; i < len; i += 4) {
+    const lum = (data[i] * 77 + data[i + 1] * 150 + data[i + 2] * 29) >> 8;
+    if (lum < minL) minL = lum;
+    if (lum > maxL) maxL = lum;
+  }
+  const range = maxL - minL;
+  if (range < 15) return null;
+  const scale = 255 / range;
+  const boosted = new Uint8ClampedArray(len);
+  for (let i = 0; i < len; i += 4) {
+    const lum = (data[i] * 77 + data[i + 1] * 150 + data[i + 2] * 29) >> 8;
+    const norm = Math.min(255, Math.max(0, (lum - minL) * scale));
+    const val = norm < 128 ? (norm < 64 ? 0 : norm - 30) : (norm > 190 ? 255 : norm + 30);
+    boosted[i] = val;
+    boosted[i + 1] = val;
+    boosted[i + 2] = val;
+    boosted[i + 3] = 255;
+  }
+  return boosted;
+}
 
 /* 4. LIVE CAMERA KHQR SCANNER ENGINE */
 let cameraStream = null;
@@ -229,8 +257,35 @@ async function startCameraStream() {
     return;
   }
 
-  // Clean, robust constraints that avoid triggering repeated Telegram permission dialogs
+  // Check permission state silently first to avoid unneeded prompts if already granted
+  if (navigator.permissions && navigator.permissions.query) {
+    try {
+      const perm = await navigator.permissions.query({ name: "camera" });
+      if (perm.state === "granted") {
+        updateCameraPermissionStatusUI(true);
+      }
+    } catch (e) {}
+  }
+
+  // High-definition camera constraints for sharp focus on high-DPI smartphone screens (iPhone)
   const constraintOptions = [
+    {
+      video: {
+        facingMode: cameraFacingMode === "user" ? "user" : { ideal: "environment" },
+        width: { ideal: 1920, min: 1280 },
+        height: { ideal: 1080, min: 720 },
+        focusMode: { ideal: "continuous" }
+      },
+      audio: false
+    },
+    {
+      video: {
+        facingMode: cameraFacingMode === "user" ? "user" : { ideal: "environment" },
+        width: { ideal: 1280 },
+        height: { ideal: 720 }
+      },
+      audio: false
+    },
     { video: { facingMode: cameraFacingMode === "user" ? "user" : { ideal: "environment" } }, audio: false },
     { video: true, audio: false }
   ];
@@ -333,45 +388,27 @@ function switchCameraFacing() {
   startCameraStream();
 }
 
-/* 4B. AUTO-ALLOW CAMERA (ANDROID & iOS) — silently pre-authorize camera
-   permission on app open so the live scanner opens instantly instead of
-   showing a gray preview / permission prompt the first time it's used. */
+/* 4B. AUTO-ALLOW CAMERA — check permission status silently without prompting on web app open */
 let cameraPermissionPrimed = false;
 
 async function requestCameraPermissionEarly(silent = true) {
   if (!appPreferences.autoCamera) return;
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    log("Auto-Allow Camera skipped: getUserMedia unavailable on this device.");
-    return;
-  }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
 
-  try {
-    const primerStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: cameraFacingMode } },
-      audio: false,
-    });
-    // Immediately release the camera — this call's only purpose is to
-    // trigger/confirm the OS-level permission prompt ahead of time.
-    primerStream.getTracks().forEach((track) => track.stop());
-    cameraPermissionPrimed = true;
-    log("Auto-Allow Camera: permission pre-authorized successfully.");
-    updateCameraPermissionStatusUI(true);
-  } catch (err) {
-    cameraPermissionPrimed = false;
-    const errName = (err && err.name) || "unknown";
-    log("Auto-Allow Camera: permission not yet granted (" + errName + ").");
-    updateCameraPermissionStatusUI(false);
-    if (!silent) {
-      if (errName === "NotAllowedError" || errName === "PermissionDeniedError") {
-        showToast(
-          "Camera permission denied. Allow it in your browser/Telegram site settings.",
-          true,
-        );
-      } else if (errName === "NotFoundError" || errName === "DevicesNotFoundError") {
-        showToast("No camera detected on this device.", true);
+  // Use permissions query to check state silently without popping permission dialogs on app open
+  if (navigator.permissions && navigator.permissions.query) {
+    try {
+      const perm = await navigator.permissions.query({ name: "camera" });
+      if (perm.state === "granted") {
+        cameraPermissionPrimed = true;
+        updateCameraPermissionStatusUI(true);
+        log("Auto-Allow Camera: permission confirmed already granted.");
+        return;
       }
-    }
+    } catch (e) {}
   }
+  // If silent check is requested (e.g. app open), do NOT trigger getUserMedia unprompted
+  if (silent) return;
 }
 
 function updateCameraPermissionStatusUI(granted) {
@@ -419,9 +456,19 @@ function tickCameraFrame(timestamp) {
     scanCanvasCtx.drawImage(video, sx, sy, side, side, 0, 0, dw, dw);
 
     const imageData = scanCanvasCtx.getImageData(0, 0, dw, dw);
-    const code = jsQR(imageData.data, dw, dw, {
+    let code = jsQR(imageData.data, dw, dw, {
       inversionAttempts: "attemptBoth",
     });
+
+    // Pass 2: Dynamic contrast boost pass if raw frame missed (crucial for iPhone screen OLED glare & reflection)
+    if (!code || !code.data || !code.data.trim()) {
+      const boostedBytes = applyContrastBoost(imageData);
+      if (boostedBytes) {
+        code = jsQR(boostedBytes, dw, dw, {
+          inversionAttempts: "attemptBoth",
+        });
+      }
+    }
 
     if (code && code.data && code.data.trim()) {
       log("Live camera detected QR Code:", code.data);
@@ -711,6 +758,17 @@ function scanImageElement(img) {
     return true;
   }
 
+  // Pass 4: Dynamic contrast boost for iPhone screen photo/screenshot uploads
+  const boostedData = applyContrastBoost(imageData);
+  if (boostedData) {
+    code = jsQR(boostedData, sw, sh, { inversionAttempts: "attemptBoth" });
+    if (code && code.data && code.data.trim()) {
+      log("Multi-pass QR scan succeeded (pass 4 contrast boost):", code.data);
+      processDecodedQR(code.data);
+      return true;
+    }
+  }
+
   return false;
 }
 
@@ -761,9 +819,15 @@ function scanCroppedArea() {
   ctx.drawImage(img, srcX, srcY, srcW, srcH, 0, 0, targetW, targetH);
 
   const imageData = ctx.getImageData(0, 0, targetW, targetH);
-  const code = jsQR(imageData.data, targetW, targetH, {
+  let code = jsQR(imageData.data, targetW, targetH, {
     inversionAttempts: "attemptBoth",
   });
+  if (!code || !code.data || !code.data.trim()) {
+    const boosted = applyContrastBoost(imageData);
+    if (boosted) {
+      code = jsQR(boosted, targetW, targetH, { inversionAttempts: "attemptBoth" });
+    }
+  }
   if (code && code.data && code.data.trim()) {
     log("Cropped region QR detected successfully:", code.data);
     processDecodedQR(code.data);
