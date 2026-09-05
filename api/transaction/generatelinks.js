@@ -26,7 +26,7 @@
  *   "code": "000",
  *   "message": "Generate Success",
  *   "data": {
- *     "web_payment_url": "https://telegram-mini-bank-app.vercel.app/?identity_code=ADA90B8B6D89",
+ *     "web_payment_url": "https://telegram-mini-bank-app.vercel.app/?tran_id=ADA90B8B6D89",
  *     "mobile_deep_link": "https://t.me/PaymentStagingMini_bot/TestApp?startapp=ADA90B8B6D89"
  *   }
  * }
@@ -96,7 +96,7 @@ module.exports = async (req, res) => {
     }
 
     const safeParam = toTelegramSafeParam(transaction_id);
-    const webPaymentUrl = `${WEB_APP_BASE_URL}/?identity_code=${encodeURIComponent(transaction_id)}`;
+    const webPaymentUrl = `${WEB_APP_BASE_URL}/?tran_id=${encodeURIComponent(transaction_id)}`;
     const mobileDeepLink = `${TELEGRAM_BOT_DEEPLINK}?startapp=${safeParam}`;
 
     return res.status(200).json({

@@ -88,7 +88,48 @@ async function safeFetchJson(url, options) {
 /* Mock Fallback Engine for Sandbox Testing */
 function getMockSandboxResponse(url, options) {
   const autoRef = generateRandom16();
-  if (url.includes("/payment/v5/inquiry")) {
+  if (url.includes("/payment/v4/inquiry")) {
+    return {
+      code: "SUCCESS",
+      message: "Customer found in proxy! (Sandbox Mock)",
+      data: {
+        supplier: {
+          code: "8282",
+          name: "ABCV4 Co., Ltd.",
+          short_name: "ABCV4",
+        },
+        customer: {
+          code: workflowState.customer_code || "INV-2026-0076",
+          name: "Chetra Lat 2",
+          name_en: "Chetra Lat 2",
+        },
+        balances: [
+          {
+            bill_amount: 1.1,
+            fee_amount: 0.0,
+            total_amount: 1.1,
+            currency: "USD",
+            payment_token: "MOCK_TOKEN_" + Date.now(),
+          },
+        ],
+      },
+    };
+  } else if (url.includes("/payment/v2/confirm")) {
+    return {
+      code: "SUCCESS",
+      message: "Payment success. (Sandbox Mock)",
+      data: {
+        customer_code: workflowState.customer_code || "INV-2026-0076",
+        customer_name: workflowState.customer_name || "Chetra Lat 2",
+        paid_to: workflowState.supplier_name || "ABCV4 Co., Ltd.",
+        ref_no: autoRef,
+        total_amount: workflowState.total_amount || 1.1,
+        fee_amount: workflowState.fee_amount || 0.0,
+        currency: workflowState.currency || "USD",
+        paid_date: new Date().toLocaleString(),
+      },
+    };
+  } else if (url.includes("/payment/v5/inquiry")) {
     return {
       code: "SUCCESS",
       message: "Success (Sandbox Mock)",
@@ -191,28 +232,35 @@ function generateRandom16() {
 }
 
 let workflowState = {
-  identity_code: "", // transaction_id from the Bill24 SDK — the inquiry/confirm key
+  // -- Bill Pay (v4 inquiry / v2 confirm, customer_code based) --
   customer_code: "",
   customer_name: "",
   supplier_name: "",
+  bill_code: "",
+  bill_amount: 0,
+
+  // -- Deeplink (v5 inquiry / v3 confirm, identity_code based) --
+  identity_code: "", // transaction_id from the Bill24 SDK — the inquiry/confirm key
   bill_no: "",
   customers: [], // full customers[] array from the v5 inquiry response
   original_amount: 0,
   convenience_fee_amount: 0,
   sponsor_fee_amount: 0,
-  fee_amount: 0, // convenience + sponsor, for display
-  total_amount: 0,
-  currency: "USD",
   fee_channel: "MERCHANT",
   description: "",
-  payment_token: "",
-  bank_ref: generateRandom16(),
   // Populated from the Bank API "Generate Payment Links" deeplink
-  // (web_payment_url ?identity_code=... or mobile_deep_link startapp=...)
+  // (web_payment_url ?tran_id=... or mobile_deep_link startapp=...)
   link_token: "",
   // Populated straight from the v5 Inquiry response's data.urls.return_url —
-  // this IS the URL the "Done" button redirects to after payment.
+  // this IS the URL the "Done" button redirects to after a Deeplink payment.
   return_url: "",
+
+  // -- Shared between both flows (whichever ran most recently) --
+  fee_amount: 0, // Bill Pay: flat fee. Deeplink: convenience + sponsor combined.
+  total_amount: 0,
+  currency: "USD",
+  payment_token: "",
+  bank_ref: generateRandom16(),
 };
 
 /* 3b. PAYMENT LINK (DEEPLINK) RESOLUTION
@@ -237,8 +285,9 @@ function getIdentityCodeFromQueryString() {
   try {
     const params = new URLSearchParams(window.location.search);
     return (
-      params.get("identity_code") ||
-      params.get("token") || // backward-compat with earlier test links
+      params.get("tran_id") || // Bill24 SDK's web_payment_url param name
+      params.get("identity_code") || // backward-compat with earlier test links
+      params.get("token") ||
       params.get("startapp") ||
       ""
     );
@@ -1112,6 +1161,225 @@ function evaluatePaymentMode() {
   }
 }
 
+/* ===========================================================================
+   BILL PAY (Bill24 API v4 Inquiry / v2 Confirm — customer_code based)
+   Separate, standalone flow from the Deeplink (v5/v3, identity_code based)
+   flow below. Uses its own "bp"-prefixed DOM elements so the two views
+   never collide.
+   ======================================================================= */
+function updateBillPayCode() {
+  const prefix = document.getElementById("prefixCode").value.trim();
+  const rawCode = document.getElementById("bpRawCode").value.trim();
+  const combined = prefix ? `${prefix}${rawCode}` : rawCode;
+  document.getElementById("bpAppCodeDisplay").textContent = `Ref: ${combined}`;
+  workflowState.customer_code = combined;
+}
+
+function evaluateBillPayMode() {
+  const amount =
+    parseFloat(document.getElementById("bpPaymentAmount").value) || 0;
+  const btn = document.getElementById("bpConfirmPayBtn");
+  if (amount > 0 && workflowState.payment_token) {
+    btn.disabled = false;
+    btn.className =
+      "w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3.5 rounded-2xl text-xs transition-all shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2";
+  } else {
+    btn.disabled = true;
+    btn.className =
+      "w-full bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-600 font-bold py-3.5 rounded-2xl text-xs cursor-not-allowed transition-all flex items-center justify-center gap-2";
+  }
+}
+
+async function runBillPayInquiry() {
+  const baseUrl = document.getElementById("baseUrl").value.trim();
+  const token = document.getElementById("authToken").value.trim();
+  updateBillPayCode();
+
+  // A Bill Pay lookup is never a deeplink session — clear any leftover
+  // return_url/link_token from a previous Deeplink payment so the shared
+  // success modal's "Done" button behaves correctly (just closes).
+  workflowState.return_url = "";
+  workflowState.link_token = "";
+
+  log("Executing Inquiry request for customer_code: " + workflowState.customer_code);
+  openLoadingModal("Executing Inquiry");
+
+  try {
+    const jsonData = await safeFetchJson(`${baseUrl}/payment/v4/inquiry`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        accept: "*/*",
+        token: token,
+      },
+      body: JSON.stringify({ customer_code: workflowState.customer_code }),
+    });
+
+    log("Bill Pay Inquiry Response Payload:", jsonData);
+
+    if (jsonData.code === "SUCCESS" && jsonData.data) {
+      const data = jsonData.data;
+      const supplierObj = data.supplier || {};
+      const customerObj = data.customer || {};
+      const balanceObj = (Array.isArray(data.balances) && data.balances.length > 0) ? data.balances[0] : (data.balance || {});
+
+      workflowState.customer_code = customerObj.code || data.customer_code || workflowState.customer_code;
+      workflowState.customer_name = customerObj.name || customerObj.name_en || data.customer_name || data.consumer_name || "N/A";
+      workflowState.supplier_name = supplierObj.name || supplierObj.short_name || data.supplier_name || data.biller_name || "N/A";
+      workflowState.bill_code = customerObj.code || data.bill_code || workflowState.customer_code;
+
+      workflowState.payment_token = balanceObj.payment_token || balanceObj.payment_Token || data.payment_token || data.payment_Token || data.token || "";
+
+      workflowState.bill_amount = balanceObj.bill_amount !== undefined ? balanceObj.bill_amount : (data.bill_amount !== undefined ? data.bill_amount : (data.bill_Amount !== undefined ? data.bill_Amount : 0));
+      workflowState.fee_amount = balanceObj.fee_amount !== undefined ? balanceObj.fee_amount : (data.fee_amount !== undefined ? data.fee_amount : (data.fee_Amount !== undefined ? data.fee_Amount : 0));
+      workflowState.total_amount = balanceObj.total_amount !== undefined ? balanceObj.total_amount : (data.total_amount !== undefined ? data.total_amount : (data.total_Amount !== undefined ? data.total_Amount : (workflowState.bill_amount + workflowState.fee_amount)));
+      workflowState.currency = balanceObj.currency || data.currency || data.currency_code || data.currency_Code || "USD";
+
+      const resSupplierEl = document.getElementById("bpResSupplier");
+      const resCustomerCodeEl = document.getElementById("bpResCustomerCode");
+      const resCustomerNameEl = document.getElementById("bpResCustomerName");
+      const resMessageEl = document.getElementById("bpResMessage");
+      const resPaymentTokenEl = document.getElementById("bpResPaymentToken");
+      const resBillAmountEl = document.getElementById("bpResBillAmount");
+      const resFeeAmountEl = document.getElementById("bpResFeeAmount");
+
+      if (resSupplierEl) resSupplierEl.textContent = workflowState.supplier_name;
+      if (resCustomerCodeEl) resCustomerCodeEl.textContent = workflowState.customer_code;
+      if (resCustomerNameEl) resCustomerNameEl.textContent = workflowState.customer_name;
+      if (resMessageEl) resMessageEl.textContent = jsonData.message || "Success";
+      if (resPaymentTokenEl) resPaymentTokenEl.textContent = workflowState.payment_token || "None";
+      if (resBillAmountEl) resBillAmountEl.textContent = `${workflowState.bill_amount} ${workflowState.currency}`;
+      if (resFeeAmountEl) resFeeAmountEl.textContent = `${workflowState.fee_amount} ${workflowState.currency}`;
+
+      document.getElementById("bpResponseCodeBadge").textContent = jsonData.code;
+      document.getElementById("bpPaymentAmount").value = workflowState.bill_amount;
+
+      document.getElementById("bpStatusBadge").textContent = "Token Active";
+      document.getElementById("bpStatusBadge").className =
+        "text-[9px] bg-emerald-500/10 text-emerald-600 font-bold px-2 py-0.5 rounded-full border border-emerald-500/20";
+      evaluateBillPayMode();
+
+      const metaDetails = {
+        customer_code: workflowState.customer_code,
+        customer_name: workflowState.customer_name,
+        total_amount: `${workflowState.total_amount} ${workflowState.currency}`,
+        fee_amount: `${workflowState.fee_amount} ${workflowState.currency}`,
+        paid_to: workflowState.supplier_name,
+        paid_date: new Date().toLocaleString(),
+      };
+
+      finishModal(
+        true,
+        "Inquiry Successful",
+        jsonData.message || "Bill details retrieved successfully.",
+        metaDetails,
+      );
+    } else {
+      document.getElementById("bpResponseCodeBadge").textContent = jsonData.code || "FAILED";
+      const resMessageEl = document.getElementById("bpResMessage");
+      if (resMessageEl) resMessageEl.textContent = jsonData.message || "Inquiry Failed";
+      finishModal(
+        false,
+        "Inquiry Failed",
+        jsonData.message || "Unable to fetch bill.",
+      );
+    }
+  } catch (err) {
+    log("Bill Pay Inquiry Connection Error:", err.message);
+    finishModal(false, "Connection Error", err.message);
+  }
+}
+
+async function runBillPaySmartFlow() {
+  // Require PIN / Biometric when security lock is enabled
+  requireSecurityAuth(() => {
+    runBillPayConfirm();
+  });
+}
+
+async function runBillPayConfirm() {
+  const baseUrl = document.getElementById("baseUrl").value.trim();
+  const token = document.getElementById("authToken").value.trim();
+  const amount =
+    parseFloat(document.getElementById("bpPaymentAmount").value) || 0;
+  const autoRef = generateRandom16();
+  document.getElementById("refNoDisplay").value = autoRef;
+  workflowState.bank_ref = autoRef;
+
+  const payload = {
+    customer_code: workflowState.customer_code,
+    bill_code: workflowState.bill_code || workflowState.customer_code,
+    bill_amount: workflowState.bill_amount || amount,
+    total_amount: workflowState.total_amount || amount,
+    currency: workflowState.currency || "USD",
+    payment_token: workflowState.payment_token,
+    ref_no: autoRef,
+  };
+
+  log("Submitting Bill Pay Request to /payment/v2/confirm...", payload);
+  openLoadingModal("Executing Payment");
+
+  try {
+    const jsonData = await safeFetchJson(`${baseUrl}/payment/v2/confirm`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        accept: "*/*",
+        token: token,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    log("Bill Pay Response Payload:", jsonData);
+
+    const data = jsonData.data || {};
+    const supplierObj = data.supplier || {};
+    const customerObj = data.customer || {};
+
+    const customerCode = data.customer_code || customerObj.code || workflowState.customer_code || payload.ref_no;
+    const customerName = data.customer_name || customerObj.name || workflowState.customer_name || "N/A";
+    const paidTo = data.paid_to || supplierObj.name || data.biller_name || workflowState.supplier_name || "N/A";
+    const totalAmt = data.total_amount !== undefined ? data.total_amount : (payload.total_amount || payload.bill_amount);
+    const feeAmt = data.fee_amount !== undefined ? data.fee_amount : (workflowState.fee_amount || 0);
+    const curr = data.currency || payload.currency || "USD";
+    const paidDate = data.paid_date || new Date().toLocaleString();
+
+    const metaDetails = {
+      customer_code: customerCode,
+      customer_name: customerName,
+      total_amount: `${totalAmt} ${curr}`,
+      fee_amount: `${feeAmt} ${curr}`,
+      paid_to: paidTo,
+      paid_date: paidDate,
+    };
+
+    if (jsonData.code === "SUCCESS") {
+      triggerHaptic("success");
+      finishModal(
+        true,
+        "Payment Successful",
+        jsonData.message || `Transaction ${autoRef} completed.`,
+        metaDetails,
+      );
+      speakPaymentSuccess(totalAmt, curr);
+    } else {
+      triggerHaptic("error");
+      finishModal(
+        false,
+        "Payment Failed",
+        jsonData.message || "Payment rejected.",
+        metaDetails,
+      );
+    }
+  } catch (err) {
+    log("Bill Pay Connection Error:", err.message);
+    finishModal(false, "Connection Error", err.message);
+  }
+}
+
+/* ===========================================================================
+   DEEPLINK (Bill24 API v5 Inquiry / v3 Confirm — identity_code based)
+   ======================================================================= */
 async function runInquiry() {
   const baseUrl = document.getElementById("baseUrl").value.trim();
   const token = document.getElementById("authToken").value.trim();
@@ -1237,6 +1505,12 @@ async function runInquiry() {
 }
 
 async function runSmartPaymentFlow() {
+  const accountNo = (document.getElementById("payerAccountNo")?.value || "").trim();
+  if (!accountNo) {
+    showToast("Enter the payer's Account Number to continue.", true);
+    document.getElementById("payerAccountNo")?.focus();
+    return;
+  }
   // Require PIN / Biometric when security lock is enabled
   requireSecurityAuth(() => {
     runSmartPaymentFlowAfterAuth();
@@ -2118,6 +2392,7 @@ function navigateToView(viewId) {
     "homeView",
     "cameraScanView",
     "imageScanView",
+    "billPayView",
     "paymentView",
     "verifyView",
   ].forEach((id) => {
@@ -2136,6 +2411,7 @@ function navigateToView(viewId) {
   [
     "tab-btn-home",
     "tab-btn-camera",
+    "tab-btn-billpay",
     "tab-btn-payment",
   ].forEach((id) => {
     const btn = document.getElementById(id);
@@ -2147,7 +2423,9 @@ function navigateToView(viewId) {
   else if (viewId === "cameraScanView") {
     document.getElementById("tab-btn-camera").className = activeTab;
     startCameraStream();
-  } else if (viewId === "paymentView")
+  } else if (viewId === "billPayView")
+    document.getElementById("tab-btn-billpay").className = activeTab;
+  else if (viewId === "paymentView")
     document.getElementById("tab-btn-payment").className = activeTab;
 
   window.scrollTo({ top: 0, behavior: viewId === "cameraScanView" ? "auto" : "smooth" });

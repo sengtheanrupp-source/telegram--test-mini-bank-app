@@ -984,7 +984,7 @@
         </div>
 
         <!-- Quick Action Grid -->
-        <div class="grid grid-cols-4 gap-2">
+        <div class="grid grid-cols-3 gap-2">
           <button
             onclick="triggerInstantQRScan()"
             class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 rounded-2xl flex flex-col items-center gap-1.5 shadow-sm hover:border-indigo-500 transition-all group"
@@ -1001,7 +1001,7 @@
           </button>
 
           <button
-            onclick="navigateToView('paymentView')"
+            onclick="navigateToView('billPayView')"
             class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 rounded-2xl flex flex-col items-center gap-1.5 shadow-sm hover:border-indigo-500 transition-all group"
           >
             <div
@@ -1012,6 +1012,21 @@
             <span
               class="text-[10px] font-bold text-slate-700 dark:text-slate-200"
               >Pay Bill</span
+            >
+          </button>
+
+          <button
+            onclick="navigateToView('paymentView')"
+            class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 rounded-2xl flex flex-col items-center gap-1.5 shadow-sm hover:border-indigo-500 transition-all group"
+          >
+            <div
+              class="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center text-lg group-hover:scale-110 transition-transform"
+            >
+              <i class="fa-solid fa-link"></i>
+            </div>
+            <span
+              class="text-[10px] font-bold text-slate-700 dark:text-slate-200"
+              >Deeplink</span
             >
           </button>
 
@@ -1264,8 +1279,8 @@
         </div>
       </section>
 
-      <!-- 4. PAY BILL / DEEPLINK CHECKOUT VIEW (Bank Checkout / Deeplink) -->
-      <section id="paymentView" class="hidden space-y-4">
+      <!-- 4. BILL PAY VIEW (Bill24 API v4 Inquiry / v2 Confirm, customer_code based) -->
+      <section id="billPayView" class="hidden space-y-4">
         <div
           class="flex justify-between items-center border-b border-slate-200 dark:border-slate-800 pb-2"
         >
@@ -1273,6 +1288,171 @@
             class="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2"
           >
             <i class="fa-solid fa-receipt text-indigo-500"></i> Pay Bill
+          </h2>
+        </div>
+
+        <!-- Single Input Form -->
+        <div
+          class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 shadow-sm space-y-4"
+        >
+          <div>
+            <label
+              class="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1"
+              >Customer Code</label
+            >
+            <div class="relative">
+              <i
+                class="fa-solid fa-hashtag absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs"
+              ></i>
+              <input
+                type="text"
+                id="bpRawCode"
+                value="INV-2026-0009"
+                oninput="updateBillPayCode()"
+                placeholder="e.g. INV-2026-0009"
+                class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl pl-8 pr-3 py-2.5 text-xs font-mono font-bold text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+            <p
+              id="bpAppCodeDisplay"
+              class="text-[10px] text-indigo-500 font-mono mt-1 font-semibold"
+            >
+              Ref: 5316INV-2026-0009
+            </p>
+          </div>
+
+          <button
+            onclick="runBillPayInquiry()"
+            class="w-full bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 font-bold py-3 rounded-2xl text-xs transition-all shadow-sm flex items-center justify-center gap-2"
+          >
+            <i class="fa-solid fa-magnifying-glass"></i> Look Up Bill
+          </button>
+
+          <div
+            class="pt-3 border-t border-dashed border-slate-200 dark:border-slate-800 space-y-2"
+          >
+            <div class="flex justify-between items-center">
+              <span class="text-xs font-bold text-slate-700 dark:text-slate-300"
+                >Payment Amount</span
+              >
+              <span
+                id="bpStatusBadge"
+                class="text-[9px] bg-amber-500/10 text-amber-600 dark:text-amber-400 px-2 py-0.5 rounded-full font-bold border border-amber-500/20"
+                >Awaiting Inquiry</span
+              >
+            </div>
+
+            <div
+              class="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl px-4 py-3 flex items-baseline gap-1.5"
+            >
+              <span class="text-xl font-bold font-num text-slate-400">$</span>
+              <input
+                type="number"
+                id="bpPaymentAmount"
+                placeholder="0.00"
+                step="0.01"
+                oninput="evaluateBillPayMode()"
+                class="w-full bg-transparent text-2xl font-bold font-num text-slate-900 dark:text-slate-100 focus:outline-none"
+              />
+              <span class="text-xs font-bold text-slate-400">USD</span>
+            </div>
+          </div>
+
+          <button
+            id="bpConfirmPayBtn"
+            onclick="runBillPaySmartFlow()"
+            disabled
+            class="w-full bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-600 font-bold py-3.5 rounded-2xl text-xs cursor-not-allowed transition-all flex items-center justify-center gap-2"
+          >
+            <i class="fa-solid fa-lock"></i> Pay Securely
+          </button>
+        </div>
+
+        <!-- Inquiry Output Summary -->
+        <div
+          class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-4 shadow-sm space-y-3 text-xs"
+        >
+          <div class="flex justify-between items-center">
+            <span
+              class="font-bold text-slate-500 uppercase tracking-wider text-[10px]"
+              >Summary</span
+            >
+            <span
+              id="bpResponseCodeBadge"
+              class="px-2 py-0.5 rounded-md font-mono text-[10px] bg-slate-100 dark:bg-slate-800 font-bold"
+              >IDLE</span
+            >
+          </div>
+          <div
+            class="flex justify-between items-center bg-emerald-50 dark:bg-emerald-950/30 p-3 rounded-2xl border border-emerald-200/60 dark:border-emerald-900/50"
+          >
+            <div>
+              <p
+                class="text-[9px] font-bold text-emerald-700/70 dark:text-emerald-400/70"
+              >
+                AMOUNT
+              </p>
+              <p
+                id="bpResBillAmount"
+                class="text-xl font-num font-black text-emerald-700 dark:text-emerald-400"
+              >
+                0.00
+              </p>
+            </div>
+            <div class="text-right">
+              <p
+                class="text-[9px] font-bold text-emerald-700/70 dark:text-emerald-400/70"
+              >
+                FEE
+              </p>
+              <p
+                id="bpResFeeAmount"
+                class="text-xs font-num font-bold text-slate-700 dark:text-slate-200"
+              >
+                0.00
+              </p>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-2 text-[11px]">
+            <div
+              class="bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200/70 dark:border-slate-800 space-y-0.5"
+            >
+              <span class="text-slate-400 block text-[9px] font-bold uppercase">Biller / Supplier</span>
+              <span id="bpResSupplier" class="font-bold truncate block text-slate-800 dark:text-slate-200">-</span>
+            </div>
+            <div
+              class="bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200/70 dark:border-slate-800 space-y-0.5"
+            >
+              <span class="text-slate-400 block text-[9px] font-bold uppercase">Customer Code</span>
+              <span id="bpResCustomerCode" class="font-bold font-mono truncate block text-slate-800 dark:text-slate-200">-</span>
+            </div>
+            <div
+              class="bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200/70 dark:border-slate-800 space-y-0.5"
+            >
+              <span class="text-slate-400 block text-[9px] font-bold uppercase">Customer Name</span>
+              <span id="bpResCustomerName" class="font-bold truncate block text-slate-800 dark:text-slate-200">-</span>
+            </div>
+            <div
+              class="bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200/70 dark:border-slate-800 space-y-0.5"
+            >
+              <span class="text-slate-400 block text-[9px] font-bold uppercase">Gateway Message</span>
+              <span id="bpResMessage" class="font-bold truncate block text-slate-800 dark:text-slate-200">-</span>
+            </div>
+          </div>
+          <span id="bpResPaymentToken" class="hidden"></span>
+        </div>
+      </section>
+
+      <!-- 4b. DEEPLINK VIEW (Bill24 API v5 Inquiry / v3 Confirm, identity_code based — Bank Checkout / Deeplink) -->
+      <section id="paymentView" class="hidden space-y-4">
+        <div
+          class="flex justify-between items-center border-b border-slate-200 dark:border-slate-800 pb-2"
+        >
+          <h2
+            class="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2"
+          >
+            <i class="fa-solid fa-link text-indigo-500"></i> Deeplink
+            Checkout
           </h2>
         </div>
 
@@ -1364,19 +1544,20 @@
             <input
               type="text"
               id="payerAccountNo"
-              placeholder="Payer Account No."
+              required
+              placeholder="Account Number *"
               class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2.5 text-xs font-mono text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500"
             />
             <input
               type="text"
               id="payerAccountName"
-              placeholder="Payer Account Name"
+              placeholder="Account Name"
               class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2.5 text-xs font-mono text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500"
             />
             <input
               type="text"
               id="payerPhone"
-              placeholder="Payer Phone"
+              placeholder="Phone Number"
               class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2.5 text-xs font-mono text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500"
             />
           </div>
@@ -1580,7 +1761,7 @@ System ready...</pre
     <nav
       class="fixed bottom-0 inset-x-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 pb-[env(safe-area-inset-bottom)] shadow-lg max-w-md sm:max-w-xl md:max-w-2xl mx-auto"
     >
-      <div class="grid grid-cols-3">
+      <div class="grid grid-cols-4">
         <button
           id="tab-btn-home"
           onclick="navigateToView('homeView')"
@@ -1598,12 +1779,20 @@ System ready...</pre
           <span class="text-[10px] font-bold">Scan QR</span>
         </button>
         <button
-          id="tab-btn-payment"
-          onclick="navigateToView('paymentView')"
+          id="tab-btn-billpay"
+          onclick="navigateToView('billPayView')"
           class="flex flex-col items-center justify-center gap-1 py-2.5 text-slate-400"
         >
           <i class="fa-solid fa-receipt text-base"></i>
           <span class="text-[10px] font-bold">Pay Bill</span>
+        </button>
+        <button
+          id="tab-btn-payment"
+          onclick="navigateToView('paymentView')"
+          class="flex flex-col items-center justify-center gap-1 py-2.5 text-slate-400"
+        >
+          <i class="fa-solid fa-link text-base"></i>
+          <span class="text-[10px] font-bold">Deeplink</span>
         </button>
       </div>
     </nav>

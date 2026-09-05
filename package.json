@@ -1,7 +1,7 @@
 {
   "name": "telegram-mini-bank-payment-app",
-  "version": "2.8.0",
-  "description": "Telegram Mini App with Bank Payment enhancements, KHQR live camera scanner, Bank Checkout / Deeplink (Generate Payment Links — merchant_id/transaction_id only, hash checking disabled, v5 Inquiry, v3 Confirm), and Vercel deployment.",
+  "version": "2.9.0",
+  "description": "Telegram Mini App with two independent payment menus: Pay Bill (v4 Inquiry / v2 Confirm, customer_code) and Deeplink Checkout (v5 Inquiry / v3 Confirm, tran_id/identity_code) plus Generate Payment Links, KHQR live camera scanner, and Vercel deployment.",
   "scripts": {
     "start": "npx serve .",
     "dev": "npx serve ."
