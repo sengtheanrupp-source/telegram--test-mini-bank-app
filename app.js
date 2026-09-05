@@ -178,7 +178,154 @@ let workflowState = {
   currency: "USD",
   payment_token: "",
   bank_ref: generateRandom16(),
+  // Populated when the Mini App is opened via a Bank API
+  // "Generate Payment Links" deeplink (web_payment_url ?token=... or
+  // mobile_deep_link startapp=...). See resolvePaymentLink() below.
+  link_token: "",
+  return_url: "",
+  bank_ref_no: "",
 };
+
+/* 3b. PAYMENT LINK (DEEPLINK) RESOLUTION
+   Handles Mini App entry via the Bank API "Generate Payment Links" flow:
+     - web_payment_url  -> https://<this-app>/?token=<token>
+     - mobile_deep_link -> https://t.me/<bot>/<app>?startapp=<token>
+   Telegram delivers the startapp value as initDataUnsafe.start_param
+   (NOT as a normal query string), so we check both. */
+function getStartParamFromTelegram() {
+  try {
+    if (tgApp && tgApp.initDataUnsafe && tgApp.initDataUnsafe.start_param) {
+      return tgApp.initDataUnsafe.start_param;
+    }
+  } catch (e) {}
+  return "";
+}
+
+function getTokenFromQueryString() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("token") || params.get("startapp") || "";
+  } catch (e) {
+    return "";
+  }
+}
+
+async function resolvePaymentLink() {
+  const token = getStartParamFromTelegram() || getTokenFromQueryString();
+  if (!token) return;
+
+  workflowState.link_token = token;
+  log("Deep link token detected. Resolving payment link...", { token });
+
+  try {
+    const response = await fetch(
+      `/api/resolve-link?token=${encodeURIComponent(token)}`,
+    );
+    const jsonData = await response.json();
+
+    if (!response.ok || jsonData.code !== "SUCCESS") {
+      log(
+        "Failed to resolve payment link: " +
+          (jsonData.message || response.statusText),
+      );
+      showToast(
+        jsonData.message || "This payment link is invalid or expired.",
+        true,
+      );
+      return;
+    }
+
+    const data = jsonData.data;
+    workflowState.return_url = data.return_url || "";
+    workflowState.bank_ref_no = data.ref_no || "";
+    workflowState.customer_code = data.customer_code || "";
+    workflowState.bill_code = data.bill_code || data.customer_code || "";
+    workflowState.currency = data.currency || "USD";
+
+    const prefixCodeEl = document.getElementById("prefixCode");
+    const rawCodeEl = document.getElementById("rawCode");
+    if (prefixCodeEl) prefixCodeEl.value = "";
+    if (rawCodeEl) rawCodeEl.value = data.customer_code || "";
+    updateFullCodes();
+
+    const refNoEl = document.getElementById("refNoDisplay");
+    if (refNoEl && data.ref_no) refNoEl.value = data.ref_no;
+
+    const banner = document.getElementById("linkSessionBanner");
+    const bannerRef = document.getElementById("linkSessionRef");
+    if (banner) banner.classList.remove("hidden");
+    if (bannerRef) bannerRef.textContent = data.ref_no || "-";
+
+    log("Payment link resolved successfully.", data);
+    showToast("Bill loaded from payment link. Running inquiry...");
+
+    navigateToView("paymentView");
+    setTimeout(() => {
+      runInquiry();
+    }, 300);
+  } catch (err) {
+    log("Error resolving payment link: " + err.message);
+  }
+}
+
+/* Called from the "Done" button on the success receipt modal.
+   If this session came from a Generate Payment Links deeplink, send the
+   user back to the bank/merchant's return_url with the outcome appended.
+   Otherwise just close the modal like before. */
+function handlePaymentDoneAction() {
+  const returnUrl = workflowState.return_url;
+  if (!returnUrl) {
+    closeModal();
+    return;
+  }
+
+  try {
+    const target = new URL(returnUrl);
+    target.searchParams.set("status", "success");
+    target.searchParams.set(
+      "ref_no",
+      workflowState.bank_ref_no || workflowState.bank_ref || "",
+    );
+    target.searchParams.set("txn_id", workflowState.bank_ref || "");
+    target.searchParams.set("amount", String(workflowState.total_amount || ""));
+    target.searchParams.set("currency", workflowState.currency || "USD");
+
+    log("Redirecting to merchant return_url: " + target.toString());
+
+    if (tgApp && tgApp.openLink) {
+      tgApp.openLink(target.toString());
+      setTimeout(() => {
+        if (tgApp.close) tgApp.close();
+      }, 400);
+    } else {
+      window.location.href = target.toString();
+    }
+  } catch (e) {
+    log("Invalid return_url, falling back to close: " + e.message);
+    closeModal();
+  }
+}
+
+/* Reports the Bill24 payment outcome back to our Bank API session store so
+   /api/verify-transaction reflects real status. Only fires when the app
+   was opened via a Generate Payment Links deeplink. Non-blocking: a
+   failure here must never interrupt the on-screen receipt. */
+function notifyPaymentLinkStatus(status, txnId, amount, currency) {
+  if (!workflowState.link_token) return;
+  fetch("/api/mark-paid", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      token: workflowState.link_token,
+      status,
+      txn_id: txnId,
+      paid_amount: amount,
+      currency,
+    }),
+  }).catch((err) => {
+    log("mark-paid notify failed (non-blocking): " + err.message);
+  });
+}
 
 let rawLogText = "";
 let payloadLogs = [];
@@ -1148,6 +1295,7 @@ async function runSmartPaymentFlowAfterAuth() {
         metaDetails,
       );
       speakPaymentSuccess(totalAmt, curr);
+      notifyPaymentLinkStatus("paid", autoRef, totalAmt, curr);
     } else {
       triggerHaptic("error");
       finishModal(
@@ -1156,6 +1304,7 @@ async function runSmartPaymentFlowAfterAuth() {
         jsonData.message || "Payment rejected.",
         metaDetails,
       );
+      notifyPaymentLinkStatus("failed", autoRef, totalAmt, curr);
     }
   } catch (err) {
     log("Payment Connection Error:", err.message);
@@ -2123,6 +2272,7 @@ const SETTINGS_SECTIONS = {
   security: "Security & PIN",
   camera: "Camera & Voice",
   appearance: "Appearance",
+  linkgen: "Payment Link Generator",
   data: "Backup & Data",
 };
 
@@ -2231,6 +2381,87 @@ function importGatewaySettings(e) {
   reader.readAsText(file);
 }
 
+/* PAYMENT LINK GENERATOR TEST PANEL — calls our own Bank API endpoint
+   (/api/generate-payment-link) so testers can create a working
+   web_payment_url + mobile_deep_link without a separate backend. */
+async function generateTestPaymentLink() {
+  const customerCode = document.getElementById("lgCustomerCode").value.trim();
+  const amount = document.getElementById("lgAmount").value.trim();
+  const currency = document.getElementById("lgCurrency").value.trim() || "USD";
+  const refNo = document.getElementById("lgRefNo").value.trim();
+  const returnUrl = document.getElementById("lgReturnUrl").value.trim();
+  const expireMinutes = document.getElementById("lgExpireMinutes").value.trim();
+
+  if (!customerCode) {
+    showToast("Customer / bill code is required.", true);
+    return;
+  }
+  if (!returnUrl) {
+    showToast("Return URL is required.", true);
+    return;
+  }
+
+  const payload = {
+    customer_code: customerCode,
+    currency,
+    return_url: returnUrl,
+  };
+  if (amount) payload.amount = parseFloat(amount);
+  if (refNo) payload.ref_no = refNo;
+  if (expireMinutes) payload.expire_minutes = parseInt(expireMinutes, 10);
+
+  log("Requesting /api/generate-payment-link...", payload);
+
+  try {
+    const response = await fetch("/api/generate-payment-link", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const jsonData = await response.json();
+
+    if (!response.ok || jsonData.code !== "SUCCESS") {
+      showToast(jsonData.message || "Failed to generate payment link.", true);
+      log("generate-payment-link failed:", jsonData);
+      return;
+    }
+
+    const data = jsonData.data;
+    log("Payment link generated.", data);
+
+    document.getElementById("lgWebUrl").value = data.web_payment_url;
+    document.getElementById("lgMobileUrl").value = data.mobile_deep_link;
+    document.getElementById("lgRefBadge").textContent =
+      `Ref: ${data.ref_no}  ·  Expires: ${new Date(data.expires_at).toLocaleString()}`;
+    document.getElementById("lgResultBox").classList.remove("hidden");
+
+    renderLinkGenQr("lgWebQr", data.web_payment_url);
+    renderLinkGenQr("lgMobileQr", data.mobile_deep_link);
+
+    showToast("Payment link generated successfully.");
+  } catch (err) {
+    log("generate-payment-link error: " + err.message);
+    showToast("Connection error: " + err.message, true);
+  }
+}
+
+function renderLinkGenQr(canvasId, text) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas || typeof QRCode === "undefined") return;
+  QRCode.toCanvas(canvas, text, { width: 128, margin: 1 }, (err) => {
+    if (err) log("QR render error: " + err.message);
+  });
+}
+
+function copyLinkGenField(fieldId) {
+  const el = document.getElementById(fieldId);
+  if (!el || !el.value) return;
+  navigator.clipboard
+    .writeText(el.value)
+    .then(() => showToast("Copied to clipboard."))
+    .catch(() => showToast("Copy failed.", true));
+}
+
 function setTheme(mode) {
   const root = document.documentElement;
   if (mode === "dark") root.classList.add("dark");
@@ -2334,6 +2565,7 @@ window.onload = function () {
   updateRefNo();
   navigateToView("homeView");
   log("Telegram Mini App Bank Engine initialised successfully.");
+  resolvePaymentLink();
 
   // Always require PIN when the Mini App is opened if lock is enabled
   if (securitySettings.enabled) {

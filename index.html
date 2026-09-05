@@ -25,6 +25,7 @@
 
     <!-- jsQR Engine for QR Code Decoding CDN -->
     <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
 
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -522,6 +523,30 @@
 
             <button
               type="button"
+              data-section="linkgen"
+              onclick="showSettingsSection('linkgen')"
+              class="settings-menu-item w-full flex items-center gap-3 px-2.5 py-3 sm:py-2.5 rounded-2xl text-left hover:bg-white dark:hover:bg-slate-900 transition-all"
+            >
+              <span
+                class="w-9 h-9 rounded-xl bg-indigo-500/10 text-indigo-500 flex items-center justify-center text-sm shrink-0"
+                ><i class="fa-solid fa-link"></i
+              ></span>
+              <span class="flex-1 min-w-0">
+                <span
+                  class="block text-xs font-bold text-slate-800 dark:text-slate-200"
+                  >Payment Link Generator</span
+                >
+                <span class="block text-[10px] text-slate-400 truncate"
+                  >Create web / deeplink test links</span
+                >
+              </span>
+              <i
+                class="fa-solid fa-chevron-right text-[10px] text-slate-300 sm:hidden"
+              ></i>
+            </button>
+
+            <button
+              type="button"
               data-section="data"
               onclick="showSettingsSection('data')"
               class="settings-menu-item w-full flex items-center gap-3 px-2.5 py-3 sm:py-2.5 rounded-2xl text-left hover:bg-white dark:hover:bg-slate-900 transition-all"
@@ -800,6 +825,93 @@
                     <i class="fa-solid fa-moon"></i>
                   </button>
                 </div>
+              </div>
+            </div>
+
+            <!-- PANEL: PAYMENT LINK GENERATOR (Bank API -> Generate Payment Links) -->
+            <div id="settingsPanel-linkgen" class="settings-panel hidden space-y-3">
+              <p class="text-[10px] text-slate-400 leading-relaxed">
+                Calls <code class="font-mono">/api/generate-payment-link</code>
+                on this same deployment to create a test payment session,
+                returning a <b>web_payment_url</b> and a Telegram
+                <b>mobile_deep_link</b> (universal link) — exactly what the
+                Bank Mobile SDK would open on click.
+              </p>
+
+              <div>
+                <label class="block text-[10px] font-bold uppercase text-slate-400 mb-1">Customer / Bill Code</label>
+                <input type="text" id="lgCustomerCode" value="INV-2026-0009" placeholder="e.g. INV-2026-0009"
+                  class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 font-mono text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500" />
+              </div>
+
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <label class="block text-[10px] font-bold uppercase text-slate-400 mb-1">Amount (optional)</label>
+                  <input type="number" step="0.01" id="lgAmount" placeholder="0.00"
+                    class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 font-mono text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500" />
+                </div>
+                <div>
+                  <label class="block text-[10px] font-bold uppercase text-slate-400 mb-1">Currency</label>
+                  <input type="text" id="lgCurrency" value="USD"
+                    class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 font-mono text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500" />
+                </div>
+              </div>
+
+              <div>
+                <label class="block text-[10px] font-bold uppercase text-slate-400 mb-1">Bank Ref No (optional, auto-generated)</label>
+                <input type="text" id="lgRefNo" placeholder="auto"
+                  class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 font-mono text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500" />
+              </div>
+
+              <div>
+                <label class="block text-[10px] font-bold uppercase text-slate-400 mb-1">Return URL (required)</label>
+                <input type="text" id="lgReturnUrl" value="https://bank-app.example.com/payment/callback" placeholder="https://your-bank-app.example.com/callback"
+                  class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 font-mono text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500" />
+                <p class="text-[10px] text-slate-400 mt-1">Where the "Done" button sends the user after payment completes.</p>
+              </div>
+
+              <div>
+                <label class="block text-[10px] font-bold uppercase text-slate-400 mb-1">Expires In (minutes)</label>
+                <input type="number" id="lgExpireMinutes" value="30"
+                  class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 font-mono text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500" />
+              </div>
+
+              <button
+                onclick="generateTestPaymentLink()"
+                class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-2xl text-xs transition-all shadow-md flex items-center justify-center gap-2"
+              >
+                <i class="fa-solid fa-link"></i> Generate Payment Link
+              </button>
+
+              <div id="lgResultBox" class="hidden space-y-3 pt-2 border-t border-dashed border-slate-200 dark:border-slate-800">
+                <div>
+                  <div class="flex items-center justify-between mb-1">
+                    <label class="block text-[10px] font-bold uppercase text-slate-400">Web Payment URL</label>
+                    <button onclick="copyLinkGenField('lgWebUrl')" class="text-[10px] text-indigo-500 font-bold"><i class="fa-solid fa-copy"></i> Copy</button>
+                  </div>
+                  <input readonly id="lgWebUrl" class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 font-mono text-[10px] text-slate-700 dark:text-slate-300" />
+                </div>
+
+                <div>
+                  <div class="flex items-center justify-between mb-1">
+                    <label class="block text-[10px] font-bold uppercase text-slate-400">Mobile Deep Link (Telegram Universal URL)</label>
+                    <button onclick="copyLinkGenField('lgMobileUrl')" class="text-[10px] text-indigo-500 font-bold"><i class="fa-solid fa-copy"></i> Copy</button>
+                  </div>
+                  <input readonly id="lgMobileUrl" class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 font-mono text-[10px] text-slate-700 dark:text-slate-300" />
+                </div>
+
+                <div class="flex items-center gap-4 justify-center py-2">
+                  <div class="text-center">
+                    <canvas id="lgWebQr" class="rounded-lg border border-slate-200 dark:border-slate-800"></canvas>
+                    <p class="text-[9px] text-slate-400 mt-1">Web QR</p>
+                  </div>
+                  <div class="text-center">
+                    <canvas id="lgMobileQr" class="rounded-lg border border-slate-200 dark:border-slate-800"></canvas>
+                    <p class="text-[9px] text-slate-400 mt-1">Mobile Deep Link QR</p>
+                  </div>
+                </div>
+
+                <div id="lgRefBadge" class="p-3 bg-indigo-50 dark:bg-indigo-950/40 rounded-xl border border-indigo-200/60 dark:border-indigo-900/50 text-[11px] text-indigo-700 dark:text-indigo-300 font-mono"></div>
               </div>
             </div>
 
@@ -1165,6 +1277,19 @@
             <i class="fa-solid fa-receipt text-indigo-500"></i> Bill Inquiry
             &amp; Payment
           </h2>
+        </div>
+
+        <!-- Shown only when opened via a Bank API "Generate Payment Links" deeplink/token -->
+        <div
+          id="linkSessionBanner"
+          class="hidden flex items-center gap-2.5 bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200/60 dark:border-indigo-900/50 rounded-2xl px-3.5 py-2.5 text-[11px] text-indigo-700 dark:text-indigo-300"
+        >
+          <i class="fa-solid fa-link shrink-0"></i>
+          <span class="flex-1 min-w-0">
+            Loaded from payment link · Bank Ref
+            <span id="linkSessionRef" class="font-mono font-bold">-</span>.
+            You'll be returned to the bank app after payment.
+          </span>
         </div>
 
         <!-- Single Input Form -->
@@ -1664,7 +1789,7 @@ System ready...</pre
             </button>
             <button
               type="button"
-              onclick="closeModal()"
+              onclick="handlePaymentDoneAction()"
               class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 sm:py-3.5 rounded-2xl text-xs sm:text-sm shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-1.5 active:scale-95 transition-all"
             >
               <i class="fa-solid fa-check"></i> Done
