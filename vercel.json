@@ -2,6 +2,12 @@
   "version": 2,
   "name": "telegram-mini-bank-payment-app",
   "cleanUrls": true,
+  "rewrites": [
+    {
+      "source": "/transaction/generatelinks",
+      "destination": "/api/transaction/generatelinks"
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)",

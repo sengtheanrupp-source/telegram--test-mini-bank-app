@@ -88,45 +88,68 @@ async function safeFetchJson(url, options) {
 /* Mock Fallback Engine for Sandbox Testing */
 function getMockSandboxResponse(url, options) {
   const autoRef = generateRandom16();
-  if (url.includes("/inquiry")) {
+  if (url.includes("/payment/v5/inquiry")) {
     return {
       code: "SUCCESS",
-      message: "Customer found in proxy! (Sandbox Mock)",
+      message: "Success (Sandbox Mock)",
+      message_kh: "ជោគជ័យ",
       data: {
-        supplier: {
-          code: "8282",
-          name: "ABCV4 Co., Ltd.",
-          short_name: "ABCV4",
+        merchant: {
+          code: "1234",
+          name: "Demo Store",
+          allow_exceed_payment: false,
+          allow_partial_payment: false,
         },
-        customer: {
-          code: workflowState.customer_code || "INV-2026-0076",
-          name: "Chetra Lat 2",
-          name_en: "Chetra Lat 2",
-        },
-        balances: [
+        customers: [
           {
-            bill_amount: 1.1,
-            fee_amount: 0.0,
-            total_amount: 1.1,
-            currency: "USD",
-            payment_token: "MOCK_TOKEN_" + Date.now(),
+            branch_code: "BRANCH-PP",
+            branch_name: "Phnom Penh Branch",
+            customer_code: workflowState.identity_code || "12340001",
+            customer_name: "ជា សំណាង",
+            customer_name_latin: "CHEA Samnang",
+            bill_no: "INV23001",
+            amount: 1.1,
           },
         ],
+        transaction: {
+          id: workflowState.identity_code || autoRef,
+          original_amount: 1.1,
+          convenience_fee_amount: 0.0,
+          sponsor_fee_amount: 0.0,
+          fee_channel: "MERCHANT",
+          total_amount: 1.1,
+          currency: "USD",
+          description: "",
+          min_amount: -1,
+          max_amount: -1,
+          payment_token: "MOCK_TOKEN_" + Date.now(),
+        },
+        urls: {
+          return_url: "https://example.com/transaction/complete",
+        },
       },
     };
-  } else if (url.includes("/payment/v2/confirm")) {
+  } else if (url.includes("/payment/v3/confirm")) {
     return {
       code: "SUCCESS",
-      message: "Payment success. (Sandbox Mock)",
+      message: "",
+      message_kh: "",
       data: {
-        customer_code: workflowState.customer_code || "INV-2026-0076",
-        customer_name: workflowState.customer_name || "Chetra Lat 2",
-        paid_to: workflowState.supplier_name || "ABCV4 Co., Ltd.",
-        ref_no: autoRef,
-        total_amount: workflowState.total_amount || 1.1,
-        fee_amount: workflowState.fee_amount || 0.0,
-        currency: workflowState.currency || "USD",
-        paid_date: new Date().toLocaleString(),
+        merchant: {
+          code: "1234",
+          name: workflowState.supplier_name || "Demo Store",
+        },
+        transaction: {
+          id: workflowState.identity_code || autoRef,
+          original_amount: workflowState.original_amount || 1.1,
+          convenience_fee_amount: workflowState.convenience_fee_amount || 0.0,
+          sponsor_fee_amount: workflowState.sponsor_fee_amount || 0.0,
+          fee_channel: workflowState.fee_channel || "MERCHANT",
+          total_amount: workflowState.total_amount || 1.1,
+          currency: workflowState.currency || "USD",
+          description: "",
+          bank_ref: workflowState.bank_ref || autoRef,
+        },
       },
     };
   } else if (url.includes("/qr/v2/confirm")) {
@@ -168,30 +191,39 @@ function generateRandom16() {
 }
 
 let workflowState = {
+  identity_code: "", // transaction_id from the Bill24 SDK — the inquiry/confirm key
   customer_code: "",
   customer_name: "",
   supplier_name: "",
-  bill_code: "",
-  bill_amount: 0,
-  fee_amount: 0,
+  bill_no: "",
+  customers: [], // full customers[] array from the v5 inquiry response
+  original_amount: 0,
+  convenience_fee_amount: 0,
+  sponsor_fee_amount: 0,
+  fee_amount: 0, // convenience + sponsor, for display
   total_amount: 0,
   currency: "USD",
+  fee_channel: "MERCHANT",
+  description: "",
   payment_token: "",
   bank_ref: generateRandom16(),
-  // Populated when the Mini App is opened via a Bank API
-  // "Generate Payment Links" deeplink (web_payment_url ?token=... or
-  // mobile_deep_link startapp=...). See resolvePaymentLink() below.
+  // Populated from the Bank API "Generate Payment Links" deeplink
+  // (web_payment_url ?identity_code=... or mobile_deep_link startapp=...)
   link_token: "",
+  // Populated straight from the v5 Inquiry response's data.urls.return_url —
+  // this IS the URL the "Done" button redirects to after payment.
   return_url: "",
-  bank_ref_no: "",
 };
 
 /* 3b. PAYMENT LINK (DEEPLINK) RESOLUTION
    Handles Mini App entry via the Bank API "Generate Payment Links" flow:
-     - web_payment_url  -> https://<this-app>/?token=<token>
-     - mobile_deep_link -> https://t.me/<bot>/<app>?startapp=<token>
+     - web_payment_url  -> https://<this-app>/?identity_code=<transaction_id>
+     - mobile_deep_link -> https://t.me/<bot>/<app>?startapp=<transaction_id>
    Telegram delivers the startapp value as initDataUnsafe.start_param
-   (NOT as a normal query string), so we check both. */
+   (NOT as a normal query string), so we check both. Unlike an opaque
+   token, identity_code IS the Bill24 transaction_id itself — no extra
+   lookup call is needed, we just feed it straight into the v5 Inquiry
+   call, whose response carries everything (including urls.return_url). */
 function getStartParamFromTelegram() {
   try {
     if (tgApp && tgApp.initDataUnsafe && tgApp.initDataUnsafe.start_param) {
@@ -201,76 +233,48 @@ function getStartParamFromTelegram() {
   return "";
 }
 
-function getTokenFromQueryString() {
+function getIdentityCodeFromQueryString() {
   try {
     const params = new URLSearchParams(window.location.search);
-    return params.get("token") || params.get("startapp") || "";
+    return (
+      params.get("identity_code") ||
+      params.get("token") || // backward-compat with earlier test links
+      params.get("startapp") ||
+      ""
+    );
   } catch (e) {
     return "";
   }
 }
 
-async function resolvePaymentLink() {
-  const token = getStartParamFromTelegram() || getTokenFromQueryString();
-  if (!token) return;
+function resolvePaymentLink() {
+  const identityCode =
+    getStartParamFromTelegram() || getIdentityCodeFromQueryString();
+  if (!identityCode) return;
 
-  workflowState.link_token = token;
-  log("Deep link token detected. Resolving payment link...", { token });
+  workflowState.link_token = identityCode;
+  log("Deeplink detected. Identity code: " + identityCode);
 
-  try {
-    const response = await fetch(
-      `/api/resolve-link?token=${encodeURIComponent(token)}`,
-    );
-    const jsonData = await response.json();
+  const rawCodeEl = document.getElementById("rawCode");
+  if (rawCodeEl) rawCodeEl.value = identityCode;
+  updateFullCodes();
 
-    if (!response.ok || jsonData.code !== "SUCCESS") {
-      log(
-        "Failed to resolve payment link: " +
-          (jsonData.message || response.statusText),
-      );
-      showToast(
-        jsonData.message || "This payment link is invalid or expired.",
-        true,
-      );
-      return;
-    }
+  const banner = document.getElementById("linkSessionBanner");
+  const bannerRef = document.getElementById("linkSessionRef");
+  if (banner) banner.classList.remove("hidden");
+  if (bannerRef) bannerRef.textContent = identityCode;
 
-    const data = jsonData.data;
-    workflowState.return_url = data.return_url || "";
-    workflowState.bank_ref_no = data.ref_no || "";
-    workflowState.customer_code = data.customer_code || "";
-    workflowState.bill_code = data.bill_code || data.customer_code || "";
-    workflowState.currency = data.currency || "USD";
-
-    const prefixCodeEl = document.getElementById("prefixCode");
-    const rawCodeEl = document.getElementById("rawCode");
-    if (prefixCodeEl) prefixCodeEl.value = "";
-    if (rawCodeEl) rawCodeEl.value = data.customer_code || "";
-    updateFullCodes();
-
-    const refNoEl = document.getElementById("refNoDisplay");
-    if (refNoEl && data.ref_no) refNoEl.value = data.ref_no;
-
-    const banner = document.getElementById("linkSessionBanner");
-    const bannerRef = document.getElementById("linkSessionRef");
-    if (banner) banner.classList.remove("hidden");
-    if (bannerRef) bannerRef.textContent = data.ref_no || "-";
-
-    log("Payment link resolved successfully.", data);
-    showToast("Bill loaded from payment link. Running inquiry...");
-
-    navigateToView("paymentView");
-    setTimeout(() => {
-      runInquiry();
-    }, 300);
-  } catch (err) {
-    log("Error resolving payment link: " + err.message);
-  }
+  showToast("Opened from payment link. Running inquiry...");
+  navigateToView("paymentView");
+  setTimeout(() => {
+    runInquiry();
+  }, 300);
 }
 
 /* Called from the "Done" button on the success receipt modal.
    If this session came from a Generate Payment Links deeplink, send the
-   user back to the bank/merchant's return_url with the outcome appended.
+   user back to the bank/merchant's return_url (captured from the v5
+   Inquiry response's data.urls.return_url) with the outcome appended.
    Otherwise just close the modal like before. */
 function handlePaymentDoneAction() {
   const returnUrl = workflowState.return_url;
@@ -282,11 +286,8 @@ function handlePaymentDoneAction() {
   try {
     const target = new URL(returnUrl);
     target.searchParams.set("status", "success");
-    target.searchParams.set(
-      "ref_no",
-      workflowState.bank_ref_no || workflowState.bank_ref || "",
-    );
-    target.searchParams.set("txn_id", workflowState.bank_ref || "");
+    target.searchParams.set("identity_code", workflowState.identity_code || "");
+    target.searchParams.set("bank_ref", workflowState.bank_ref || "");
     target.searchParams.set("amount", String(workflowState.total_amount || ""));
     target.searchParams.set("currency", workflowState.currency || "USD");
 
@@ -304,27 +305,6 @@ function handlePaymentDoneAction() {
     log("Invalid return_url, falling back to close: " + e.message);
     closeModal();
   }
-}
-
-/* Reports the Bill24 payment outcome back to our Bank API session store so
-   /api/verify-transaction reflects real status. Only fires when the app
-   was opened via a Generate Payment Links deeplink. Non-blocking: a
-   failure here must never interrupt the on-screen receipt. */
-function notifyPaymentLinkStatus(status, txnId, amount, currency) {
-  if (!workflowState.link_token) return;
-  fetch("/api/mark-paid", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      token: workflowState.link_token,
-      status,
-      txn_id: txnId,
-      paid_amount: amount,
-      currency,
-    }),
-  }).catch((err) => {
-    log("mark-paid notify failed (non-blocking): " + err.message);
-  });
 }
 
 let rawLogText = "";
@@ -1088,11 +1068,14 @@ if (snipContainer) {
 
 /* 7. INQUIRY & SINGLE PAYMENT FLOWS */
 function updateFullCodes() {
-  const prefix = document.getElementById("prefixCode").value.trim();
-  const rawCode = document.getElementById("rawCode").value.trim();
-  const combined = prefix ? `${prefix}${rawCode}` : rawCode;
-  document.getElementById("appCodeDisplay").textContent = `Ref: ${combined}`;
-  workflowState.customer_code = combined;
+  const identityCode = document.getElementById("rawCode").value.trim();
+  workflowState.identity_code = identityCode;
+  const displayEl = document.getElementById("appCodeDisplay");
+  if (displayEl) {
+    displayEl.textContent = identityCode
+      ? `Identity Code: ${identityCode}`
+      : "Enter the transaction_id from the Bill24 SDK, or open via a Generate Payment Links deeplink.";
+  }
 }
 
 function updateRefNo() {
@@ -1134,39 +1117,67 @@ async function runInquiry() {
   const token = document.getElementById("authToken").value.trim();
   updateFullCodes();
 
-  log("Executing Inquiry request for customer_code: " + workflowState.customer_code);
+  if (!workflowState.identity_code) {
+    showToast("Enter an Identity Code (Transaction ID) first.", true);
+    return;
+  }
+
+  log("Executing Inquiry request for identity_code: " + workflowState.identity_code);
   openLoadingModal("Executing Inquiry");
 
   try {
-    const jsonData = await safeFetchJson(`${baseUrl}/payment/v4/inquiry`, {
+    const jsonData = await safeFetchJson(`${baseUrl}/payment/v5/inquiry`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         accept: "*/*",
         token: token,
       },
-      body: JSON.stringify({ customer_code: workflowState.customer_code }),
+      body: JSON.stringify({
+        identity_code: workflowState.identity_code,
+        fee_channel: "MERCHANT",
+      }),
     });
 
     log("Inquiry Response Payload:", jsonData);
 
     if (jsonData.code === "SUCCESS" && jsonData.data) {
       const data = jsonData.data;
-      const supplierObj = data.supplier || {};
-      const customerObj = data.customer || {};
-      const balanceObj = (Array.isArray(data.balances) && data.balances.length > 0) ? data.balances[0] : (data.balance || {});
+      const merchant = data.merchant || {};
+      const customers = Array.isArray(data.customers) ? data.customers : [];
+      const primaryCustomer = customers[0] || {};
+      const transaction = data.transaction || {};
+      const urls = data.urls || {};
 
-      workflowState.customer_code = customerObj.code || data.customer_code || workflowState.customer_code;
-      workflowState.customer_name = customerObj.name || customerObj.name_en || data.customer_name || data.consumer_name || "N/A";
-      workflowState.supplier_name = supplierObj.name || supplierObj.short_name || data.supplier_name || data.biller_name || "N/A";
-      workflowState.bill_code = customerObj.code || data.bill_code || workflowState.customer_code;
+      workflowState.supplier_name = merchant.name || "N/A";
+      workflowState.customers = customers;
+      workflowState.customer_code = primaryCustomer.customer_code || "";
+      workflowState.customer_name =
+        primaryCustomer.customer_name_latin || primaryCustomer.customer_name || "N/A";
+      workflowState.bill_no = primaryCustomer.bill_no || "";
 
-      workflowState.payment_token = balanceObj.payment_token || balanceObj.payment_Token || data.payment_token || data.payment_Token || data.token || "";
+      workflowState.payment_token = transaction.payment_token || "";
+      workflowState.original_amount = transaction.original_amount || 0;
+      workflowState.convenience_fee_amount = transaction.convenience_fee_amount || 0;
+      workflowState.sponsor_fee_amount = transaction.sponsor_fee_amount || 0;
+      workflowState.fee_amount =
+        (transaction.convenience_fee_amount || 0) + (transaction.sponsor_fee_amount || 0);
+      workflowState.total_amount =
+        transaction.total_amount !== undefined
+          ? transaction.total_amount
+          : workflowState.original_amount + workflowState.fee_amount;
+      workflowState.currency = transaction.currency || "USD";
+      workflowState.fee_channel = transaction.fee_channel || "MERCHANT";
+      workflowState.description = transaction.description || "";
 
-      workflowState.bill_amount = balanceObj.bill_amount !== undefined ? balanceObj.bill_amount : (data.bill_amount !== undefined ? data.bill_amount : (data.bill_Amount !== undefined ? data.bill_Amount : 0));
-      workflowState.fee_amount = balanceObj.fee_amount !== undefined ? balanceObj.fee_amount : (data.fee_amount !== undefined ? data.fee_amount : (data.fee_Amount !== undefined ? data.fee_Amount : 0));
-      workflowState.total_amount = balanceObj.total_amount !== undefined ? balanceObj.total_amount : (data.total_amount !== undefined ? data.total_amount : (data.total_Amount !== undefined ? data.total_Amount : (workflowState.bill_amount + workflowState.fee_amount)));
-      workflowState.currency = balanceObj.currency || data.currency || data.currency_code || data.currency_Code || "USD";
+      // This is the key piece: return_url now comes straight from the
+      // Inquiry response, and is what the post-payment "Done" button uses.
+      workflowState.return_url = urls.return_url || workflowState.return_url || "";
+
+      const customerCodeLabel =
+        customers.length > 1
+          ? `${workflowState.customer_code} (+${customers.length - 1} more)`
+          : workflowState.customer_code || "-";
 
       const resSupplierEl = document.getElementById("resSupplier");
       const resCustomerCodeEl = document.getElementById("resCustomerCode");
@@ -1177,15 +1188,17 @@ async function runInquiry() {
       const resFeeAmountEl = document.getElementById("resFeeAmount");
 
       if (resSupplierEl) resSupplierEl.textContent = workflowState.supplier_name;
-      if (resCustomerCodeEl) resCustomerCodeEl.textContent = workflowState.customer_code;
+      if (resCustomerCodeEl) resCustomerCodeEl.textContent = customerCodeLabel;
       if (resCustomerNameEl) resCustomerNameEl.textContent = workflowState.customer_name;
       if (resMessageEl) resMessageEl.textContent = jsonData.message || "Success";
       if (resPaymentTokenEl) resPaymentTokenEl.textContent = workflowState.payment_token || "None";
-      if (resBillAmountEl) resBillAmountEl.textContent = `${workflowState.bill_amount} ${workflowState.currency}`;
+      if (resBillAmountEl) resBillAmountEl.textContent = `${workflowState.original_amount} ${workflowState.currency}`;
       if (resFeeAmountEl) resFeeAmountEl.textContent = `${workflowState.fee_amount} ${workflowState.currency}`;
 
       document.getElementById("responseCodeBadge").textContent = jsonData.code;
-      document.getElementById("paymentAmount").value = workflowState.bill_amount;
+      document.getElementById("paymentAmount").value = workflowState.total_amount;
+      const currEl = document.getElementById("paymentAmountCurrency");
+      if (currEl) currEl.textContent = workflowState.currency;
 
       document.getElementById("appStatusBadge").textContent = "Token Active";
       document.getElementById("appStatusBadge").className =
@@ -1193,7 +1206,7 @@ async function runInquiry() {
       evaluatePaymentMode();
 
       const metaDetails = {
-        customer_code: workflowState.customer_code,
+        customer_code: customerCodeLabel,
         customer_name: workflowState.customer_name,
         total_amount: `${workflowState.total_amount} ${workflowState.currency}`,
         fee_amount: `${workflowState.fee_amount} ${workflowState.currency}`,
@@ -1233,27 +1246,36 @@ async function runSmartPaymentFlow() {
 async function runSmartPaymentFlowAfterAuth() {
   const baseUrl = document.getElementById("baseUrl").value.trim();
   const token = document.getElementById("authToken").value.trim();
-  const amount =
-    parseFloat(document.getElementById("paymentAmount").value) || 0;
   const autoRef = generateRandom16();
   document.getElementById("refNoDisplay").value = autoRef;
   workflowState.bank_ref = autoRef;
 
+  const payerAccountNo = (document.getElementById("payerAccountNo")?.value || "").trim();
+  const payerAccountName = (document.getElementById("payerAccountName")?.value || "").trim();
+  const payerPhone = (document.getElementById("payerPhone")?.value || "").trim();
+
   const payload = {
-    customer_code: workflowState.customer_code,
-    bill_code: workflowState.bill_code || workflowState.customer_code,
-    bill_amount: workflowState.bill_amount || amount,
-    total_amount: workflowState.total_amount || amount,
+    identity_code: workflowState.identity_code,
+    fee_channel: workflowState.fee_channel || "MERCHANT",
+    bank_ref: autoRef,
+    bank_date: formatBankDate(new Date()),
+    original_amount: workflowState.original_amount,
+    convenience_fee_amount: workflowState.convenience_fee_amount || 0,
+    sponsor_fee_amount: workflowState.sponsor_fee_amount || 0,
+    total_amount: workflowState.total_amount,
     currency: workflowState.currency || "USD",
+    description: workflowState.description || "",
     payment_token: workflowState.payment_token,
-    ref_no: autoRef,
+    payer_account_no: payerAccountNo,
+    payer_account_name: payerAccountName,
+    payer_phone: payerPhone,
   };
 
-  log("Submitting Payment Request to /payment/v2/confirm...", payload);
+  log("Submitting Payment Request to /payment/v3/confirm...", payload);
   openLoadingModal("Executing Payment");
 
   try {
-    const jsonData = await safeFetchJson(`${baseUrl}/payment/v2/confirm`, {
+    const jsonData = await safeFetchJson(`${baseUrl}/payment/v3/confirm`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -1266,16 +1288,25 @@ async function runSmartPaymentFlowAfterAuth() {
     log("Pay Response Payload:", jsonData);
 
     const data = jsonData.data || {};
-    const supplierObj = data.supplier || {};
-    const customerObj = data.customer || {};
+    const merchant = data.merchant || {};
+    const transaction = data.transaction || {};
 
-    const customerCode = data.customer_code || customerObj.code || workflowState.customer_code || payload.ref_no;
-    const customerName = data.customer_name || customerObj.name || workflowState.customer_name || "N/A";
-    const paidTo = data.paid_to || supplierObj.name || data.biller_name || workflowState.supplier_name || "N/A";
-    const totalAmt = data.total_amount !== undefined ? data.total_amount : (payload.total_amount || payload.bill_amount);
-    const feeAmt = data.fee_amount !== undefined ? data.fee_amount : (workflowState.fee_amount || 0);
-    const curr = data.currency || payload.currency || "USD";
-    const paidDate = data.paid_date || new Date().toLocaleString();
+    // The v3 confirm response has no customer info — keep what Inquiry gave us.
+    const customerCode = workflowState.customer_code || payload.bank_ref;
+    const customerName = workflowState.customer_name || "N/A";
+    const paidTo = merchant.name || workflowState.supplier_name || "N/A";
+    const totalAmt =
+      transaction.total_amount !== undefined ? transaction.total_amount : payload.total_amount;
+    const feeAmt =
+      (transaction.convenience_fee_amount !== undefined
+        ? transaction.convenience_fee_amount
+        : payload.convenience_fee_amount || 0) +
+      (transaction.sponsor_fee_amount !== undefined
+        ? transaction.sponsor_fee_amount
+        : payload.sponsor_fee_amount || 0);
+    const curr = transaction.currency || payload.currency || "USD";
+    const bankRef = transaction.bank_ref || autoRef;
+    const paidDate = new Date().toLocaleString();
 
     const metaDetails = {
       customer_code: customerCode,
@@ -1291,11 +1322,10 @@ async function runSmartPaymentFlowAfterAuth() {
       finishModal(
         true,
         "Payment Successful",
-        jsonData.message || `Transaction ${autoRef} completed.`,
+        jsonData.message || `Transaction ${bankRef} completed.`,
         metaDetails,
       );
       speakPaymentSuccess(totalAmt, curr);
-      notifyPaymentLinkStatus("paid", autoRef, totalAmt, curr);
     } else {
       triggerHaptic("error");
       finishModal(
@@ -1304,12 +1334,21 @@ async function runSmartPaymentFlowAfterAuth() {
         jsonData.message || "Payment rejected.",
         metaDetails,
       );
-      notifyPaymentLinkStatus("failed", autoRef, totalAmt, curr);
     }
   } catch (err) {
     log("Payment Connection Error:", err.message);
     finishModal(false, "Connection Error", err.message);
   }
+}
+
+/* Formats a Date as "YYYY-MM-DD HH:mm:ss" (local time), the bank_date
+   format expected by /payment/v3/confirm. */
+function formatBankDate(date) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return (
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
+    `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+  );
 }
 
 async function runVerifyTxn() {
@@ -2313,6 +2352,7 @@ function saveGatewaySettings() {
   const settings = {
     baseUrl: document.getElementById("baseUrl").value.trim(),
     authToken: document.getElementById("authToken").value.trim(),
+    hashToken: document.getElementById("hashToken").value.trim(),
     prefixCode: document.getElementById("prefixCode").value.trim(),
     refNoDisplay: document.getElementById("refNoDisplay").value.trim(),
   };
@@ -2339,6 +2379,7 @@ function loadGatewaySettings() {
     const s = JSON.parse(raw);
     if (s.baseUrl) document.getElementById("baseUrl").value = s.baseUrl;
     if (s.authToken) document.getElementById("authToken").value = s.authToken;
+    if (s.hashToken) document.getElementById("hashToken").value = s.hashToken;
     if (s.prefixCode)
       document.getElementById("prefixCode").value = s.prefixCode;
     if (s.refNoDisplay)
@@ -2350,6 +2391,7 @@ function exportGatewaySettings() {
   const settings = {
     baseUrl: document.getElementById("baseUrl").value,
     authToken: document.getElementById("authToken").value,
+    hashToken: document.getElementById("hashToken").value,
     prefixCode: document.getElementById("prefixCode").value,
     refNoDisplay: document.getElementById("refNoDisplay").value,
     security: securitySettings,
@@ -2381,48 +2423,49 @@ function importGatewaySettings(e) {
   reader.readAsText(file);
 }
 
-/* PAYMENT LINK GENERATOR TEST PANEL — calls our own Bank API endpoint
-   (/api/generate-payment-link) so testers can create a working
-   web_payment_url + mobile_deep_link without a separate backend. */
+/* PAYMENT LINK GENERATOR TEST PANEL — signs and calls the real
+   POST /transaction/generatelinks endpoint so testers can create a
+   working web_payment_url + mobile_deep_link for a real Bill24
+   transaction_id, exactly as Bill24 itself would. */
 async function generateTestPaymentLink() {
-  const customerCode = document.getElementById("lgCustomerCode").value.trim();
-  const amount = document.getElementById("lgAmount").value.trim();
-  const currency = document.getElementById("lgCurrency").value.trim() || "USD";
-  const refNo = document.getElementById("lgRefNo").value.trim();
-  const returnUrl = document.getElementById("lgReturnUrl").value.trim();
-  const expireMinutes = document.getElementById("lgExpireMinutes").value.trim();
+  const merchantId =
+    document.getElementById("lgMerchantId").value.trim() ||
+    document.getElementById("prefixCode").value.trim();
+  const transactionId = document.getElementById("lgTransactionId").value.trim();
+  const hashToken = document.getElementById("hashToken").value.trim();
 
-  if (!customerCode) {
-    showToast("Customer / bill code is required.", true);
+  if (!merchantId) {
+    showToast("Merchant ID is required.", true);
     return;
   }
-  if (!returnUrl) {
-    showToast("Return URL is required.", true);
+  if (!transactionId) {
+    showToast("Transaction ID is required.", true);
     return;
   }
-
-  const payload = {
-    customer_code: customerCode,
-    currency,
-    return_url: returnUrl,
-  };
-  if (amount) payload.amount = parseFloat(amount);
-  if (refNo) payload.ref_no = refNo;
-  if (expireMinutes) payload.expire_minutes = parseInt(expireMinutes, 10);
-
-  log("Requesting /api/generate-payment-link...", payload);
+  if (!hashToken) {
+    showToast("Set a Hash Token in API Gateway settings first.", true);
+    return;
+  }
 
   try {
-    const response = await fetch("/api/generate-payment-link", {
+    const hash = await computeHmacSha512Base64(
+      `${merchantId}${transactionId}`,
+      hashToken,
+    );
+
+    const payload = { merchant_id: merchantId, transaction_id: transactionId, hash };
+    log("Requesting /transaction/generatelinks...", payload);
+
+    const response = await fetch("/transaction/generatelinks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
     const jsonData = await response.json();
 
-    if (!response.ok || jsonData.code !== "SUCCESS") {
+    if (!response.ok || jsonData.code !== "000") {
       showToast(jsonData.message || "Failed to generate payment link.", true);
-      log("generate-payment-link failed:", jsonData);
+      log("generatelinks failed:", jsonData);
       return;
     }
 
@@ -2432,7 +2475,7 @@ async function generateTestPaymentLink() {
     document.getElementById("lgWebUrl").value = data.web_payment_url;
     document.getElementById("lgMobileUrl").value = data.mobile_deep_link;
     document.getElementById("lgRefBadge").textContent =
-      `Ref: ${data.ref_no}  ·  Expires: ${new Date(data.expires_at).toLocaleString()}`;
+      `Transaction: ${transactionId}  ·  Merchant: ${merchantId}`;
     document.getElementById("lgResultBox").classList.remove("hidden");
 
     renderLinkGenQr("lgWebQr", data.web_payment_url);
@@ -2440,9 +2483,30 @@ async function generateTestPaymentLink() {
 
     showToast("Payment link generated successfully.");
   } catch (err) {
-    log("generate-payment-link error: " + err.message);
+    log("generatelinks error: " + err.message);
     showToast("Connection error: " + err.message, true);
   }
+}
+
+/* Base64( HMAC_SHA-512( message, secret ) ) via the browser's native
+   SubtleCrypto — no external crypto library needed. Mirrors the hash
+   Bill24 computes server-side for /transaction/generatelinks. */
+async function computeHmacSha512Base64(message, secret) {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(secret),
+    { name: "HMAC", hash: "SHA-512" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, enc.encode(message));
+  const bytes = new Uint8Array(signature);
+  let binary = "";
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
 }
 
 function renderLinkGenQr(canvasId, text) {
