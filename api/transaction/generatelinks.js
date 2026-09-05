@@ -76,12 +76,25 @@ module.exports = async (req, res) => {
       .json({ code: "405", message: "Use POST." });
   }
 
+  let body;
   try {
-    const body =
+    body =
       typeof req.body === "string"
         ? JSON.parse(req.body || "{}")
         : req.body || {};
+  } catch (parseErr) {
+    // If you see THIS error, the raw bytes on the wire are not valid JSON
+    // (e.g. unquoted keys). If your own request logs show unquoted keys
+    // but you are NOT seeing this error, that just means your logging
+    // tool re-serializes the body for display — the real wire body was
+    // fine and this isn't the problem.
+    return res.status(400).json({
+      code: "400",
+      message: "Request body is not valid JSON: " + parseErr.message,
+    });
+  }
 
+  try {
     const { merchant_id, transaction_id, hash } = body;
 
     if (!merchant_id || !transaction_id || !hash) {
@@ -95,16 +108,49 @@ module.exports = async (req, res) => {
       return res.status(401).json({ code: "401", message: "Unknown merchant_id." });
     }
 
+    // HMAC-SHA512 always produces a 64-byte digest, which Base64-encodes
+    // (with padding) to EXACTLY 88 characters. Checking this up front lets
+    // us tell you precisely when the hash itself is malformed/truncated,
+    // instead of a generic "Invalid hash" that looks identical to a
+    // wrong-secret error.
+    const hashStr = String(hash);
+    let decodedLength = -1;
+    try {
+      decodedLength = Buffer.from(hashStr, "base64").length;
+    } catch (e) {
+      decodedLength = -1;
+    }
+
+    if (hashStr.length !== 88 || decodedLength !== 64) {
+      return res.status(400).json({
+        code: "400",
+        message:
+          `hash is not a valid Base64(HMAC-SHA512) value. ` +
+          `Expected 88 base64 characters decoding to 64 bytes, ` +
+          `but received ${hashStr.length} characters decoding to ${decodedLength} bytes. ` +
+          `This is a malformed/truncated hash on the caller's side (check the ` +
+          `HMAC-SHA512 + Base64 implementation used to sign the request) — it ` +
+          `will always fail hash comparison, regardless of which secret was used.`,
+      });
+    }
+
     const expectedHash = computeHash(merchant_id, transaction_id, HASH_TOKEN);
 
-    const providedBuf = Buffer.from(String(hash));
-    const expectedBuf = Buffer.from(expectedHash);
+    const providedBuf = Buffer.from(hashStr, "base64");
+    const expectedBuf = Buffer.from(expectedHash, "base64");
     const isValid =
       providedBuf.length === expectedBuf.length &&
       crypto.timingSafeEqual(providedBuf, expectedBuf);
 
     if (!isValid) {
-      return res.status(401).json({ code: "401", message: "Invalid hash." });
+      return res.status(401).json({
+        code: "401",
+        message:
+          "Invalid hash. The hash is well-formed (88 chars / 64 bytes) but " +
+          "doesn't match merchant_id + transaction_id signed with this " +
+          "server's BILL24_HASH_TOKEN. Confirm both sides are using the " +
+          "exact same shared secret (no extra whitespace/newline).",
+      });
     }
 
     const safeParam = toTelegramSafeParam(transaction_id);

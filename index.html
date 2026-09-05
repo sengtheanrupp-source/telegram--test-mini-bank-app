@@ -534,10 +534,10 @@
               <span class="flex-1 min-w-0">
                 <span
                   class="block text-xs font-bold text-slate-800 dark:text-slate-200"
-                  >Payment Link Generator</span
+                  >Manual Test: Generate Link</span
                 >
                 <span class="block text-[10px] text-slate-400 truncate"
-                  >Create web / deeplink test links</span
+                  >Dev tool only — not needed in production</span
                 >
               </span>
               <i
@@ -641,7 +641,7 @@
                   placeholder="Shared secret for Generate Payment Links hash"
                   class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 font-mono text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500"
                 />
-                <p class="text-[10px] text-slate-400 mt-1">Used to sign requests to <code class="font-mono">/transaction/generatelinks</code> (must match the server's <code class="font-mono">BILL24_HASH_TOKEN</code>).</p>
+                <p class="text-[10px] text-slate-400 mt-1">Only needed for the "Manual Test: Generate Link" tool below (to self-sign a test call). In production, Bill24 signs requests server-to-server — this deployment checks them against its own <code class="font-mono">BILL24_HASH_TOKEN</code> env var.</p>
               </div>
               <div class="grid grid-cols-2 gap-2">
                 <div>
@@ -842,17 +842,22 @@
               </div>
             </div>
 
-            <!-- PANEL: PAYMENT LINK GENERATOR (Bank API -> Generate Payment Links) -->
+            <!-- PANEL: MANUAL TEST — GENERATE LINK (dev tool only) -->
             <div id="settingsPanel-linkgen" class="settings-panel hidden space-y-3">
-              <p class="text-[10px] text-slate-400 leading-relaxed">
-                Simulates the call Bill24 makes to
-                <code class="font-mono">POST /transaction/generatelinks</code>
-                on this deployment: signs the request with your Hash Token
-                above, then returns the real <b>web_payment_url</b> and
-                Telegram <b>mobile_deep_link</b> (universal link) for a
-                transaction that already exists in Bill24 (created via the
-                Bill24 SDK).
-              </p>
+              <div class="flex items-start gap-2 p-2.5 bg-amber-50 dark:bg-amber-950/30 border border-amber-200/70 dark:border-amber-900/50 rounded-xl">
+                <i class="fa-solid fa-flask text-amber-500 text-xs mt-0.5"></i>
+                <p class="text-[10px] text-amber-700 dark:text-amber-400 leading-relaxed">
+                  <b>Manual testing only.</b> In production, Bill24's SDK
+                  calls <code class="font-mono">POST /transaction/generatelinks</code>
+                  on this deployment directly with the real
+                  <code class="font-mono">merchant_id</code> /
+                  <code class="font-mono">transaction_id</code> / signed
+                  <code class="font-mono">hash</code> — nothing here needs to
+                  be configured for that to work. This panel just lets
+                  <i>you</i> simulate that same call from your browser to
+                  sanity-check the endpoint.
+                </p>
+              </div>
 
               <div>
                 <label class="block text-[10px] font-bold uppercase text-slate-400 mb-1">Merchant ID (Prefix Code)</label>
@@ -872,7 +877,7 @@
                 onclick="generateTestPaymentLink()"
                 class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-2xl text-xs transition-all shadow-md flex items-center justify-center gap-2"
               >
-                <i class="fa-solid fa-link"></i> Generate Payment Link
+                <i class="fa-solid fa-flask"></i> Simulate Generate Link Call
               </button>
 
               <div id="lgResultBox" class="hidden space-y-3 pt-2 border-t border-dashed border-slate-200 dark:border-slate-800">

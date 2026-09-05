@@ -2311,7 +2311,7 @@ const SETTINGS_SECTIONS = {
   security: "Security & PIN",
   camera: "Camera & Voice",
   appearance: "Appearance",
-  linkgen: "Payment Link Generator",
+  linkgen: "Manual Test: Generate Link",
   data: "Backup & Data",
 };
 
@@ -2423,10 +2423,11 @@ function importGatewaySettings(e) {
   reader.readAsText(file);
 }
 
-/* PAYMENT LINK GENERATOR TEST PANEL — signs and calls the real
-   POST /transaction/generatelinks endpoint so testers can create a
-   working web_payment_url + mobile_deep_link for a real Bill24
-   transaction_id, exactly as Bill24 itself would. */
+/* MANUAL TEST: GENERATE LINK — dev-only tool that signs and calls the real
+   POST /transaction/generatelinks endpoint so you can sanity-check it
+   yourself. In production, Bill24's SDK calls this same endpoint
+   directly with live merchant_id/transaction_id/hash — nothing here
+   needs to be configured for that flow to work. */
 async function generateTestPaymentLink() {
   const merchantId =
     document.getElementById("lgMerchantId").value.trim() ||

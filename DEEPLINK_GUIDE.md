@@ -98,11 +98,26 @@ curl -X POST https://telegram-mini-bank-app.vercel.app/transaction/generatelinks
   -d @/tmp/payload.json
 ```
 
-Or, inside the deployed app itself: **Settings (gear icon) → Payment Link
-Generator** → enter Merchant ID + a real staging Transaction ID → the app
-computes the HMAC-SHA512 hash in-browser (Web Crypto) using the **Bill24
-Hash Token** you set in **API Gateway** settings, calls the real endpoint,
-and shows both URLs + scannable QR codes.
+Or, inside the deployed app itself: **Settings (gear icon) → Manual Test:
+Generate Link** → enter Merchant ID + a real staging Transaction ID → the
+app computes the HMAC-SHA512 hash in-browser (Web Crypto) using the
+**Bill24 Hash Token** you set in **API Gateway** settings, calls the real
+endpoint, and shows both URLs + scannable QR codes. **This panel is a dev
+tool only** — in production Bill24's SDK calls
+`/transaction/generatelinks` directly with live values, nothing here
+needs to be configured for that to work.
+
+## Troubleshooting: "Invalid hash" / malformed hash
+
+The endpoint now validates the hash's *shape* before comparing it, so you
+get a specific diagnostic instead of a generic 401:
+
+| Response | Meaning | Fix |
+|---|---|---|
+| `400` "hash is not a valid Base64(HMAC-SHA512) value... received N characters decoding to M bytes" | The hash itself is malformed — wrong length. A correct `Base64(HMAC-SHA512(...))` is **always exactly 88 characters**, decoding to **64 bytes**. | Bug in the signing code on the caller's side, not a wrong-secret issue. Log the hash string's `.length` right after computing it and confirm it's 88 before sending. Common causes: accidentally trimming/substring-ing the result, hex-encoding first then re-encoding, or a logging/display layer clipping long strings (if you're eyeballing this from a log viewer, re-check against the raw bytes on the wire, not the log viewer's rendering). |
+| `400` "Request body is not valid JSON" | The literal HTTP body isn't valid JSON (e.g. unquoted keys). | If your own request logs show something like `{merchant_id:8282,...}` (no quotes) but you're *not* seeing this specific error, that's just your logging tool's display format — the real wire body was fine. If you genuinely get this error, fix the JSON serialization on the caller. |
+| `401` "Invalid hash. The hash is well-formed (88 chars / 64 bytes) but doesn't match..." | Hash is correctly shaped but wrong — almost always a `hash_token` mismatch. | Confirm the exact secret string matches on both sides (no trailing whitespace/newline), and that you redeployed after setting/changing `BILL24_HASH_TOKEN` on Vercel. |
+| `401` "Unknown merchant_id." | Only happens if `EXPECTED_MERCHANT_ID` is set and doesn't match. | Unset it, or fix the merchant_id. |
 
 ## 2. Mini App: `POST /payment/v5/inquiry`
 
@@ -183,7 +198,7 @@ the Deeplink view specifically for this call.
    you (and put the same value in the app's **API Gateway → Bill24 Hash
    Token** setting, plus your real **Auth Token** and staging **Base
    Gateway URL**).
-2. In the deployed app: **Settings → Payment Link Generator** → Merchant
+2. In the deployed app: **Settings → Manual Test: Generate Link** → Merchant
    ID (your Prefix Code) + a real Bill24 staging `transaction_id` →
    **Generate Payment Link**.
 3. Scan the Mobile Deep Link QR on your phone (or open it directly) →
