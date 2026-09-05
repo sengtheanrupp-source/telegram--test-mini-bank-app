@@ -2352,7 +2352,6 @@ function saveGatewaySettings() {
   const settings = {
     baseUrl: document.getElementById("baseUrl").value.trim(),
     authToken: document.getElementById("authToken").value.trim(),
-    hashToken: document.getElementById("hashToken").value.trim(),
     prefixCode: document.getElementById("prefixCode").value.trim(),
     refNoDisplay: document.getElementById("refNoDisplay").value.trim(),
   };
@@ -2379,7 +2378,6 @@ function loadGatewaySettings() {
     const s = JSON.parse(raw);
     if (s.baseUrl) document.getElementById("baseUrl").value = s.baseUrl;
     if (s.authToken) document.getElementById("authToken").value = s.authToken;
-    if (s.hashToken) document.getElementById("hashToken").value = s.hashToken;
     if (s.prefixCode)
       document.getElementById("prefixCode").value = s.prefixCode;
     if (s.refNoDisplay)
@@ -2391,7 +2389,6 @@ function exportGatewaySettings() {
   const settings = {
     baseUrl: document.getElementById("baseUrl").value,
     authToken: document.getElementById("authToken").value,
-    hashToken: document.getElementById("hashToken").value,
     prefixCode: document.getElementById("prefixCode").value,
     refNoDisplay: document.getElementById("refNoDisplay").value,
     security: securitySettings,
@@ -2423,17 +2420,19 @@ function importGatewaySettings(e) {
   reader.readAsText(file);
 }
 
-/* MANUAL TEST: GENERATE LINK — dev-only tool that signs and calls the real
+/* MANUAL TEST: GENERATE LINK — dev-only tool that calls the real
    POST /transaction/generatelinks endpoint so you can sanity-check it
    yourself. In production, Bill24's SDK calls this same endpoint
    directly with live merchant_id/transaction_id/hash — nothing here
-   needs to be configured for that flow to work. */
+   needs to be configured for that flow to work.
+   NOTE: the server only validates merchant_id and transaction_id — hash
+   is a required field but its value isn't checked, so we just send a
+   placeholder. */
 async function generateTestPaymentLink() {
   const merchantId =
     document.getElementById("lgMerchantId").value.trim() ||
     document.getElementById("prefixCode").value.trim();
   const transactionId = document.getElementById("lgTransactionId").value.trim();
-  const hashToken = document.getElementById("hashToken").value.trim();
 
   if (!merchantId) {
     showToast("Merchant ID is required.", true);
@@ -2443,18 +2442,13 @@ async function generateTestPaymentLink() {
     showToast("Transaction ID is required.", true);
     return;
   }
-  if (!hashToken) {
-    showToast("Set a Hash Token in API Gateway settings first.", true);
-    return;
-  }
 
   try {
-    const hash = await computeHmacSha512Base64(
-      `${merchantId}${transactionId}`,
-      hashToken,
-    );
-
-    const payload = { merchant_id: merchantId, transaction_id: transactionId, hash };
+    const payload = {
+      merchant_id: merchantId,
+      transaction_id: transactionId,
+      hash: "manual-test-not-verified",
+    };
     log("Requesting /transaction/generatelinks...", payload);
 
     const response = await fetch("/transaction/generatelinks", {
@@ -2487,27 +2481,6 @@ async function generateTestPaymentLink() {
     log("generatelinks error: " + err.message);
     showToast("Connection error: " + err.message, true);
   }
-}
-
-/* Base64( HMAC_SHA-512( message, secret ) ) via the browser's native
-   SubtleCrypto — no external crypto library needed. Mirrors the hash
-   Bill24 computes server-side for /transaction/generatelinks. */
-async function computeHmacSha512Base64(message, secret) {
-  const enc = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    "raw",
-    enc.encode(secret),
-    { name: "HMAC", hash: "SHA-512" },
-    false,
-    ["sign"],
-  );
-  const signature = await crypto.subtle.sign("HMAC", key, enc.encode(message));
-  const bytes = new Uint8Array(signature);
-  let binary = "";
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary);
 }
 
 function renderLinkGenQr(canvasId, text) {

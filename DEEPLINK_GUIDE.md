@@ -45,13 +45,23 @@ to `api/transaction/generatelinks.js`).
 {
   "merchant_id": "5316",
   "transaction_id": "ADA90B8B6D89",
-  "hash": "Base64(HMAC_SHA512(merchant_id + transaction_id, hash_token))"
+  "hash": "anything, or omit entirely"
 }
 ```
 
-`hash_token` is the shared secret Bill24 gives your bank. Configure it as
-the `BILL24_HASH_TOKEN` environment variable in Vercel — **do not** ship
-the local fallback default (`staging-hash-token-change-me`) to production.
+**Only `merchant_id` and `transaction_id` are validated** — both must be
+present, or you get a `400`. `hash` is accepted if you send it but is
+**not checked at all** (no presence check, no format check, no
+comparison against anything). This was disabled intentionally.
+
+> ⚠️ **Security note:** with hash checking off, this endpoint has no
+> request authentication — anyone who can guess or enumerate a
+> `transaction_id` can get back a working payment link for it. That's
+> fine for staging/testing, but re-enable verification before this goes
+> to production. `api/transaction/generatelinks.js` has a commented-out,
+> ready-to-paste-back **HASH VERIFICATION (DISABLED)** block at the
+> bottom for exactly that — it's the same HMAC-SHA512 check that was
+> tested and working, just switched off.
 
 **Response (success)**
 
@@ -76,53 +86,27 @@ custom URL scheme needed.
 > your real transaction IDs use other characters, keep them short and
 > URL-safe, or ask Bill24 for an alnum transaction ID format.
 
-**Failure responses:** `400` (missing fields), `401` (bad `hash` or
-unknown `merchant_id` if `EXPECTED_MERCHANT_ID` is set), `500`.
+**Failure responses:** `400` (missing `merchant_id` or `transaction_id`,
+or malformed JSON body), `500` (unexpected error).
 
 ### Testing it yourself
 
 ```bash
-# Example: compute the hash and call the endpoint
-node -e '
-  const crypto = require("crypto");
-  const merchant_id = "5316";
-  const transaction_id = "ADA90B8B6D89";
-  const hash_token = "staging-hash-token-change-me"; // must match BILL24_HASH_TOKEN
-  const hash = crypto.createHmac("sha512", hash_token)
-    .update(merchant_id + transaction_id).digest("base64");
-  console.log(JSON.stringify({ merchant_id, transaction_id, hash }));
-' > /tmp/payload.json
-
 curl -X POST https://telegram-mini-bank-app.vercel.app/transaction/generatelinks \
   -H "Content-Type: application/json" \
-  -d @/tmp/payload.json
+  -d '{"merchant_id":"5316","transaction_id":"ADA90B8B6D89","hash":"unused"}'
 ```
 
 Or, inside the deployed app itself: **Settings (gear icon) → Manual Test:
-Generate Link** → enter Merchant ID + a real staging Transaction ID → the
-app computes the HMAC-SHA512 hash in-browser (Web Crypto) using the
-**Bill24 Hash Token** you set in **API Gateway** settings, calls the real
-endpoint, and shows both URLs + scannable QR codes. **This panel is a dev
-tool only** — in production Bill24's SDK calls
-`/transaction/generatelinks` directly with live values, nothing here
-needs to be configured for that to work.
-
-## Troubleshooting: "Invalid hash" / malformed hash
-
-The endpoint now validates the hash's *shape* before comparing it, so you
-get a specific diagnostic instead of a generic 401:
-
-| Response | Meaning | Fix |
-|---|---|---|
-| `400` "hash is not a valid Base64(HMAC-SHA512) value... received N characters decoding to M bytes" | The hash itself is malformed — wrong length. A correct `Base64(HMAC-SHA512(...))` is **always exactly 88 characters**, decoding to **64 bytes**. | Bug in the signing code on the caller's side, not a wrong-secret issue. Log the hash string's `.length` right after computing it and confirm it's 88 before sending. Common causes: accidentally trimming/substring-ing the result, hex-encoding first then re-encoding, or a logging/display layer clipping long strings (if you're eyeballing this from a log viewer, re-check against the raw bytes on the wire, not the log viewer's rendering). |
-| `400` "Request body is not valid JSON" | The literal HTTP body isn't valid JSON (e.g. unquoted keys). | If your own request logs show something like `{merchant_id:8282,...}` (no quotes) but you're *not* seeing this specific error, that's just your logging tool's display format — the real wire body was fine. If you genuinely get this error, fix the JSON serialization on the caller. |
-| `401` "Invalid hash. The hash is well-formed (88 chars / 64 bytes) but doesn't match..." | Hash is correctly shaped but wrong — almost always a `hash_token` mismatch. | Confirm the exact secret string matches on both sides (no trailing whitespace/newline), and that you redeployed after setting/changing `BILL24_HASH_TOKEN` on Vercel. |
-| `401` "Unknown merchant_id." | Only happens if `EXPECTED_MERCHANT_ID` is set and doesn't match. | Unset it, or fix the merchant_id. |
+Generate Link** → enter Merchant ID + a real staging Transaction ID →
+**Simulate Generate Link Call**. This is a **dev tool only** — in
+production Bill24's SDK calls `/transaction/generatelinks` directly with
+live values, nothing here needs to be configured for that to work.
 
 ## 2. Mini App: `POST /payment/v5/inquiry`
 
 Called automatically as soon as the app resolves an `identity_code`
-(from the deeplink, or typed manually in the **Deeplink** view).
+(from the deeplink, or typed manually in the **Pay Bill** view).
 
 **Request** — `Header: token: <AuthToken from Gateway Settings>`
 
@@ -162,20 +146,21 @@ design, since `payment_token` is tied to the exact billed amount.
 }
 ```
 
-The new **Payer Details** fields (Account No / Name / Phone) were added to
-the Deeplink view specifically for this call.
+The **Payer Details** fields (Account No / Name / Phone) were added to
+the Pay Bill view specifically for this call.
 
-## 4. The "Deeplink" menu
+## 4. The "Pay Bill" menu
 
-- **Home → Deeplink tile**, and the **bottom nav → Deeplink tab**, both
-  open the same view (`paymentView`, headed "Deeplink Checkout").
+- **Home → Pay Bill tile**, and the **bottom nav → Pay Bill tab**, both
+  open the same view (`paymentView`).
 - When the app is opened from a merchant app via a generated link, it
-  auto-navigates to this same view, pre-fills the Identity Code, shows a
+  auto-navigates to this same view, pre-fills the Identity Code, shows an
   "Opened from merchant app · Transaction …" banner, and immediately runs
   the Inquiry.
 - When opened normally (no deeplink), you can paste any staging
   `transaction_id` into the Identity Code field yourself to test the same
-  flow manually.
+  flow manually — this is the same screen either way, since the whole
+  flow is keyed off `identity_code`, not a separate customer-code lookup.
 - On payment success, the receipt's **Done** button calls
   `handlePaymentDoneAction()`, which redirects to
   `return_url?status=success&identity_code=...&bank_ref=...&amount=...&currency=...`
@@ -187,22 +172,24 @@ the Deeplink view specifically for this call.
 
 | Variable | Required? | Description |
 |---|---|---|
-| `BILL24_HASH_TOKEN` | **Yes** | Shared secret used to verify the `hash` on incoming `/transaction/generatelinks` calls. |
-| `EXPECTED_MERCHANT_ID` | Optional | If set, rejects any `merchant_id` that doesn't match. |
 | `WEB_APP_BASE_URL` | Optional | Defaults to `https://telegram-mini-bank-app.vercel.app`. |
 | `TELEGRAM_BOT_DEEPLINK` | Optional | Defaults to `https://t.me/PaymentStagingMini_bot/TestApp`. |
+| `EXPECTED_MERCHANT_ID` | Optional | If set, rejects any `merchant_id` that doesn't match — the only optional layer of restriction while hash checking is off. |
+
+`BILL24_HASH_TOKEN` is no longer used by the live handler (hash
+verification is disabled) — it's only referenced inside the commented-out
+restore block in `api/transaction/generatelinks.js` for when you turn
+checking back on.
 
 ## 6. End-to-end test checklist
 
-1. Deploy to Vercel; set `BILL24_HASH_TOKEN` to the real value Bill24 gave
-   you (and put the same value in the app's **API Gateway → Bill24 Hash
-   Token** setting, plus your real **Auth Token** and staging **Base
-   Gateway URL**).
-2. In the deployed app: **Settings → Manual Test: Generate Link** → Merchant
-   ID (your Prefix Code) + a real Bill24 staging `transaction_id` →
-   **Generate Payment Link**.
+1. Deploy to Vercel; set your real **Auth Token** and staging **Base
+   Gateway URL** in the app's **API Gateway** settings.
+2. In the deployed app: **Settings → Manual Test: Generate Link** →
+   Merchant ID (your Prefix Code) + a real Bill24 staging
+   `transaction_id` → **Simulate Generate Link Call**.
 3. Scan the Mobile Deep Link QR on your phone (or open it directly) →
-   Telegram opens this Mini App → the **Deeplink** view auto-loads with
+   Telegram opens this Mini App → the **Pay Bill** view auto-loads with
    the transaction → Inquiry runs automatically and shows the bill.
 4. Fill in Payer Details → tap **Pay Securely** → confirm the success
    receipt shows the right amounts.

@@ -629,20 +629,6 @@
                   class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 font-mono text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500"
                 />
               </div>
-              <div>
-                <label
-                  class="block text-[10px] font-bold uppercase text-slate-400 mb-1"
-                  >Bill24 Hash Token</label
-                >
-                <input
-                  type="text"
-                  id="hashToken"
-                  value="staging-hash-token-change-me"
-                  placeholder="Shared secret for Generate Payment Links hash"
-                  class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 font-mono text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500"
-                />
-                <p class="text-[10px] text-slate-400 mt-1">Only needed for the "Manual Test: Generate Link" tool below (to self-sign a test call). In production, Bill24 signs requests server-to-server — this deployment checks them against its own <code class="font-mono">BILL24_HASH_TOKEN</code> env var.</p>
-              </div>
               <div class="grid grid-cols-2 gap-2">
                 <div>
                   <label
@@ -1021,11 +1007,11 @@
             <div
               class="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center text-lg group-hover:scale-110 transition-transform"
             >
-              <i class="fa-solid fa-link"></i>
+              <i class="fa-solid fa-receipt"></i>
             </div>
             <span
               class="text-[10px] font-bold text-slate-700 dark:text-slate-200"
-              >Deeplink</span
+              >Pay Bill</span
             >
           </button>
 
@@ -1278,7 +1264,7 @@
         </div>
       </section>
 
-      <!-- 4. DEEPLINK CHECKOUT VIEW (Bank Checkout / Deeplink) -->
+      <!-- 4. PAY BILL / DEEPLINK CHECKOUT VIEW (Bank Checkout / Deeplink) -->
       <section id="paymentView" class="hidden space-y-4">
         <div
           class="flex justify-between items-center border-b border-slate-200 dark:border-slate-800 pb-2"
@@ -1286,8 +1272,7 @@
           <h2
             class="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2"
           >
-            <i class="fa-solid fa-link text-indigo-500"></i> Deeplink
-            Checkout
+            <i class="fa-solid fa-receipt text-indigo-500"></i> Pay Bill
           </h2>
         </div>
 
@@ -1617,8 +1602,8 @@ System ready...</pre
           onclick="navigateToView('paymentView')"
           class="flex flex-col items-center justify-center gap-1 py-2.5 text-slate-400"
         >
-          <i class="fa-solid fa-link text-base"></i>
-          <span class="text-[10px] font-bold">Deeplink</span>
+          <i class="fa-solid fa-receipt text-base"></i>
+          <span class="text-[10px] font-bold">Pay Bill</span>
         </button>
       </div>
     </nav>
