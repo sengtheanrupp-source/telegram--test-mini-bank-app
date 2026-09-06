@@ -33,7 +33,7 @@
  */
 
 const WEB_APP_BASE_URL = (
-  process.env.WEB_APP_BASE_URL || "https://telegram-mini-bank-app.vercel.app"
+  process.env.WEB_APP_BASE_URL || "https://telegram-test-mini-bank-app.vercel.app"
 ).replace(/\/$/, "");
 
 // Configure with the https://t.me/<bot>/<app> form — we derive the
