@@ -226,6 +226,107 @@
       .pin-shield {
         animation: shieldBounce 2.2s ease-in-out infinite;
       }
+
+      /* Deeplink full-screen bank-style loading (ABA / AC 2026 style) */
+      #deeplinkLoadingOverlay {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(165deg, #0b1220 0%, #0f172a 40%, #1e1b4b 100%);
+        transition: opacity 0.28s ease, visibility 0.28s ease;
+      }
+      #deeplinkLoadingOverlay.hidden {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+      .dl-load-orb {
+        width: 72px;
+        height: 72px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #22c55e 0%, #14b8a6 50%, #6366f1 100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.45);
+        animation: dlOrbPulse 1.6s ease-out infinite;
+      }
+      @keyframes dlOrbPulse {
+        0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.5); transform: scale(1); }
+        70% { box-shadow: 0 0 0 18px rgba(34, 197, 94, 0); transform: scale(1.04); }
+        100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); transform: scale(1); }
+      }
+      .dl-load-spinner {
+        width: 28px;
+        height: 28px;
+        border: 3px solid rgba(255,255,255,0.25);
+        border-top-color: #fff;
+        border-radius: 50%;
+        animation: dlSpin 0.7s linear infinite;
+      }
+      @keyframes dlSpin {
+        to { transform: rotate(360deg); }
+      }
+      .dl-load-bar-track {
+        width: 160px;
+        height: 3px;
+        border-radius: 99px;
+        background: rgba(255,255,255,0.12);
+        overflow: hidden;
+        margin-top: 20px;
+      }
+      .dl-load-bar-fill {
+        height: 100%;
+        width: 40%;
+        border-radius: 99px;
+        background: linear-gradient(90deg, #22c55e, #14b8a6, #6366f1);
+        animation: dlBarSlide 1.2s ease-in-out infinite;
+      }
+      @keyframes dlBarSlide {
+        0% { transform: translateX(-100%); }
+        100% { transform: translateX(350%); }
+      }
+
+      /* Deeplink confirm card — bank checkout 2026 */
+      .dl-confirm-card {
+        background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+        border: 1px solid rgba(226, 232, 240, 0.9);
+        border-radius: 24px;
+        box-shadow: 0 8px 32px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.04);
+      }
+      .dark .dl-confirm-card {
+        background: linear-gradient(180deg, #0f172a 0%, #020617 100%);
+        border-color: rgba(51, 65, 85, 0.8);
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+      }
+      .dl-amount-hero {
+        background: linear-gradient(135deg, #ecfdf5 0%, #f0fdfa 50%, #eef2ff 100%);
+        border-radius: 18px;
+        border: 1px solid rgba(16, 185, 129, 0.15);
+      }
+      .dark .dl-amount-hero {
+        background: linear-gradient(135deg, rgba(6, 78, 59, 0.35) 0%, rgba(15, 23, 42, 0.6) 100%);
+        border-color: rgba(16, 185, 129, 0.2);
+      }
+      .dl-confirm-btn {
+        background: linear-gradient(135deg, #059669 0%, #0d9488 50%, #4f46e5 100%);
+        box-shadow: 0 10px 28px rgba(5, 150, 105, 0.35);
+      }
+      .dl-confirm-btn:active {
+        transform: scale(0.97);
+      }
+      .dl-confirm-btn:disabled {
+        background: #cbd5e1;
+        box-shadow: none;
+        transform: none;
+      }
+      .dark .dl-confirm-btn:disabled {
+        background: #334155;
+      }
       .pin-key {
         min-height: 58px;
         border-radius: 22px;
@@ -280,6 +381,17 @@
   >
     <!-- Hidden persistent Audio Player to bypass mobile autoplay restrictions -->
     <audio id="khmerVoicePlayer" preload="auto" playsinline class="hidden"></audio>
+
+    <!-- DEEPLINK FULL-SCREEN LOADING (bank-app style — shown while v5 inquiry runs) -->
+    <div id="deeplinkLoadingOverlay" class="hidden">
+      <div class="dl-load-orb mb-5">
+        <div class="dl-load-spinner"></div>
+      </div>
+      <p class="text-white font-bold text-sm tracking-tight">Preparing payment…</p>
+      <p id="dlLoadSubtext" class="text-slate-400 text-[11px] mt-1.5 font-medium">Securing connection with bank</p>
+      <div class="dl-load-bar-track"><div class="dl-load-bar-fill"></div></div>
+    </div>
+
     <!-- TOP TELEGRAM MINI APP HEADER BAR -->
     <header
       class="sticky top-0 z-40 bg-white/92 dark:bg-slate-900/92 backdrop-blur-xl border-b border-slate-200/80 dark:border-slate-800 px-4 py-3 flex items-center justify-between"
@@ -1470,34 +1582,62 @@
         </div>
 
         <!-- Compact auto-confirm summary — shown ONLY when opened via a real
-             Generate Payment Links deeplink (skips the manual lookup step
-             entirely, per the reference confirm-screen design). -->
+             Generate Payment Links deeplink. Bank-app style (ABA/AC 2026):
+             amount hero + biller + fee + Confirm. No inquiry-success modal. -->
         <div
           id="dlBillerSummary"
-          class="hidden bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 shadow-sm space-y-4"
+          class="hidden dl-confirm-card p-5 space-y-4"
         >
-          <div
-            class="flex items-center gap-3 pb-3 border-b border-slate-100 dark:border-slate-800"
-          >
+          <!-- Biller header -->
+          <div class="flex items-center gap-3">
             <div
-              class="w-11 h-11 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center text-lg shrink-0"
+              class="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white flex items-center justify-center text-lg shrink-0 shadow-lg shadow-indigo-500/25"
             >
               <i class="fa-solid fa-building-columns"></i>
             </div>
-            <div class="min-w-0">
-              <p class="text-[9px] font-bold uppercase text-slate-400">Biller</p>
+            <div class="min-w-0 flex-1">
+              <p class="text-[9px] font-bold uppercase tracking-wider text-slate-400">Pay to</p>
               <p
                 id="dlcBillerName"
-                class="text-sm font-bold text-slate-900 dark:text-slate-100 truncate"
+                class="text-sm font-extrabold text-slate-900 dark:text-slate-100 truncate"
               >
                 -
               </p>
+              <p class="text-[10px] text-slate-400 font-mono mt-0.5 truncate">
+                Ref · <span id="dlcTxnId">-</span>
+              </p>
+            </div>
+            <span class="text-[9px] font-bold uppercase px-2 py-1 rounded-full bg-amber-500/10 text-amber-600 border border-amber-500/20">Pending</span>
+          </div>
+
+          <!-- Amount hero -->
+          <div class="dl-amount-hero px-4 py-4 text-center space-y-1">
+            <p class="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total amount</p>
+            <p class="text-3xl font-black font-num text-slate-900 dark:text-white leading-none">
+              <span id="dlcAmount">0.00</span>
+              <span id="dlcCurrency" class="text-base font-bold text-slate-400 ml-1">USD</span>
+            </p>
+            <p class="text-[11px] text-slate-500">
+              Fee <span id="dlcFee" class="font-num font-bold text-slate-700 dark:text-slate-300">0.00</span>
+              · Original <span id="dlcOriginal" class="font-num font-bold text-slate-700 dark:text-slate-300">0.00</span>
+            </p>
+          </div>
+
+          <!-- Customer / description chips -->
+          <div class="grid grid-cols-2 gap-2 text-[11px]">
+            <div class="bg-slate-50 dark:bg-slate-950/80 rounded-xl px-3 py-2.5 border border-slate-100 dark:border-slate-800">
+              <span class="text-[9px] font-bold uppercase text-slate-400 block">Customer</span>
+              <span id="dlcCustomerName" class="font-bold text-slate-800 dark:text-slate-200 truncate block">-</span>
+              <span id="dlcCustomerCode" class="font-mono text-[10px] text-slate-400 truncate block">-</span>
+            </div>
+            <div class="bg-slate-50 dark:bg-slate-950/80 rounded-xl px-3 py-2.5 border border-slate-100 dark:border-slate-800">
+              <span class="text-[9px] font-bold uppercase text-slate-400 block">From account</span>
+              <span id="dlcPayerName" class="font-bold text-slate-800 dark:text-slate-200 truncate block">-</span>
+              <span id="dlcPayerAccount" class="font-mono text-[10px] text-slate-400 truncate block">-</span>
             </div>
           </div>
-          <div class="bg-slate-50 dark:bg-slate-950 rounded-2xl px-3.5 py-2.5 flex items-center justify-between text-[11px]">
-            <span class="text-slate-400 font-bold uppercase text-[9px]">Transaction ID</span>
-            <span id="dlcTxnId" class="font-mono font-bold text-slate-700 dark:text-slate-300">-</span>
-          </div>
+
+          <p id="dlcDescription" class="text-[11px] text-slate-500 text-center hidden"></p>
         </div>
 
         <!-- Manual lookup form — shown when the Deeplink view is opened
@@ -1543,6 +1683,7 @@
           class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 shadow-sm space-y-4"
         >
           <div
+            id="dlAmountBlock"
             class="space-y-2"
           >
             <div class="flex justify-between items-center">
@@ -1573,8 +1714,8 @@
             </div>
           </div>
 
-          <!-- Payer Details (required by /payment/v3/confirm) -->
-          <div class="space-y-2 pt-1">
+          <!-- Payer Details (required by /payment/v3/confirm) — auto-filled & hidden in deeplink mode -->
+          <div id="dlPayerBlock" class="space-y-2 pt-1">
             <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400">Payer Details</span>
             <input
               type="text"
@@ -1601,9 +1742,9 @@
             id="confirmPayBtn"
             onclick="runSmartPaymentFlow()"
             disabled
-            class="w-full bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-600 font-bold py-3.5 rounded-2xl text-xs cursor-not-allowed transition-all flex items-center justify-center gap-2"
+            class="w-full bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-600 font-bold py-3.5 rounded-2xl text-sm cursor-not-allowed transition-all flex items-center justify-center gap-2"
           >
-            <i class="fa-solid fa-lock"></i> Pay Securely
+            <i class="fa-solid fa-lock"></i> <span id="confirmPayBtnLabel">Confirm</span>
           </button>
         </div>
 
@@ -2036,10 +2177,11 @@ System ready...</pre
             </button>
             <button
               type="button"
+              id="modalDoneBtn"
               onclick="handlePaymentDoneAction()"
               class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 sm:py-3.5 rounded-2xl text-xs sm:text-sm shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-1.5 active:scale-95 transition-all"
             >
-              <i class="fa-solid fa-arrow-left"></i> Back to App
+              <i class="fa-solid fa-check"></i> <span id="modalDoneBtnLabel">Done</span>
             </button>
           </div>
 

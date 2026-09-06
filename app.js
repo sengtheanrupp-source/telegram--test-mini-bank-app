@@ -316,23 +316,73 @@ function resolvePaymentLink() {
   const txnIdEl = document.getElementById("dlcTxnId");
   if (txnIdEl) txnIdEl.textContent = identityCode;
 
-  // Skip the manual lookup form entirely — show the compact auto-confirm
-  // card instead (Biller / Amount / Currency / TxnId), and hide the
-  // verbose debug summary. Matches the target confirm-screen design.
+  // Skip the manual lookup form — bank-style confirm card only.
   applyDeeplinkUiMode(true);
 
-  // No navigation/inquiry delay — jump straight to the view and fire the
-  // inquiry immediately for the fastest possible open, on both web and
-  // Telegram mobile.
+  // Auto-fill payer details immediately (account / Telegram name / phone)
+  autoFillDeeplinkPayerDetails();
+
+  // Full-screen bank-style loading while v5 inquiry runs — no inquiry-success
+  // popup; user lands directly on the Confirm screen.
+  showDeeplinkLoading("Preparing payment…", "Fetching bill details");
   navigateToView("paymentView");
-  runInquiry();
+  runInquiry({ fromDeeplink: true });
+}
+
+/* Generate realistic account number + phone; account name from Telegram user. */
+function autoFillDeeplinkPayerDetails() {
+  const accountNo =
+    "00" + String(Math.floor(10000000 + Math.random() * 89999999));
+  const phone =
+    "0" + String(Math.floor(100000000 + Math.random() * 899999999));
+
+  let accountName = "Telegram User";
+  try {
+    const user = tgApp && tgApp.initDataUnsafe ? tgApp.initDataUnsafe.user : null;
+    if (user) {
+      accountName =
+        `${user.first_name || ""} ${user.last_name || ""}`.trim() ||
+        user.username ||
+        accountName;
+    }
+  } catch (e) {}
+
+  const accEl = document.getElementById("payerAccountNo");
+  const nameEl = document.getElementById("payerAccountName");
+  const phoneEl = document.getElementById("payerPhone");
+  if (accEl) accEl.value = accountNo;
+  if (nameEl) nameEl.value = accountName;
+  if (phoneEl) phoneEl.value = phone;
+
+  // Mirror into confirm card chips
+  const chipName = document.getElementById("dlcPayerName");
+  const chipAcc = document.getElementById("dlcPayerAccount");
+  if (chipName) chipName.textContent = accountName;
+  if (chipAcc) chipAcc.textContent = accountNo;
+
+  log("Deeplink payer auto-filled: " + accountName + " / " + accountNo);
+}
+
+function showDeeplinkLoading(title, sub) {
+  const overlay = document.getElementById("deeplinkLoadingOverlay");
+  if (!overlay) return;
+  const titleEl = overlay.querySelector("p.text-white");
+  const subEl = document.getElementById("dlLoadSubtext");
+  if (titleEl && title) titleEl.textContent = title;
+  if (subEl && sub) subEl.textContent = sub;
+  overlay.classList.remove("hidden");
+}
+
+function hideDeeplinkLoading() {
+  const overlay = document.getElementById("deeplinkLoadingOverlay");
+  if (overlay) overlay.classList.add("hidden");
 }
 
 /* Toggles the Deeplink view between:
    - Compact auto-confirm mode (isDeeplink=true): opened via a real
      Generate Payment Links link — hides the manual Identity Code lookup
-     form and the verbose debug summary, shows the clean Biller/Amount/
-     TxnId card instead.
+     form and the verbose debug summary, shows the clean bank-style
+     Confirm card. Payer fields stay in DOM (auto-filled) but hidden.
    - Manual test mode (isDeeplink=false, the default): opened directly
      from the bottom nav / home tile — shows the full lookup form so a
      tester can paste in any transaction_id. */
@@ -340,9 +390,30 @@ function applyDeeplinkUiMode(isDeeplink) {
   const billerSummary = document.getElementById("dlBillerSummary");
   const lookupForm = document.getElementById("dlLookupForm");
   const detailSummary = document.getElementById("dlDetailSummary");
+  const singlePanel = document.getElementById("singleInputPanel");
   if (billerSummary) billerSummary.classList.toggle("hidden", !isDeeplink);
   if (lookupForm) lookupForm.classList.toggle("hidden", isDeeplink);
   if (detailSummary) detailSummary.classList.toggle("hidden", isDeeplink);
+
+  // In deeplink mode the amount + payer fields live on the confirm card;
+  // keep only the Confirm button visible inside singleInputPanel.
+  const amountBlock = document.getElementById("dlAmountBlock");
+  const payerBlock = document.getElementById("dlPayerBlock");
+  if (amountBlock) amountBlock.classList.toggle("hidden", isDeeplink);
+  if (payerBlock) payerBlock.classList.toggle("hidden", isDeeplink);
+  if (singlePanel && isDeeplink) {
+    singlePanel.classList.remove("p-5");
+    singlePanel.classList.add("p-0", "bg-transparent", "border-0", "shadow-none");
+  } else if (singlePanel) {
+    singlePanel.classList.add("p-5");
+    singlePanel.classList.remove("p-0", "bg-transparent", "border-0", "shadow-none");
+  }
+
+  const btnLabel = document.getElementById("confirmPayBtnLabel");
+  if (btnLabel) btnLabel.textContent = isDeeplink ? "Confirm" : "Pay Securely";
+
+  const doneLabel = document.getElementById("modalDoneBtnLabel");
+  if (doneLabel) doneLabel.textContent = isDeeplink ? "Done" : "Back to App";
 }
 
 /* Called from the "Done" button on the success receipt modal.
@@ -386,6 +457,10 @@ function handlePaymentDoneAction() {
    to the full manual lookup-form UI in case a previous deeplink session
    left the compact auto-confirm card showing. */
 function openDeeplinkViewManually() {
+  hideDeeplinkLoading();
+  // Clear deeplink session so Done button just closes (no return_url redirect)
+  workflowState.link_token = "";
+  workflowState.return_url = "";
   applyDeeplinkUiMode(false);
   navigateToView("paymentView");
 }
@@ -1184,14 +1259,28 @@ function evaluatePaymentMode() {
   const amount =
     parseFloat(document.getElementById("paymentAmount").value) || 0;
   const btn = document.getElementById("confirmPayBtn");
+  if (!btn) return;
+  const isDeeplink = !!workflowState.link_token;
   if (amount > 0 && workflowState.payment_token) {
     btn.disabled = false;
-    btn.className =
-      "w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3.5 rounded-2xl text-xs transition-all shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2";
+    if (isDeeplink) {
+      btn.className =
+        "w-full dl-confirm-btn text-white font-bold py-4 rounded-2xl text-sm transition-all flex items-center justify-center gap-2 active:scale-[0.97]";
+      btn.innerHTML =
+        '<i class="fa-solid fa-check-circle"></i> <span id="confirmPayBtnLabel">Confirm</span>';
+    } else {
+      btn.className =
+        "w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3.5 rounded-2xl text-xs transition-all shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2";
+      btn.innerHTML =
+        '<i class="fa-solid fa-lock"></i> <span id="confirmPayBtnLabel">Pay Securely</span>';
+    }
   } else {
     btn.disabled = true;
     btn.className =
-      "w-full bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-600 font-bold py-3.5 rounded-2xl text-xs cursor-not-allowed transition-all flex items-center justify-center gap-2";
+      "w-full bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-600 font-bold py-3.5 rounded-2xl text-sm cursor-not-allowed transition-all flex items-center justify-center gap-2";
+    btn.innerHTML = isDeeplink
+      ? '<i class="fa-solid fa-lock"></i> <span id="confirmPayBtnLabel">Confirm</span>'
+      : '<i class="fa-solid fa-lock"></i> <span id="confirmPayBtnLabel">Pay Securely</span>';
   }
 }
 
@@ -1414,18 +1503,27 @@ async function runBillPayConfirm() {
 /* ===========================================================================
    DEEPLINK (Bill24 API v5 Inquiry / v3 Confirm — identity_code based)
    ======================================================================= */
-async function runInquiry() {
+async function runInquiry(options = {}) {
+  const fromDeeplink = !!(options.fromDeeplink || workflowState.link_token);
   const baseUrl = document.getElementById("baseUrl").value.trim();
   const token = document.getElementById("authToken").value.trim();
   updateFullCodes();
 
   if (!workflowState.identity_code) {
     showToast("Enter an Identity Code (Transaction ID) first.", true);
+    hideDeeplinkLoading();
     return;
   }
 
   log("Executing Inquiry request for identity_code: " + workflowState.identity_code);
-  openLoadingModal("Executing Inquiry");
+
+  // Deeplink uses the full-screen bank loading overlay (already shown).
+  // Manual inquiry still uses the shared modal spinner.
+  if (!fromDeeplink) {
+    openLoadingModal("Executing Inquiry");
+  } else {
+    showDeeplinkLoading("Preparing payment…", "Fetching bill details");
+  }
 
   try {
     const jsonData = await safeFetchJson(`${baseUrl}/payment/v5/inquiry`, {
@@ -1472,8 +1570,7 @@ async function runInquiry() {
       workflowState.fee_channel = transaction.fee_channel || "MERCHANT";
       workflowState.description = transaction.description || "";
 
-      // This is the key piece: return_url now comes straight from the
-      // Inquiry response, and is what the post-payment "Done" button uses.
+      // return_url from v5 inquiry → Done button after payment success
       workflowState.return_url = urls.return_url || workflowState.return_url || "";
 
       const customerCodeLabel =
@@ -1502,36 +1599,46 @@ async function runInquiry() {
       const currEl = document.getElementById("paymentAmountCurrency");
       if (currEl) currEl.textContent = workflowState.currency;
 
-      // Mirror into the compact auto-confirm card (deeplink-opened mode)
-      const dlcBillerNameEl = document.getElementById("dlcBillerName");
-      const dlcTxnIdEl = document.getElementById("dlcTxnId");
-      if (dlcBillerNameEl) dlcBillerNameEl.textContent = workflowState.supplier_name;
-      if (dlcTxnIdEl) dlcTxnIdEl.textContent = workflowState.identity_code;
+      // Populate bank-style confirm card
+      populateDeeplinkConfirmCard(customerCodeLabel);
 
       document.getElementById("appStatusBadge").textContent = "Token Active";
       document.getElementById("appStatusBadge").className =
         "text-[9px] bg-emerald-500/10 text-emerald-600 font-bold px-2 py-0.5 rounded-full border border-emerald-500/20";
       evaluatePaymentMode();
 
-      const metaDetails = {
-        customer_code: customerCodeLabel,
-        customer_name: workflowState.customer_name,
-        total_amount: `${workflowState.total_amount} ${workflowState.currency}`,
-        fee_amount: `${workflowState.fee_amount} ${workflowState.currency}`,
-        paid_to: workflowState.supplier_name,
-        paid_date: new Date().toLocaleString(),
-      };
-
-      finishModal(
-        true,
-        "Inquiry Successful",
-        jsonData.message || "Bill details retrieved successfully.",
-        metaDetails,
-      );
+      // Deeplink: do NOT show "Inquiry Successful" — close loading and
+      // land user on Confirm screen. Manual inquiry still shows success modal.
+      if (fromDeeplink) {
+        hideDeeplinkLoading();
+        closeModal();
+        triggerHaptic("success");
+        log("Deeplink inquiry ready — showing Confirm screen.");
+      } else {
+        const metaDetails = {
+          customer_code: customerCodeLabel,
+          customer_name: workflowState.customer_name,
+          total_amount: `${workflowState.total_amount} ${workflowState.currency}`,
+          fee_amount: `${workflowState.fee_amount} ${workflowState.currency}`,
+          paid_to: workflowState.supplier_name,
+          paid_date: new Date().toLocaleString(),
+        };
+        finishModal(
+          true,
+          "Inquiry Successful",
+          jsonData.message || "Bill details retrieved successfully.",
+          metaDetails,
+        );
+      }
     } else {
       document.getElementById("responseCodeBadge").textContent = jsonData.code || "FAILED";
       const resMessageEl = document.getElementById("resMessage");
       if (resMessageEl) resMessageEl.textContent = jsonData.message || "Inquiry Failed";
+      hideDeeplinkLoading();
+      if (fromDeeplink) {
+        // Show error on the shared modal so user can dismiss
+        openLoadingModal("Inquiry Failed");
+      }
       finishModal(
         false,
         "Inquiry Failed",
@@ -1540,7 +1647,54 @@ async function runInquiry() {
     }
   } catch (err) {
     log("Inquiry Connection Error:", err.message);
+    hideDeeplinkLoading();
+    if (fromDeeplink) {
+      openLoadingModal("Connection Error");
+    }
     finishModal(false, "Connection Error", err.message);
+  }
+}
+
+function populateDeeplinkConfirmCard(customerCodeLabel) {
+  const setText = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = val;
+  };
+  setText("dlcBillerName", workflowState.supplier_name || "-");
+  setText("dlcTxnId", workflowState.identity_code || "-");
+  setText(
+    "dlcAmount",
+    Number(workflowState.total_amount || 0).toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }),
+  );
+  setText("dlcCurrency", workflowState.currency || "USD");
+  setText(
+    "dlcFee",
+    `${Number(workflowState.fee_amount || 0).toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })} ${workflowState.currency || "USD"}`,
+  );
+  setText(
+    "dlcOriginal",
+    `${Number(workflowState.original_amount || 0).toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })} ${workflowState.currency || "USD"}`,
+  );
+  setText("dlcCustomerName", workflowState.customer_name || "-");
+  setText("dlcCustomerCode", customerCodeLabel || workflowState.customer_code || "-");
+
+  const descEl = document.getElementById("dlcDescription");
+  if (descEl) {
+    if (workflowState.description) {
+      descEl.textContent = workflowState.description;
+      descEl.classList.remove("hidden");
+    } else {
+      descEl.classList.add("hidden");
+    }
   }
 }
 
@@ -1633,6 +1787,11 @@ async function runSmartPaymentFlowAfterAuth() {
 
     if (jsonData.code === "SUCCESS") {
       triggerHaptic("success");
+      // Ensure Done / Back-to-App label matches session type
+      const doneLabel = document.getElementById("modalDoneBtnLabel");
+      if (doneLabel) {
+        doneLabel.textContent = workflowState.link_token ? "Done" : "Back to App";
+      }
       finishModal(
         true,
         "Payment Successful",

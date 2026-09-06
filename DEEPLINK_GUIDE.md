@@ -28,14 +28,19 @@ Auth Token).
 
 4. Telegram Mini App opens with the transaction_id
    (as ?tran_id=... on web, or Telegram's start_param on mobile)
+   → full-screen bank-style loading overlay
    → automatically calls POST /payment/v5/inquiry (as identity_code)
-   → shows bill amount + fees, and captures data.urls.return_url
+   → captures data.urls.return_url
+   → auto-fills payer: account number (generated), account name (Telegram
+     user name), phone (generated)
+   → NO "Inquiry Successful" modal — lands directly on Confirm screen
+     (amount, biller, fee, customer chips + Confirm button)
 
-5. User enters payer account number + confirms, taps "Pay"
+5. User taps "Confirm"
    → POST /payment/v3/confirm
 
-6. Success popup → user taps "Done"
-   → redirected to return_url (captured in step 4 from the v5 response)
+6. Success popup (payment receipt) → user taps "Done"
+   → redirected to return_url (from v5 inquiry response)
 ```
 
 ### 1. `POST /transaction/generatelinks`
