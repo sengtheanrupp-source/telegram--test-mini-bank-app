@@ -165,7 +165,7 @@ function getMockSandboxResponse(url, options) {
           max_amount: -1,
           payment_token: "MOCK_TOKEN_" + Date.now(),
         },
-        urls: {
+        url: {
           return_url: "https://example.com/transaction/complete",
         },
       },
@@ -251,8 +251,8 @@ let workflowState = {
   // Populated from the Bank API "Generate Payment Links" deeplink
   // (web_payment_url ?tran_id=... or mobile_deep_link startapp=...)
   link_token: "",
-  // Populated straight from the v5 Inquiry response's data.urls.return_url —
-  // this IS the URL the "Done" button redirects to after a Deeplink payment.
+  // Populated from v5 Inquiry: data.url.return_url (Bill24) or data.urls.return_url
+  // this IS the URL the "Done" button opens after a Deeplink payment.
   return_url: "",
 
   // -- Shared between both flows (whichever ran most recently) --
@@ -271,7 +271,7 @@ let workflowState = {
    (NOT as a normal query string), so we check both. Unlike an opaque
    token, identity_code IS the Bill24 transaction_id itself — no extra
    lookup call is needed, we just feed it straight into the v5 Inquiry
-   call, whose response carries everything (including urls.return_url). */
+   call, whose response carries everything (including url.return_url). */
 function getStartParamFromTelegram() {
   try {
     if (tgApp && tgApp.initDataUnsafe && tgApp.initDataUnsafe.start_param) {
@@ -416,40 +416,163 @@ function applyDeeplinkUiMode(isDeeplink) {
   if (doneLabel) doneLabel.textContent = isDeeplink ? "Done" : "Back to App";
 }
 
+/* Pull return_url from Bill24 v5 inquiry. Live API uses data.url (singular);
+   older mocks/docs used data.urls (plural). Accept both, plus a few aliases. */
+function extractReturnUrlFromInquiry(data) {
+  if (!data || typeof data !== "object") return "";
+
+  const pickFromBag = (bag) => {
+    if (!bag) return "";
+    if (typeof bag === "string") return bag.trim();
+    if (typeof bag !== "object") return "";
+    return String(
+      bag.return_url ||
+        bag.returnUrl ||
+        bag.redirect_url ||
+        bag.redirectUrl ||
+        bag.web_return_url ||
+        bag.callback_url ||
+        "",
+    ).trim();
+  };
+
+  let found = pickFromBag(data.url) || pickFromBag(data.urls);
+  if (!found) {
+    found = String(data.return_url || data.returnUrl || "").trim();
+  }
+  if (!found && data.data && typeof data.data === "object") {
+    found = extractReturnUrlFromInquiry(data.data);
+  }
+  return found;
+}
+
+function persistReturnUrl(url) {
+  const value = String(url || "").trim();
+  if (!value) return;
+  workflowState.return_url = value;
+  try {
+    window.__dlReturnUrl = value;
+  } catch (e) {}
+  try {
+    sessionStorage.setItem("dl_return_url", value);
+  } catch (e) {}
+  try {
+    localStorage.setItem("dl_return_url", value);
+  } catch (e) {}
+  const doneBtn = document.getElementById("modalDoneBtn");
+  if (doneBtn) doneBtn.setAttribute("data-return-url", value);
+  log("Persisted merchant return_url: " + value);
+}
+
+function getCapturedReturnUrl() {
+  const fromBtn = document
+    .getElementById("modalDoneBtn")
+    ?.getAttribute("data-return-url");
+  const sources = [
+    workflowState.return_url,
+    typeof window !== "undefined" ? window.__dlReturnUrl : "",
+    fromBtn,
+  ];
+  try {
+    sources.push(sessionStorage.getItem("dl_return_url") || "");
+  } catch (e) {}
+  try {
+    sources.push(localStorage.getItem("dl_return_url") || "");
+  } catch (e) {}
+  for (const s of sources) {
+    if (s && String(s).trim()) return String(s).trim();
+  }
+  return "";
+}
+
+function clearCapturedReturnUrl() {
+  workflowState.return_url = "";
+  try {
+    window.__dlReturnUrl = "";
+  } catch (e) {}
+  try {
+    sessionStorage.removeItem("dl_return_url");
+  } catch (e) {}
+  try {
+    localStorage.removeItem("dl_return_url");
+  } catch (e) {}
+  const doneBtn = document.getElementById("modalDoneBtn");
+  if (doneBtn) doneBtn.removeAttribute("data-return-url");
+}
+
 /* Called from the "Done" button on the success receipt modal.
-   If this session came from a Generate Payment Links deeplink, send the
-   user back to the bank/merchant's return_url (captured from the v5
-   Inquiry response's data.urls.return_url) with the outcome appended.
-   Otherwise just close the modal like before. */
+   Opens the merchant return_url captured from inquiry v5 (data.url.return_url)
+   in the SAME webview so Bill24 SDK checkout can complete. */
 function handlePaymentDoneAction() {
-  const returnUrl = workflowState.return_url;
+  const returnUrl = getCapturedReturnUrl();
   if (!returnUrl) {
+    log("Done clicked but no return_url was captured from inquiry v5.");
+    showToast("No return URL from inquiry. Cannot redirect.", true);
     closeModal();
     return;
   }
 
+  log("Done clicked — opening merchant return_url: " + returnUrl);
+
+  // Keep the inquiry URL intact (it already includes tran_id).
+  let dest = returnUrl;
   try {
     const target = new URL(returnUrl);
-    target.searchParams.set("status", "success");
-    target.searchParams.set("identity_code", workflowState.identity_code || "");
-    target.searchParams.set("bank_ref", workflowState.bank_ref || "");
-    target.searchParams.set("amount", String(workflowState.total_amount || ""));
-    target.searchParams.set("currency", workflowState.currency || "USD");
+    if (!target.searchParams.has("status")) {
+      target.searchParams.set("status", "success");
+    }
+    dest = target.toString();
+  } catch (e) {
+    dest = returnUrl;
+  }
 
-    log("Redirecting to merchant return_url: " + target.toString());
+  const opened = navigateToReturnUrl(dest);
+  if (!opened) {
+    log("All redirect methods failed for return_url: " + dest);
+    showToast("Unable to open return URL", true);
+  }
+}
 
-    if (tgApp && tgApp.openLink) {
-      tgApp.openLink(target.toString());
-      setTimeout(() => {
-        if (tgApp.close) tgApp.close();
-      }, 400);
-    } else {
-      window.location.href = target.toString();
+function navigateToReturnUrl(dest) {
+  // 1) Same-webview navigation — required for web_payment_url / SDK checkout.
+  try {
+    window.location.assign(dest);
+    return true;
+  } catch (e) {
+    log("location.assign failed: " + e.message);
+  }
+  try {
+    window.location.href = dest;
+    return true;
+  } catch (e) {
+    log("location.href failed: " + e.message);
+  }
+
+  // 2) Telegram Mini App: openLink (external browser) as a fallback.
+  // Do NOT call tgApp.close() — that aborts checkout before the merchant page loads.
+  try {
+    if (tgApp && typeof tgApp.openLink === "function") {
+      tgApp.openLink(dest, { try_instant_view: false });
+      return true;
     }
   } catch (e) {
-    log("Invalid return_url, falling back to close: " + e.message);
-    closeModal();
+    log("tgApp.openLink failed: " + e.message);
   }
+
+  // 3) Last-resort clickable navigation
+  try {
+    const a = document.createElement("a");
+    a.href = dest;
+    a.rel = "noopener";
+    a.target = "_self";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    return true;
+  } catch (e) {
+    log("anchor click failed: " + e.message);
+  }
+  return false;
 }
 
 /* Called from the Deeplink home tile / bottom-nav tab (explicit manual
@@ -460,7 +583,7 @@ function openDeeplinkViewManually() {
   hideDeeplinkLoading();
   // Clear deeplink session so Done button just closes (no return_url redirect)
   workflowState.link_token = "";
-  workflowState.return_url = "";
+  clearCapturedReturnUrl();
   applyDeeplinkUiMode(false);
   navigateToView("paymentView");
 }
@@ -1321,7 +1444,7 @@ async function runBillPayInquiry() {
   // A Bill Pay lookup is never a deeplink session — clear any leftover
   // return_url/link_token from a previous Deeplink payment so the shared
   // success modal's "Done" button behaves correctly (just closes).
-  workflowState.return_url = "";
+  clearCapturedReturnUrl();
   workflowState.link_token = "";
 
   log("Executing Inquiry request for customer_code: " + workflowState.customer_code);
@@ -1547,7 +1670,6 @@ async function runInquiry(options = {}) {
       const customers = Array.isArray(data.customers) ? data.customers : [];
       const primaryCustomer = customers[0] || {};
       const transaction = data.transaction || {};
-      const urls = data.urls || {};
 
       workflowState.supplier_name = merchant.name || "N/A";
       workflowState.customers = customers;
@@ -1570,8 +1692,17 @@ async function runInquiry(options = {}) {
       workflowState.fee_channel = transaction.fee_channel || "MERCHANT";
       workflowState.description = transaction.description || "";
 
-      // return_url from v5 inquiry → Done button after payment success
-      workflowState.return_url = urls.return_url || workflowState.return_url || "";
+      // Bill24 live v5 uses data.url.return_url (singular). Mock/docs used data.urls.
+      const extractedReturnUrl =
+        extractReturnUrlFromInquiry(data) ||
+        extractReturnUrlFromInquiry(jsonData);
+      persistReturnUrl(extractedReturnUrl);
+      log(
+        "Captured return_url from inquiry v5: " +
+          (workflowState.return_url || "(empty)") +
+          " | data keys: " +
+          Object.keys(data).join(","),
+      );
 
       const customerCodeLabel =
         customers.length > 1
@@ -1790,8 +1921,12 @@ async function runSmartPaymentFlowAfterAuth() {
       // Ensure Done / Back-to-App label matches session type
       const doneLabel = document.getElementById("modalDoneBtnLabel");
       if (doneLabel) {
-        doneLabel.textContent = workflowState.link_token ? "Done" : "Back to App";
+        doneLabel.textContent = workflowState.link_token || getCapturedReturnUrl()
+          ? "Done"
+          : "Back to App";
       }
+      // Re-stamp return_url onto the Done button at success time.
+      persistReturnUrl(getCapturedReturnUrl());
       finishModal(
         true,
         "Payment Successful",

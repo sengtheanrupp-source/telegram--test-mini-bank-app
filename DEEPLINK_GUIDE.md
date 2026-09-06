@@ -30,7 +30,7 @@ Auth Token).
    (as ?tran_id=... on web, or Telegram's start_param on mobile)
    → full-screen bank-style loading overlay
    → automatically calls POST /payment/v5/inquiry (as identity_code)
-   → captures data.urls.return_url
+   → captures data.url.return_url (Bill24 live; also accepts data.urls)
    → auto-fills payer: account number (generated), account name (Telegram
      user name), phone (generated)
    → NO "Inquiry Successful" modal — lands directly on Confirm screen
@@ -152,10 +152,11 @@ opened directly (home tile / bottom nav), for manual testing — see
 
 **Response** returns `merchant`, `customers[]`, `transaction{
 original_amount, convenience_fee_amount, sponsor_fee_amount, total_amount,
-currency, payment_token, ... }`, and **`urls.return_url`**, which the app
-stores and uses for the post-payment "Back to App" redirect. The amount
-shown is **read-only** — it's whatever the Inquiry returned, since
-`payment_token` is tied to that exact amount.
+currency, payment_token, ... }`, and **`url.return_url`** (singular — live
+Bill24; `urls.return_url` still accepted), which the app stores and uses
+for the post-payment **Done** redirect. The amount shown is **read-only**
+— it's whatever the Inquiry returned, since `payment_token` is tied to
+that exact amount.
 
 ### 3. Mini App: `POST /payment/v3/confirm`
 
