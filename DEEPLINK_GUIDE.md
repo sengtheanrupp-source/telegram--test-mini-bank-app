@@ -71,7 +71,7 @@ checked at all**.
   "message": "Generate Success",
   "data": {
     "web_payment_url": "https://telegram-mini-bank-app.vercel.app/?tran_id=FCFA48E1A11D",
-    "mobile_deep_link": "https://t.me/PaymentStagingMini_bot/TestApp?startapp=FCFA48E1A11D"
+    "mobile_deep_link": "tg://resolve?domain=PaymentStagingMini_bot&startapp=FCFA48E1A11D&appname=TestApp"
   }
 }
 ```
@@ -88,11 +88,31 @@ The Mini App's deeplink parser accepts `tran_id` (primary), and
 `identity_code` / `token` / `startapp` as fallbacks, so old test links
 still work.
 
-`mobile_deep_link` uses the `t.me/...` **Universal URL** format so iOS/
-Android intercept it and open Telegram straight into this Mini App.
-Telegram's `startapp` value has no query-key name (it's positional), so
-it's unaffected by the `tran_id` change — it just carries the raw
-`transaction_id`, sanitized to `[A-Za-z0-9_-]`, max 64 chars.
+`mobile_deep_link` uses the **`tg://resolve` custom URI scheme**, not
+`https://t.me/...`. This is deliberate: `tg://` is registered directly
+with the OS, so tapping it hands off straight to the Telegram app with no
+HTML page in between — it never "routes through a browser page" the way
+`https://t.me/...` can (which first loads as a normal web link and only
+then redirects into the app). The trade-off: `tg://` only works if
+Telegram is already installed — there's no web/App-Store fallback the way
+`https://t.me/...` has. For this staging/SDK flow (where Telegram is a
+given) that trade-off is intentional. If you ever need the fallback
+behavior back, `TELEGRAM_BOT_DEEPLINK` still configures the source
+`https://t.me/<bot>/<app>` URL the `tg://` link is derived from — see
+`toTelegramSchemeLink()` in `api/transaction/generatelinks.js`.
+
+> ⚠️ **If you get a Vercel `404: DEPLOYMENT_NOT_FOUND` / `Code:
+> DEPLOYMENT_NOT_FOUND` page** (not this app's own "not found", but
+> Vercel's platform-level error page) — that means `web_payment_url`
+> pointed at a domain with **no live deployment behind it at all**. This
+> is a hosting/domain configuration issue, not an app bug: set
+> `WEB_APP_BASE_URL` to your **actual** production Vercel domain (check
+> your Vercel project's Domains tab), redeploy, and confirm the domain
+> loads on its own in a browser before generating links against it. Watch
+> for typos between similar domains (e.g. `telegram-mini-bank-app` vs
+> `telegram-test-mini-bank-app`) — this project has been referenced under
+> both names at different points, so double-check which one is actually
+> live.
 
 ### Testing it yourself
 
@@ -108,9 +128,16 @@ production, nothing here needs configuring for that).
 
 ### 2. Mini App: `POST /payment/v5/inquiry`
 
-Called automatically as soon as the app resolves a `tran_id` (from the
-deeplink), or when the user taps **Run Inquiry** in the **Deeplink** view
-after typing a transaction ID manually.
+Called **immediately** on app open, with no extra tap and no artificial
+delay, as soon as the app resolves a `tran_id` from the deeplink. Opening
+via a real link skips the manual lookup step entirely — instead of an
+Identity Code input + "Run Inquiry" button, the person sees a compact
+auto-confirm card (Biller name, Amount + Currency, Transaction ID) that
+populates as soon as the inquiry response comes back, plus the Payer
+Details fields and a **Pay Securely** button. The manual Identity Code
+input + Run Inquiry button only show up when the **Deeplink** view is
+opened directly (home tile / bottom nav), for manual testing — see
+`applyDeeplinkUiMode()` in `app.js`.
 
 **Request** — `Header: token: <AuthToken from Gateway Settings>`
 
@@ -121,9 +148,9 @@ after typing a transaction ID manually.
 **Response** returns `merchant`, `customers[]`, `transaction{
 original_amount, convenience_fee_amount, sponsor_fee_amount, total_amount,
 currency, payment_token, ... }`, and **`urls.return_url`**, which the app
-stores and uses for the post-payment "Done" redirect. The amount shown is
-**read-only** — it's whatever the Inquiry returned, since `payment_token`
-is tied to that exact amount.
+stores and uses for the post-payment "Back to App" redirect. The amount
+shown is **read-only** — it's whatever the Inquiry returned, since
+`payment_token` is tied to that exact amount.
 
 ### 3. Mini App: `POST /payment/v3/confirm`
 
@@ -150,6 +177,13 @@ Securely**.
 }
 ```
 
+On success, the receipt modal shows a **Back to App** button
+(`handlePaymentDoneAction()`), which redirects to the `return_url`
+captured from the v5 Inquiry response in step 2, with `status`,
+`identity_code`, `bank_ref`, `amount`, `currency` appended. If no
+`return_url` was ever captured (e.g. testing manually without a real
+inquiry), it just closes the receipt instead.
+
 ## The Bill Pay flow (manual, customer_code based)
 
 Independent of the deeplink flow above. Reachable via the **Pay Bill**
@@ -166,37 +200,52 @@ POST /payment/v2/confirm   { customer_code, bill_code, bill_amount,
 ```
 
 Starting a Bill Pay inquiry clears any leftover `return_url` from a
-previous Deeplink session, so its "Done" button correctly just closes the
-receipt instead of trying to redirect anywhere.
+previous Deeplink session, so its "Back to App" button correctly just
+closes the receipt instead of trying to redirect anywhere.
 
 ## Menu summary
 
 - **Home screen:** Scan QR, Pay Bill, Deeplink, Upload QR, Verify tiles.
 - **Bottom nav:** Home, Scan QR, Pay Bill, Deeplink tabs.
 - Opening the app via a real merchant-generated deeplink auto-navigates
-  straight to the **Deeplink** view and runs the inquiry — the person
-  never needs to find the menu themselves in that case.
+  straight to the **Deeplink** view's compact confirm card and runs the
+  inquiry — the person never sees the home screen or the manual lookup
+  form in that case.
+
+## Speed
+
+The startup init now runs on `DOMContentLoaded` instead of full
+`window.onload` (all the CDN scripts in `<head>` are blocking, non-async
+tags, so they've already executed by then — nothing is lost, it just
+stops waiting on images/fonts to finish downloading first). A deeplink
+open is detected **before** the home view ever renders, so there's no
+home→Deeplink flash — it navigates straight to the Deeplink view and
+fires the Inquiry request immediately, with no artificial delay, on both
+the web URL and the Telegram mobile deep link.
 
 ## Environment variables (Vercel dashboard → Settings → Environment Variables)
 
 | Variable | Required? | Description |
 |---|---|---|
-| `WEB_APP_BASE_URL` | Optional | Defaults to `https://telegram-mini-bank-app.vercel.app`. |
-| `TELEGRAM_BOT_DEEPLINK` | Optional | Defaults to `https://t.me/PaymentStagingMini_bot/TestApp`. |
+| `WEB_APP_BASE_URL` | **Yes, in practice** | Must exactly match your **actual live** Vercel domain. If this is wrong (or the domain has no deployment), `web_payment_url` will 404 at the Vercel platform level — see the ⚠️ note above. Defaults to `https://telegram-mini-bank-app.vercel.app`, which is almost certainly *not* your real domain — set this explicitly. |
+| `TELEGRAM_BOT_DEEPLINK` | Optional | The source `https://t.me/<bot>/<app>` URL `mobile_deep_link`'s `tg://resolve` scheme is derived from. Defaults to `https://t.me/PaymentStagingMini_bot/TestApp`. |
 | `EXPECTED_MERCHANT_ID` | Optional | If set, rejects any `merchant_id` that doesn't match — the only optional restriction while hash checking is off. |
 
 ## End-to-end test checklist
 
-1. Deploy to Vercel; set your real **Auth Token** and staging **Base
-   Gateway URL** in the app's **API Gateway** settings.
+1. Deploy to Vercel; **confirm `WEB_APP_BASE_URL` matches your real
+   domain** (load it directly in a browser first — it should NOT show a
+   Vercel `DEPLOYMENT_NOT_FOUND` page). Set your real **Auth Token** and
+   staging **Base Gateway URL** in the app's **API Gateway** settings.
 2. **Bill Pay:** open the Pay Bill tab, enter a known staging customer
    code, Look Up Bill, adjust amount if needed, Pay Securely.
 3. **Deeplink:** call `/transaction/generatelinks` with a real staging
    `transaction_id` (via curl or the in-app Manual Test tool). Open the
-   returned `web_payment_url` (should load with `?tran_id=...` and no
-   404) or scan the `mobile_deep_link` QR on your phone.
-4. Confirm the Deeplink view auto-loads with the transaction, Inquiry
-   runs automatically, and the bill amount/fees display correctly.
+   returned `web_payment_url` (should load with `?tran_id=...`, straight
+   into the compact confirm card, no 404) or tap/scan the `mobile_deep_link`
+   on your phone (should jump directly into Telegram, no browser tab).
+4. Confirm the compact card shows Biller name, Amount + Currency, and
+   Transaction ID correctly as soon as it opens — no extra tap needed.
 5. Enter Account Number (required) + Name/Phone, tap **Pay Securely**,
    confirm the success receipt.
 6. Tap **Done** → confirm you land on the transaction's `return_url` with

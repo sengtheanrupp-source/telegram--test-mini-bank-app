@@ -313,11 +313,36 @@ function resolvePaymentLink() {
   if (banner) banner.classList.remove("hidden");
   if (bannerRef) bannerRef.textContent = identityCode;
 
-  showToast("Opened from payment link. Running inquiry...");
+  const txnIdEl = document.getElementById("dlcTxnId");
+  if (txnIdEl) txnIdEl.textContent = identityCode;
+
+  // Skip the manual lookup form entirely — show the compact auto-confirm
+  // card instead (Biller / Amount / Currency / TxnId), and hide the
+  // verbose debug summary. Matches the target confirm-screen design.
+  applyDeeplinkUiMode(true);
+
+  // No navigation/inquiry delay — jump straight to the view and fire the
+  // inquiry immediately for the fastest possible open, on both web and
+  // Telegram mobile.
   navigateToView("paymentView");
-  setTimeout(() => {
-    runInquiry();
-  }, 300);
+  runInquiry();
+}
+
+/* Toggles the Deeplink view between:
+   - Compact auto-confirm mode (isDeeplink=true): opened via a real
+     Generate Payment Links link — hides the manual Identity Code lookup
+     form and the verbose debug summary, shows the clean Biller/Amount/
+     TxnId card instead.
+   - Manual test mode (isDeeplink=false, the default): opened directly
+     from the bottom nav / home tile — shows the full lookup form so a
+     tester can paste in any transaction_id. */
+function applyDeeplinkUiMode(isDeeplink) {
+  const billerSummary = document.getElementById("dlBillerSummary");
+  const lookupForm = document.getElementById("dlLookupForm");
+  const detailSummary = document.getElementById("dlDetailSummary");
+  if (billerSummary) billerSummary.classList.toggle("hidden", !isDeeplink);
+  if (lookupForm) lookupForm.classList.toggle("hidden", isDeeplink);
+  if (detailSummary) detailSummary.classList.toggle("hidden", isDeeplink);
 }
 
 /* Called from the "Done" button on the success receipt modal.
@@ -354,6 +379,15 @@ function handlePaymentDoneAction() {
     log("Invalid return_url, falling back to close: " + e.message);
     closeModal();
   }
+}
+
+/* Called from the Deeplink home tile / bottom-nav tab (explicit manual
+   navigation, as opposed to auto-opening via resolvePaymentLink). Resets
+   to the full manual lookup-form UI in case a previous deeplink session
+   left the compact auto-confirm card showing. */
+function openDeeplinkViewManually() {
+  applyDeeplinkUiMode(false);
+  navigateToView("paymentView");
 }
 
 let rawLogText = "";
@@ -1467,6 +1501,12 @@ async function runInquiry() {
       document.getElementById("paymentAmount").value = workflowState.total_amount;
       const currEl = document.getElementById("paymentAmountCurrency");
       if (currEl) currEl.textContent = workflowState.currency;
+
+      // Mirror into the compact auto-confirm card (deeplink-opened mode)
+      const dlcBillerNameEl = document.getElementById("dlcBillerName");
+      const dlcTxnIdEl = document.getElementById("dlcTxnId");
+      if (dlcBillerNameEl) dlcBillerNameEl.textContent = workflowState.supplier_name;
+      if (dlcTxnIdEl) dlcTxnIdEl.textContent = workflowState.identity_code;
 
       document.getElementById("appStatusBadge").textContent = "Token Active";
       document.getElementById("appStatusBadge").className =
@@ -2869,7 +2909,7 @@ function toggleDevConsole() {
 }
 
 /* INITIALIZATION ON WINDOW LOAD */
-window.onload = function () {
+function initApp() {
   const savedTheme = localStorage.getItem("theme") || "light";
   setTheme(savedTheme);
   initTelegramWebApp();
@@ -2879,9 +2919,19 @@ window.onload = function () {
   showSettingsSection("gateway");
   updateFullCodes();
   updateRefNo();
-  navigateToView("homeView");
+
+  // Check for a deeplink BEFORE navigating home, so a deeplink open goes
+  // straight to the Deeplink confirm screen instead of flashing the home
+  // view first then immediately re-navigating — faster perceived open on
+  // both web and Telegram mobile.
+  const deeplinkIdentityCode =
+    getStartParamFromTelegram() || getIdentityCodeFromQueryString();
+  if (deeplinkIdentityCode) {
+    resolvePaymentLink();
+  } else {
+    navigateToView("homeView");
+  }
   log("Telegram Mini App Bank Engine initialised successfully.");
-  resolvePaymentLink();
 
   // Always require PIN when the Mini App is opened if lock is enabled
   if (securitySettings.enabled) {
@@ -2922,4 +2972,6 @@ window.onload = function () {
       });
     } catch (e) {}
   }
-};
+}
+
+document.addEventListener("DOMContentLoaded", initApp);

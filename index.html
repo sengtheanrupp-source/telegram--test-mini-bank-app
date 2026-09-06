@@ -1016,7 +1016,7 @@
           </button>
 
           <button
-            onclick="navigateToView('paymentView')"
+            onclick="openDeeplinkViewManually()"
             class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 rounded-2xl flex flex-col items-center gap-1.5 shadow-sm hover:border-indigo-500 transition-all group"
           >
             <div
@@ -1469,11 +1469,40 @@
           </span>
         </div>
 
-        <!-- Single Input Form -->
+        <!-- Compact auto-confirm summary — shown ONLY when opened via a real
+             Generate Payment Links deeplink (skips the manual lookup step
+             entirely, per the reference confirm-screen design). -->
         <div
-          id="singleInputPanel"
-          class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 shadow-sm space-y-4"
+          id="dlBillerSummary"
+          class="hidden bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 shadow-sm space-y-4"
         >
+          <div
+            class="flex items-center gap-3 pb-3 border-b border-slate-100 dark:border-slate-800"
+          >
+            <div
+              class="w-11 h-11 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center text-lg shrink-0"
+            >
+              <i class="fa-solid fa-building-columns"></i>
+            </div>
+            <div class="min-w-0">
+              <p class="text-[9px] font-bold uppercase text-slate-400">Biller</p>
+              <p
+                id="dlcBillerName"
+                class="text-sm font-bold text-slate-900 dark:text-slate-100 truncate"
+              >
+                -
+              </p>
+            </div>
+          </div>
+          <div class="bg-slate-50 dark:bg-slate-950 rounded-2xl px-3.5 py-2.5 flex items-center justify-between text-[11px]">
+            <span class="text-slate-400 font-bold uppercase text-[9px]">Transaction ID</span>
+            <span id="dlcTxnId" class="font-mono font-bold text-slate-700 dark:text-slate-300">-</span>
+          </div>
+        </div>
+
+        <!-- Manual lookup form — shown when the Deeplink view is opened
+             directly (bottom-nav tab) for manual testing, not via a link. -->
+        <div id="dlLookupForm" class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 shadow-sm">
           <div>
             <label
               class="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1"
@@ -1502,13 +1531,19 @@
 
           <button
             onclick="runInquiry()"
-            class="w-full bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 font-bold py-3 rounded-2xl text-xs transition-all shadow-sm flex items-center justify-center gap-2"
+            class="w-full mt-4 bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 font-bold py-3 rounded-2xl text-xs transition-all shadow-sm flex items-center justify-center gap-2"
           >
             <i class="fa-solid fa-magnifying-glass"></i> Run Inquiry
           </button>
+        </div>
 
+        <!-- Single Input Form -->
+        <div
+          id="singleInputPanel"
+          class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 shadow-sm space-y-4"
+        >
           <div
-            class="pt-3 border-t border-dashed border-slate-200 dark:border-slate-800 space-y-2"
+            class="space-y-2"
           >
             <div class="flex justify-between items-center">
               <span class="text-xs font-bold text-slate-700 dark:text-slate-300"
@@ -1572,8 +1607,10 @@
           </button>
         </div>
 
-        <!-- Inquiry Output Summary -->
+        <!-- Inquiry Output Summary (hidden in deeplink-auto mode to keep the
+             confirm screen clean; still shown for manual testing) -->
         <div
+          id="dlDetailSummary"
           class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-4 shadow-sm space-y-3 text-xs"
         >
           <div class="flex justify-between items-center">
@@ -1788,7 +1825,7 @@ System ready...</pre
         </button>
         <button
           id="tab-btn-payment"
-          onclick="navigateToView('paymentView')"
+          onclick="openDeeplinkViewManually()"
           class="flex flex-col items-center justify-center gap-1 py-2.5 text-slate-400"
         >
           <i class="fa-solid fa-link text-base"></i>
@@ -2002,7 +2039,7 @@ System ready...</pre
               onclick="handlePaymentDoneAction()"
               class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 sm:py-3.5 rounded-2xl text-xs sm:text-sm shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-1.5 active:scale-95 transition-all"
             >
-              <i class="fa-solid fa-check"></i> Done
+              <i class="fa-solid fa-arrow-left"></i> Back to App
             </button>
           </div>
 

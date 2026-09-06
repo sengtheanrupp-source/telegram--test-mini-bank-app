@@ -27,7 +27,7 @@
  *   "message": "Generate Success",
  *   "data": {
  *     "web_payment_url": "https://telegram-mini-bank-app.vercel.app/?tran_id=ADA90B8B6D89",
- *     "mobile_deep_link": "https://t.me/PaymentStagingMini_bot/TestApp?startapp=ADA90B8B6D89"
+ *     "mobile_deep_link": "tg://resolve?domain=PaymentStagingMini_bot&startapp=ADA90B8B6D89&appname=TestApp"
  *   }
  * }
  */
@@ -36,6 +36,9 @@ const WEB_APP_BASE_URL = (
   process.env.WEB_APP_BASE_URL || "https://telegram-mini-bank-app.vercel.app"
 ).replace(/\/$/, "");
 
+// Configure with the https://t.me/<bot>/<app> form — we derive the
+// tg://resolve scheme link from it below, since that's what actually
+// avoids a browser hop on mobile (see toTelegramSchemeLink).
 const TELEGRAM_BOT_DEEPLINK =
   process.env.TELEGRAM_BOT_DEEPLINK ||
   "https://t.me/PaymentStagingMini_bot/TestApp";
@@ -54,6 +57,30 @@ function setCors(res) {
 function toTelegramSafeParam(value) {
   const cleaned = String(value).replace(/[^A-Za-z0-9_-]/g, "");
   return cleaned.slice(0, 64);
+}
+
+/* Converts "https://t.me/<bot>/<app>" into the "tg://resolve" custom URI
+ * scheme Telegram registers with the OS. Opening a tg:// link invokes the
+ * Telegram app directly via the OS intent/URL-scheme handler — there is
+ * no HTML page in between, so it never "routes through a browser page"
+ * the way an https://t.me/... link can (which first loads as a normal
+ * web link and only then hands off to the app). Requires Telegram to
+ * already be installed — there's no web/App-Store fallback with tg://,
+ * unlike https://t.me/...
+ */
+function toTelegramSchemeLink(httpsTmeUrl, startParam) {
+  try {
+    const u = new URL(httpsTmeUrl);
+    const parts = u.pathname.split("/").filter(Boolean); // [bot, app]
+    const domain = parts[0];
+    const appname = parts[1];
+    if (!domain) return null;
+    const qs = new URLSearchParams({ domain, startapp: startParam });
+    if (appname) qs.set("appname", appname);
+    return `tg://resolve?${qs.toString()}`;
+  } catch (e) {
+    return null;
+  }
 }
 
 module.exports = async (req, res) => {
@@ -97,7 +124,9 @@ module.exports = async (req, res) => {
 
     const safeParam = toTelegramSafeParam(transaction_id);
     const webPaymentUrl = `${WEB_APP_BASE_URL}/?tran_id=${encodeURIComponent(transaction_id)}`;
-    const mobileDeepLink = `${TELEGRAM_BOT_DEEPLINK}?startapp=${safeParam}`;
+    const mobileDeepLink =
+      toTelegramSchemeLink(TELEGRAM_BOT_DEEPLINK, safeParam) ||
+      `${TELEGRAM_BOT_DEEPLINK}?startapp=${safeParam}`; // fallback if TELEGRAM_BOT_DEEPLINK is misconfigured
 
     return res.status(200).json({
       code: "000",
