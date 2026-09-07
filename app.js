@@ -986,8 +986,7 @@ function openKHQRConfirmModal(data) {
 
   const modal = document.getElementById("khqrConfirmModal");
   modal.classList.remove("hidden");
-  // Young-male Khmer alert: check amount before confirming
-  speakPaymentAmountAlert(data.amount, data.currency);
+  // Voice waits until security unlock on Confirm (see submitQRConfirm)
   const box = document.getElementById("khqrModalContainer");
   if (box) {
     box.classList.remove("animate-modal-pop");
@@ -1002,8 +1001,20 @@ function closeKHQRModal() {
 }
 
 async function submitQRConfirm() {
-  // Require PIN / Biometric when security lock is enabled
+  // Unlock security first — only then play Khmer alert and continue pay
+  const amount =
+    parseFloat(document.getElementById("qrAmount")?.value) ||
+    parseFloat(
+      (document.getElementById("modalQrAmountDisplay")?.textContent || "").replace(
+        /[^\d.]/g,
+        "",
+      ),
+    ) ||
+    0;
+  const currency =
+    (document.getElementById("qrCurrency")?.value || "USD").trim() || "USD";
   requireSecurityAuth(() => {
+    speakPaymentAmountAlert(amount, currency);
     submitQRConfirmAfterAuth();
   });
 }
@@ -1524,12 +1535,7 @@ async function runBillPayInquiry() {
         paid_date: new Date().toLocaleString(),
       };
 
-      // Khmer pre-confirm alert (same as QR / Deeplink) before user pays
-      speakPaymentAmountAlert(
-        workflowState.total_amount,
-        workflowState.currency,
-      );
-
+      // Voice waits until security unlock on Pay (see runBillPaySmartFlow)
       finishModal(
         true,
         "Inquiry Successful",
@@ -1553,8 +1559,14 @@ async function runBillPayInquiry() {
 }
 
 async function runBillPaySmartFlow() {
-  // Require PIN / Biometric when security lock is enabled
+  // Unlock security first — only then play Khmer alert and continue pay
   requireSecurityAuth(() => {
+    speakPaymentAmountAlert(
+      workflowState.total_amount ||
+        parseFloat(document.getElementById("bpPaymentAmount")?.value) ||
+        0,
+      workflowState.currency || "USD",
+    );
     runBillPayConfirm();
   });
 }
@@ -1764,10 +1776,7 @@ async function runInquiry(options = {}) {
         closeModal();
         triggerHaptic("success");
         log("Deeplink inquiry ready — showing Confirm screen.");
-        speakPaymentAmountAlert(
-          workflowState.total_amount,
-          workflowState.currency,
-        );
+        // Voice waits until security unlock on Confirm (see runSmartPaymentFlow)
       } else {
         const metaDetails = {
           customer_code: customerCodeLabel,
@@ -1859,8 +1868,16 @@ async function runSmartPaymentFlow() {
     document.getElementById("payerAccountNo")?.focus();
     return;
   }
-  // Require PIN / Biometric when security lock is enabled
+  // Unlock security first — only then play Khmer alert and continue pay
   requireSecurityAuth(() => {
+    speakPaymentAmountAlert(
+      workflowState.total_amount ||
+        parseFloat(document.getElementById("paymentAmount")?.value) ||
+        0,
+      workflowState.currency ||
+        document.getElementById("paymentAmountCurrency")?.textContent ||
+        "USD",
+    );
     runSmartPaymentFlowAfterAuth();
   });
 }
@@ -2217,9 +2234,20 @@ function khmerNumberToWords(num) {
 const KHMER_PRE_CONFIRM_ALERT =
   "សូមពិនិត្យចំនួនទឹកប្រាក់របស់លោកអ្នកជាមុនសិន ដើម្បីអាចបញ្ជាក់ការទូទាត់ត្រូវ។";
 
-async function speakPaymentAmountAlert(amount, currency) {
+/* Voice only after security unlock (or when lock is off). Settings test can force. */
+function canSpeakVoice(force = false) {
+  if (!appPreferences.voiceConfirm && !force) return false;
+  if (force) return true;
+  if (!securitySettings || !securitySettings.enabled) return true;
+  return !!isAppUnlocked;
+}
+
+async function speakPaymentAmountAlert(amount, currency, force = false) {
   try {
-    if (!appPreferences.voiceConfirm) return;
+    if (!canSpeakVoice(force)) {
+      log("Khmer alert skipped — unlock security first.");
+      return;
+    }
     unlockAudioEngine();
     const numericAmount = parseFloat(amount);
     const curr = String(currency || "USD").toUpperCase();
@@ -2239,9 +2267,12 @@ async function speakPaymentAmountAlert(amount, currency) {
 }
 
 /* Success voice — young male Khmer (≈18–22), clear bank-style confirmation */
-async function speakPaymentSuccess(amount, currency) {
+async function speakPaymentSuccess(amount, currency, force = false) {
   try {
-    if (!appPreferences.voiceConfirm) return;
+    if (!canSpeakVoice(force)) {
+      log("Khmer success voice skipped — unlock security first.");
+      return;
+    }
 
     unlockAudioEngine();
 
@@ -2282,8 +2313,8 @@ async function speakKhmerAudioFallback(phrase) {
         const utterance = new SpeechSynthesisUtterance(phrase);
         utterance.lang = "km-KH";
         utterance.voice = explicitMaleVoice;
-        utterance.rate = 0.95; // Clear young-adult male pace (≈18–22)
-        utterance.pitch = 0.92; // Younger male, not deep/older
+        utterance.rate = 1.35; // Faster clear bank pace (~1.2–1.5x)
+        utterance.pitch = 0.95; // Younger male
         utterance.volume = 1.0;
         window.speechSynthesis.speak(utterance);
         log(`WebSpeech explicit Khmer male voice spoken (${explicitMaleVoice.name}).`);
@@ -2310,8 +2341,8 @@ async function speakKhmerAudioFallback(phrase) {
       const source = audioCtx.createBufferSource();
       source.buffer = decodedData;
 
-      // ~0.92 playback: young adult male (≈18–22), clearer than deep shift
-      source.playbackRate.value = 0.92;
+      // 1.35x: faster, still intelligible Khmer (target 1.2–1.5)
+      source.playbackRate.value = 1.35;
 
       // Stage 1: mild chest warmth for young male
       const lowShelf = audioCtx.createBiquadFilter();
@@ -2364,7 +2395,7 @@ async function speakKhmerAudioFallback(phrase) {
       if (dspSuccess) return;
 
       if (player) {
-        player.playbackRate = 0.92;
+        player.playbackRate = 1.35;
         player.src = audioUrl;
         await player.play();
         return;
@@ -2381,7 +2412,7 @@ async function speakKhmerAudioFallback(phrase) {
     if (dspSuccess) return;
 
     if (player) {
-      player.playbackRate = 0.92;
+      player.playbackRate = 1.35;
       player.src = streamUrl;
       await player.play();
     }
@@ -2393,7 +2424,7 @@ async function speakKhmerAudioFallback(phrase) {
 function testVoiceConfirmation(currency = "USD") {
   unlockAudioEngine();
   const amount = currency === "KHR" ? 5000 : 5;
-  speakPaymentSuccess(amount, currency);
+  speakPaymentSuccess(amount, currency, true);
   const words = khmerNumberToWords(amount);
   const currText = currency === "KHR" ? "រៀល" : "ដុល្លារ";
   showToast(`🔊 ទឹកប្រាក់បានទូទាត់ចំនួន${words} ${currText}`);
