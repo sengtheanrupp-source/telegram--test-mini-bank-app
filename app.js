@@ -1018,8 +1018,8 @@ async function submitQRConfirm() {
   const currency =
     (document.getElementById("qrCurrency")?.value || "USD").trim() || "USD";
   requireSecurityAuth(() => {
-    // Always speak on Confirm (user gesture) — reliable for mobile / web
-    speakPaymentAmountAlert(amount, currency, true);
+    // Always speak on Confirm (user gesture) — works with/without security
+    speakPaymentAmountAlert(amount, currency);
     submitQRConfirmAfterAuth();
   });
 }
@@ -1087,7 +1087,6 @@ async function submitQRConfirmAfterAuth() {
       speakPaymentSuccess(
         data.total_amount !== undefined ? data.total_amount : payload.amount,
         data.currency || payload.currency,
-        true,
       );
     } else {
       triggerHaptic("error");
@@ -1541,13 +1540,7 @@ async function runBillPayInquiry() {
         paid_date: new Date().toLocaleString(),
       };
 
-      // Speak now if lock is off; otherwise after unlock on Pay
-      if (!securitySettings || !securitySettings.enabled) {
-        speakPaymentAmountAlert(
-          workflowState.total_amount,
-          workflowState.currency,
-        );
-      }
+      // Voice plays on Pay click (user gesture) so autoplay is allowed
       finishModal(
         true,
         "Inquiry Successful",
@@ -1578,7 +1571,6 @@ async function runBillPaySmartFlow() {
         parseFloat(document.getElementById("bpPaymentAmount")?.value) ||
         0,
       workflowState.currency || "USD",
-      true,
     );
     runBillPayConfirm();
   });
@@ -1649,7 +1641,7 @@ async function runBillPayConfirm() {
         jsonData.message || `Transaction ${autoRef} completed.`,
         metaDetails,
       );
-      speakPaymentSuccess(totalAmt, curr, true);
+      speakPaymentSuccess(totalAmt, curr);
     } else {
       triggerHaptic("error");
       lastPaymentFlow = "billpay";
@@ -1894,8 +1886,8 @@ async function runSmartPaymentFlow() {
       workflowState.currency ||
       document.getElementById("paymentAmountCurrency")?.textContent ||
       "USD";
-    // force=true: allowed after unlock / when lock off; starts under Confirm gesture
-    speakPaymentAmountAlert(amt, curr, true);
+    // Speak on Confirm (user gesture) — works with/without security, web URL & Mini App
+    speakPaymentAmountAlert(amt, curr);
     runSmartPaymentFlowAfterAuth();
   });
 }
@@ -1995,7 +1987,7 @@ async function runSmartPaymentFlowAfterAuth() {
         metaDetails,
       );
       // force=true so web payment URL success voice always attempts
-      speakPaymentSuccess(totalAmt, curr, true);
+      speakPaymentSuccess(totalAmt, curr);
     } else {
       triggerHaptic("error");
       lastPaymentFlow = workflowState.link_token ? "deeplink" : "billpay";
@@ -2836,10 +2828,14 @@ function setStoredWebAuthnCredentialId(id) {
   } catch (e) {}
 }
 
+function isOwnerBiometricsEnrolled() {
+  return !!(securitySettings.bioEnrolled || getStoredWebAuthnCredentialId());
+}
+
 function updateBiometricStatusBadge() {
   const badge = document.getElementById("biometricStatusBadge");
   if (!badge) return;
-  const enrolled = !!getStoredWebAuthnCredentialId() || !!securitySettings.bioEnrolled;
+  const enrolled = isOwnerBiometricsEnrolled();
   if (enrolled && securitySettings.useBiometrics) {
     badge.textContent = "✔ Owner biometrics enrolled";
     badge.className =
@@ -3124,7 +3120,7 @@ async function startBiometricTouchScan() {
     return;
   }
 
-  // Auth: accept if previously enrolled on this device
+  // Auth: accept if previously enrolled on this device (local or WebAuthn)
   const enrolled =
     !!securitySettings.bioEnrolled || !!getStoredWebAuthnCredentialId();
   if (!enrolled) {
@@ -3135,13 +3131,17 @@ async function startBiometricTouchScan() {
     return;
   }
 
-  if (bar) bar.style.width = "100%";
-  setBioScanSuccess();
+  // Enrolled: complete unlock after short bank-style animation
+  if (bar) bar.style.width = "75%";
   setTimeout(() => {
-    isBiometricScanningActive = false;
-    closeBiometricScanModal();
-    handleBiometricAuthSuccess();
-  }, 450);
+    if (bar) bar.style.width = "100%";
+    setBioScanSuccess();
+    setTimeout(() => {
+      isBiometricScanningActive = false;
+      closeBiometricScanModal();
+      handleBiometricAuthSuccess();
+    }, 400);
+  }, 500);
 }
 
 async function enrollBiometricsInSettings() {
