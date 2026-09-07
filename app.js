@@ -986,11 +986,7 @@ function openKHQRConfirmModal(data) {
 
   const modal = document.getElementById("khqrConfirmModal");
   modal.classList.remove("hidden");
-  // If security lock is OFF, speak friendly Khmer check-amount now.
-  // If lock is ON, voice plays after unlock on Confirm.
-  if (!securitySettings || !securitySettings.enabled) {
-    speakPaymentAmountAlert(data.amount, data.currency);
-  }
+  // Voice plays on Confirm tap (after unlock if security ON).
   const box = document.getElementById("khqrModalContainer");
   if (box) {
     box.classList.remove("animate-modal-pop");
@@ -1018,9 +1014,10 @@ async function submitQRConfirm() {
   const currency =
     (document.getElementById("qrCurrency")?.value || "USD").trim() || "USD";
   requireSecurityAuth(() => {
-    // Always speak on Confirm (user gesture) — works with/without security
-    speakPaymentAmountAlert(amount, currency);
-    submitQRConfirmAfterAuth();
+    (async () => {
+      try { await speakPaymentAmountAlert(amount, currency); } catch (e) {}
+      await submitQRConfirmAfterAuth();
+    })();
   });
 }
 
@@ -1566,13 +1563,17 @@ async function runBillPayInquiry() {
 async function runBillPaySmartFlow() {
   unlockAudioEngine();
   requireSecurityAuth(() => {
-    speakPaymentAmountAlert(
-      workflowState.total_amount ||
-        parseFloat(document.getElementById("bpPaymentAmount")?.value) ||
-        0,
-      workflowState.currency || "USD",
-    );
-    runBillPayConfirm();
+    (async () => {
+      try {
+        await speakPaymentAmountAlert(
+          workflowState.total_amount ||
+            parseFloat(document.getElementById("bpPaymentAmount")?.value) ||
+            0,
+          workflowState.currency || "USD",
+        );
+      } catch (e) {}
+      await runBillPayConfirm();
+    })();
   });
 }
 
@@ -1868,7 +1869,7 @@ function populateDeeplinkConfirmCard(customerCodeLabel) {
 }
 
 async function runSmartPaymentFlow() {
-  // Critical for web payment URL: unlock audio on the same user gesture as Confirm
+  // Must unlock audio on the same tap as Confirm (Telegram + browser autoplay rules)
   unlockAudioEngine();
   const accountNo = (document.getElementById("payerAccountNo")?.value || "").trim();
   if (!accountNo) {
@@ -1876,7 +1877,6 @@ async function runSmartPaymentFlow() {
     document.getElementById("payerAccountNo")?.focus();
     return;
   }
-  // Always speak on Confirm (user gesture) so web payment URL can play sound
   requireSecurityAuth(() => {
     const amt =
       workflowState.total_amount ||
@@ -1886,9 +1886,13 @@ async function runSmartPaymentFlow() {
       workflowState.currency ||
       document.getElementById("paymentAmountCurrency")?.textContent ||
       "USD";
-    // Speak on Confirm (user gesture) — works with/without security, web URL & Mini App
-    speakPaymentAmountAlert(amt, curr);
-    runSmartPaymentFlowAfterAuth();
+    // After unlock (or if lock off): speak BEFORE pay, then confirm v3
+    (async () => {
+      try {
+        await speakPaymentAmountAlert(amt, curr);
+      } catch (e) {}
+      await runSmartPaymentFlowAfterAuth();
+    })();
   });
 }
 
@@ -2271,13 +2275,14 @@ function khmerNumberToWords(num) {
   return result;
 }
 
-/* ===== Khmer bank voice (works with OR without security) ===== */
-const VOICE_PLAYBACK_RATE = 1.28;
-let _khmerSpeakChain = Promise.resolve();
+/* ===== Khmer bank voice — reliable for Telegram Mini App ===== */
+const VOICE_PLAYBACK_RATE = 1.3;
+let _activeKhmerAudio = null;
 
 function canSpeakVoice() {
-  // Only gated by preference — security lock must NOT block voice
   try {
+    // Default ON; only off if user disabled in settings
+    if (typeof appPreferences === "undefined") return true;
     return appPreferences.voiceConfirm !== false;
   } catch (e) {
     return true;
@@ -2290,7 +2295,7 @@ function buildKhmerPreConfirmPhrase(amount, currency) {
   const currencyKhmer = curr === "KHR" || curr === "116" ? "រៀល" : "ដុល្លារ";
   if (!isNaN(numericAmount) && numericAmount > 0) {
     const words = khmerNumberToWords(numericAmount);
-    return `សូមពិនិត្យចំនួន ${words} ${currencyKhmer} មុនបញ្ជាក់ការទូទាត់ណា!`;
+    return "សូមពិនិត្យចំនួន " + words + " " + currencyKhmer + " មុនបញ្ជាក់ការទូទាត់ណា!";
   }
   return "សូមពិនិត្យចំនួនទឹកប្រាក់មុនបញ្ជាក់ការទូទាត់ណា!";
 }
@@ -2300,52 +2305,21 @@ function buildKhmerSuccessPhrase(amount, currency) {
   const curr = String(currency || "USD").toUpperCase();
   const currencyKhmer = curr === "KHR" || curr === "116" ? "រៀល" : "ដុល្លារ";
   const words = khmerNumberToWords(isNaN(numericAmount) ? 0 : numericAmount);
-  return `អរគុណច្រើនណាស់! ទូទាត់បានជោគជ័យ ${words} ${currencyKhmer} ហើយ។`;
+  // Exact phrase requested by product
+  return "ការទូទាត់បានជោគជ័យ " + words + " " + currencyKhmer + " សូមអរគុណ។";
 }
 
-function speakPaymentAmountAlert(amount, currency) {
-  if (!canSpeakVoice()) return;
-  unlockAudioEngine();
-  const phrase = buildKhmerPreConfirmPhrase(amount, currency);
-  log("Khmer pre-confirm: " + phrase);
-  queueKhmerSpeak(phrase);
-}
-
-function speakPaymentSuccess(amount, currency) {
-  if (!canSpeakVoice()) return;
-  unlockAudioEngine();
-  const phrase = buildKhmerSuccessPhrase(amount, currency);
-  log("Khmer success: " + phrase);
-  queueKhmerSpeak(phrase);
-}
-
-function queueKhmerSpeak(phrase) {
-  _khmerSpeakChain = _khmerSpeakChain
-    .then(() => speakKhmerNow(phrase))
-    .catch((e) => log("Khmer queue error: " + (e && e.message)));
-}
-
-function splitKhmerForTts(text, maxLen = 90) {
-  const clean = String(text || "").trim();
-  if (!clean) return [];
-  if (clean.length <= maxLen) return [clean];
-  const parts = clean.split(/(?<=[។!?])\s*/).map((s) => s.trim()).filter(Boolean);
-  const chunks = [];
-  let buf = "";
-  for (const p of parts) {
-    if ((buf + " " + p).trim().length <= maxLen) {
-      buf = (buf + " " + p).trim();
-    } else {
-      if (buf) chunks.push(buf);
-      if (p.length <= maxLen) buf = p;
-      else {
-        for (let i = 0; i < p.length; i += maxLen) chunks.push(p.slice(i, i + maxLen));
-        buf = "";
-      }
+function stopKhmerAudio() {
+  try {
+    if (_activeKhmerAudio) {
+      _activeKhmerAudio.pause();
+      _activeKhmerAudio.src = "";
+      _activeKhmerAudio = null;
     }
-  }
-  if (buf) chunks.push(buf);
-  return chunks.length ? chunks : [clean];
+  } catch (e) {}
+  try {
+    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+  } catch (e) {}
 }
 
 function getKhmerVoicePlayer() {
@@ -2361,8 +2335,8 @@ function getKhmerVoicePlayer() {
   return player;
 }
 
-/** Play one audio URL to completion (or fail fast). */
-function playAudioToEnd(url, rate = VOICE_PLAYBACK_RATE) {
+/** Play one TTS URL; resolves when playback starts or ends (or fails). */
+function playTtsUrl(url) {
   return new Promise((resolve) => {
     let settled = false;
     const done = (ok) => {
@@ -2371,40 +2345,31 @@ function playAudioToEnd(url, rate = VOICE_PLAYBACK_RATE) {
       resolve(!!ok);
     };
     try {
-      const player = getKhmerVoicePlayer();
-      try {
-        player.pause();
-      } catch (e) {}
-      player.muted = false;
-      player.volume = 1;
-      try {
-        player.playbackRate = rate;
-      } catch (e) {}
-      player.onended = () => done(true);
-      player.onerror = () => done(false);
-      player.onplaying = () => {
-        /* started */
+      stopKhmerAudio();
+      const audio = new Audio();
+      audio.setAttribute("playsinline", "true");
+      audio.preload = "auto";
+      audio.volume = 1;
+      try { audio.playbackRate = VOICE_PLAYBACK_RATE; } catch (e) {}
+      _activeKhmerAudio = audio;
+      audio.onended = () => done(true);
+      audio.onerror = () => done(false);
+      audio.onplaying = () => {
+        // Consider success once audio is actually playing
+        setTimeout(() => done(true), 80);
       };
-      player.src = url;
-      player.load();
-      const p = player.play();
+      audio.src = url;
+      const p = audio.play();
       if (p && typeof p.then === "function") {
-        p.then(() => {
-          // If metadata never ends (stream), succeed after audio advances
-          setTimeout(() => {
-            try {
-              if (!settled && player.currentTime > 0.05) done(true);
-            } catch (e) {}
-          }, 2500);
-        }).catch(() => done(false));
+        p.then(() => {}).catch(() => done(false));
       }
       setTimeout(() => {
         try {
-          if (!settled) done(player.currentTime > 0.05);
+          if (!settled) done(audio.currentTime > 0.02);
         } catch (e) {
           done(false);
         }
-      }, 15000);
+      }, 12000);
     } catch (e) {
       done(false);
     }
@@ -2441,31 +2406,50 @@ function speakWithWebSpeech(phrase) {
           u.onend = () => finish(true);
           u.onerror = () => finish(false);
           window.speechSynthesis.speak(u);
-          setTimeout(() => finish(true), Math.min(14000, 1000 + phrase.length * 60));
+          // Soft success — utterance was queued under user gesture
+          setTimeout(() => finish(true), Math.min(10000, 800 + phrase.length * 55));
         } catch (e) {
           finish(false);
         }
       };
       if ((window.speechSynthesis.getVoices() || []).length === 0) {
         window.speechSynthesis.onvoiceschanged = run;
-        setTimeout(run, 400);
-      } else run();
+        setTimeout(run, 300);
+      } else {
+        run();
+      }
     } catch (e) {
       finish(false);
     }
   });
 }
 
+function splitKhmerForTts(text, maxLen) {
+  maxLen = maxLen || 90;
+  const clean = String(text || "").trim();
+  if (!clean) return [];
+  if (clean.length <= maxLen) return [clean];
+  const chunks = [];
+  for (let i = 0; i < clean.length; i += maxLen) {
+    chunks.push(clean.slice(i, i + maxLen));
+  }
+  return chunks;
+}
+
+/**
+ * Core speaker — returns Promise.
+ * Must be called from a user gesture (Confirm / Pay / Test) so autoplay is allowed.
+ */
 async function speakKhmerNow(phrase) {
   const text = String(phrase || "").trim();
   if (!text) return false;
   unlockAudioEngine();
   log("speakKhmerNow: " + text);
 
-  // Path A — Google Translate TTS (most reliable Khmer on mobile)
+  // 1) Google Translate TTS (Khmer) via HTMLAudioElement
   try {
     const chunks = splitKhmerForTts(text, 90);
-    let okCount = 0;
+    let allOk = true;
     for (const chunk of chunks) {
       const q = encodeURIComponent(chunk);
       const urls = [
@@ -2474,23 +2458,25 @@ async function speakKhmerNow(phrase) {
       ];
       let chunkOk = false;
       for (const url of urls) {
-        if (await playAudioToEnd(url, VOICE_PLAYBACK_RATE)) {
+        if (await playTtsUrl(url)) {
           chunkOk = true;
           break;
         }
       }
-      if (!chunkOk) break;
-      okCount++;
+      if (!chunkOk) {
+        allOk = false;
+        break;
+      }
     }
-    if (okCount === chunks.length && chunks.length > 0) {
-      log("Khmer OK via Google TTS");
+    if (allOk && chunks.length) {
+      log("Khmer OK: Google TTS");
       return true;
     }
   } catch (e) {
-    log("Google TTS error: " + e.message);
+    log("Google TTS err: " + e.message);
   }
 
-  // Path B — SoundOfText API
+  // 2) SoundOfText
   try {
     const chunks = splitKhmerForTts(text, 100);
     let played = 0;
@@ -2507,8 +2493,8 @@ async function speakKhmerNow(phrase) {
         const data = await res.json();
         if (!data || !data.success || !data.id) continue;
         let audioUrl = "https://files.soundoftext.com/" + data.id + ".mp3";
-        for (let i = 0; i < 8; i++) {
-          await new Promise((r) => setTimeout(r, 350));
+        for (let i = 0; i < 6; i++) {
+          await new Promise((r) => setTimeout(r, 300));
           try {
             const st = await fetch("https://api.soundoftext.com/sounds/" + data.id);
             const body = await st.json();
@@ -2518,36 +2504,63 @@ async function speakKhmerNow(phrase) {
             }
           } catch (e) {}
         }
-        if (await playAudioToEnd(audioUrl, VOICE_PLAYBACK_RATE)) played++;
+        if (await playTtsUrl(audioUrl)) played++;
       } catch (e) {}
     }
     if (played > 0) {
-      log("Khmer OK via SoundOfText");
+      log("Khmer OK: SoundOfText");
       return true;
     }
   } catch (e) {
-    log("SoundOfText error: " + e.message);
+    log("SoundOfText err: " + e.message);
   }
 
-  // Path C — Web Speech API
+  // 3) Web Speech API
   if (await speakWithWebSpeech(text)) {
-    log("Khmer OK via WebSpeech");
+    log("Khmer OK: WebSpeech");
     return true;
   }
 
-  log("Khmer TTS all paths failed");
+  log("Khmer TTS failed for: " + text);
   return false;
 }
 
-function testVoiceConfirmation(currency = "USD") {
+/** Before pay — await this so voice starts under Confirm gesture */
+async function speakPaymentAmountAlert(amount, currency) {
+  if (!canSpeakVoice()) {
+    log("Voice disabled in settings");
+    return false;
+  }
   unlockAudioEngine();
-  const amount = currency === "KHR" ? 5000 : 5;
-  speakPaymentSuccess(amount, currency);
-  const words = khmerNumberToWords(amount);
-  const currText = currency === "KHR" ? "រៀល" : "ដុល្លារ";
-  showToast("🔊 អរគុណ! ទូទាត់ " + words + " " + currText);
+  const phrase = buildKhmerPreConfirmPhrase(amount, currency);
+  log("PRE-CONFIRM: " + phrase);
+  return await speakKhmerNow(phrase);
 }
 
+/** After pay success */
+async function speakPaymentSuccess(amount, currency) {
+  if (!canSpeakVoice()) {
+    log("Voice disabled in settings");
+    return false;
+  }
+  unlockAudioEngine();
+  const phrase = buildKhmerSuccessPhrase(amount, currency);
+  log("SUCCESS: " + phrase);
+  return await speakKhmerNow(phrase);
+}
+
+function testVoiceConfirmation(currency) {
+  currency = currency || "USD";
+  unlockAudioEngine();
+  const amount = currency === "KHR" ? 5000 : 5.5;
+  // Play both phrases so user can verify speaker works
+  (async () => {
+    await speakPaymentAmountAlert(amount, currency);
+    await new Promise((r) => setTimeout(r, 400));
+    await speakPaymentSuccess(amount, currency);
+  })();
+  showToast("🔊 Testing Khmer voice…");
+}
 
 /* 8. SECURITY LOCK & SECRET TAP RESET ENGINE */
 let securitySettings = {
@@ -2782,6 +2795,8 @@ function verifyEnteredPin() {
     const cb = pendingAuthCallback;
     pendingAuthCallback = null;
     enteredPin = "";
+    // PIN digit tap is a user gesture — unlock audio so Khmer can play next
+    unlockAudioEngine();
     if (cb) cb();
   } else {
     triggerHaptic("error");
@@ -3183,6 +3198,8 @@ function handleBiometricAuthSuccess() {
   pinLockMode = "payment";
   const modal = document.getElementById("securityLockModal");
   if (modal) modal.classList.add("hidden");
+  // Fingerprint tap is a user gesture — unlock audio so Khmer can play next
+  unlockAudioEngine();
   if (pendingAuthCallback) {
     const cb = pendingAuthCallback;
     pendingAuthCallback = null;
