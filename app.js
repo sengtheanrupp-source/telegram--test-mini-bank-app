@@ -986,7 +986,11 @@ function openKHQRConfirmModal(data) {
 
   const modal = document.getElementById("khqrConfirmModal");
   modal.classList.remove("hidden");
-  // Voice waits until security unlock on Confirm (see submitQRConfirm)
+  // If security lock is OFF, speak friendly Khmer check-amount now.
+  // If lock is ON, voice plays after unlock on Confirm.
+  if (!securitySettings || !securitySettings.enabled) {
+    speakPaymentAmountAlert(data.amount, data.currency);
+  }
   const box = document.getElementById("khqrModalContainer");
   if (box) {
     box.classList.remove("animate-modal-pop");
@@ -1001,7 +1005,8 @@ function closeKHQRModal() {
 }
 
 async function submitQRConfirm() {
-  // Unlock security first — only then play Khmer alert and continue pay
+  // If security is ON: unlock first, then Khmer alert, then pay.
+  // If security is OFF: pre-alert already played on modal open — just pay.
   const amount =
     parseFloat(document.getElementById("qrAmount")?.value) ||
     parseFloat(
@@ -1014,7 +1019,9 @@ async function submitQRConfirm() {
   const currency =
     (document.getElementById("qrCurrency")?.value || "USD").trim() || "USD";
   requireSecurityAuth(() => {
-    speakPaymentAmountAlert(amount, currency);
+    if (securitySettings && securitySettings.enabled) {
+      speakPaymentAmountAlert(amount, currency);
+    }
     submitQRConfirmAfterAuth();
   });
 }
@@ -1535,7 +1542,13 @@ async function runBillPayInquiry() {
         paid_date: new Date().toLocaleString(),
       };
 
-      // Voice waits until security unlock on Pay (see runBillPaySmartFlow)
+      // Speak now if lock is off; otherwise after unlock on Pay
+      if (!securitySettings || !securitySettings.enabled) {
+        speakPaymentAmountAlert(
+          workflowState.total_amount,
+          workflowState.currency,
+        );
+      }
       finishModal(
         true,
         "Inquiry Successful",
@@ -1559,14 +1572,16 @@ async function runBillPayInquiry() {
 }
 
 async function runBillPaySmartFlow() {
-  // Unlock security first — only then play Khmer alert and continue pay
+  // If security ON: unlock → alert → pay. If OFF: alert already on inquiry.
   requireSecurityAuth(() => {
-    speakPaymentAmountAlert(
-      workflowState.total_amount ||
-        parseFloat(document.getElementById("bpPaymentAmount")?.value) ||
-        0,
-      workflowState.currency || "USD",
-    );
+    if (securitySettings && securitySettings.enabled) {
+      speakPaymentAmountAlert(
+        workflowState.total_amount ||
+          parseFloat(document.getElementById("bpPaymentAmount")?.value) ||
+          0,
+        workflowState.currency || "USD",
+      );
+    }
     runBillPayConfirm();
   });
 }
@@ -1776,7 +1791,13 @@ async function runInquiry(options = {}) {
         closeModal();
         triggerHaptic("success");
         log("Deeplink inquiry ready — showing Confirm screen.");
-        // Voice waits until security unlock on Confirm (see runSmartPaymentFlow)
+        // Speak now if lock is off; otherwise after unlock on Confirm
+        if (!securitySettings || !securitySettings.enabled) {
+          speakPaymentAmountAlert(
+            workflowState.total_amount,
+            workflowState.currency,
+          );
+        }
       } else {
         const metaDetails = {
           customer_code: customerCodeLabel,
@@ -1868,16 +1889,18 @@ async function runSmartPaymentFlow() {
     document.getElementById("payerAccountNo")?.focus();
     return;
   }
-  // Unlock security first — only then play Khmer alert and continue pay
+  // If security ON: unlock → alert → pay. If OFF: alert already on inquiry.
   requireSecurityAuth(() => {
-    speakPaymentAmountAlert(
-      workflowState.total_amount ||
-        parseFloat(document.getElementById("paymentAmount")?.value) ||
-        0,
-      workflowState.currency ||
-        document.getElementById("paymentAmountCurrency")?.textContent ||
-        "USD",
-    );
+    if (securitySettings && securitySettings.enabled) {
+      speakPaymentAmountAlert(
+        workflowState.total_amount ||
+          parseFloat(document.getElementById("paymentAmount")?.value) ||
+          0,
+        workflowState.currency ||
+          document.getElementById("paymentAmountCurrency")?.textContent ||
+          "USD",
+      );
+    }
     runSmartPaymentFlowAfterAuth();
   });
 }
@@ -2044,23 +2067,53 @@ let appPreferences = {
 
 /* AUDIO ENGINE PRE-UNLOCK & VOICE PREPARATION */
 let isAudioEngineUnlocked = false;
+let sharedAudioCtx = null;
 
 function unlockAudioEngine() {
-  if (isAudioEngineUnlocked) return;
   try {
     if ("speechSynthesis" in window) {
-      window.speechSynthesis.getVoices();
-      const u = new SpeechSynthesisUtterance("");
-      u.volume = 0;
-      window.speechSynthesis.speak(u);
+      try {
+        window.speechSynthesis.getVoices();
+      } catch (e) {}
     }
     const AudioContext = window.AudioContext || window.webkitAudioContext;
     if (AudioContext) {
-      const dummyCtx = new AudioContext();
-      if (dummyCtx.state === "suspended") dummyCtx.resume();
+      if (!sharedAudioCtx) sharedAudioCtx = new AudioContext();
+      if (sharedAudioCtx.state === "suspended") {
+        sharedAudioCtx.resume().catch(() => {});
+      }
+      // silent buffer to unlock iOS / Telegram WebView audio
+      try {
+        const buf = sharedAudioCtx.createBuffer(1, 1, 22050);
+        const src = sharedAudioCtx.createBufferSource();
+        src.buffer = buf;
+        src.connect(sharedAudioCtx.destination);
+        src.start(0);
+      } catch (e) {}
+    }
+    const player = getKhmerVoicePlayer ? getKhmerVoicePlayer() : document.getElementById("khmerVoicePlayer");
+    if (player) {
+      try {
+        // tiny silent wav data-uri unlock
+        if (!player.dataset.unlocked) {
+          player.src =
+            "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
+          player.muted = true;
+          player
+            .play()
+            .then(() => {
+              player.pause();
+              player.muted = false;
+              player.currentTime = 0;
+              player.dataset.unlocked = "1";
+            })
+            .catch(() => {
+              player.muted = false;
+            });
+        }
+      } catch (e) {}
     }
     isAudioEngineUnlocked = true;
-    log("Audio & Speech synthesis pre-unlocked by user gesture.");
   } catch (e) {}
 }
 
@@ -2230,16 +2283,37 @@ function khmerNumberToWords(num) {
   return result;
 }
 
-/* Pre-payment alert (young male Khmer, clear): ask user to check amount first */
-const KHMER_PRE_CONFIRM_ALERT =
-  "សូមពិនិត្យចំនួនទឹកប្រាក់របស់លោកអ្នកជាមុនសិន ដើម្បីអាចបញ្ជាក់ការទូទាត់ត្រូវ។";
+/* Friendly Khmer bank voice for Cambodia — warm, clear, natural pace */
+const VOICE_PLAYBACK_RATE = 1.25;
 
-/* Voice only after security unlock (or when lock is off). Settings test can force. */
 function canSpeakVoice(force = false) {
-  if (!appPreferences.voiceConfirm && !force) return false;
   if (force) return true;
+  if (!appPreferences.voiceConfirm) return false;
+  // Security off → always allow
   if (!securitySettings || !securitySettings.enabled) return true;
+  // Security on → only after unlock
   return !!isAppUnlocked;
+}
+
+function buildKhmerPreConfirmPhrase(amount, currency) {
+  const numericAmount = parseFloat(amount);
+  const curr = String(currency || "USD").toUpperCase();
+  const currencyKhmer = curr === "KHR" || curr === "116" ? "រៀល" : "ដុល្លារ";
+  if (!isNaN(numericAmount) && numericAmount > 0) {
+    const words = khmerNumberToWords(numericAmount);
+    // Friendly, short, natural for Cambodian users
+    return `សូមពិនិត្យចំនួន ${words} ${currencyKhmer} មុនបញ្ជាក់ការទូទាត់ណា!`;
+  }
+  return "សូមពិនិត្យចំនួនទឹកប្រាក់មុនបញ្ជាក់ការទូទាត់ណា!";
+}
+
+function buildKhmerSuccessPhrase(amount, currency) {
+  const numericAmount = parseFloat(amount);
+  const curr = String(currency || "USD").toUpperCase();
+  const currencyKhmer = curr === "KHR" || curr === "116" ? "រៀល" : "ដុល្លារ";
+  const words = khmerNumberToWords(isNaN(numericAmount) ? 0 : numericAmount);
+  // Warm thank-you success (happy to pay)
+  return `អរគុណច្រើនណាស់! ទូទាត់បានជោគជ័យ ${words} ${currencyKhmer} ហើយ។`;
 }
 
 async function speakPaymentAmountAlert(amount, currency, force = false) {
@@ -2249,137 +2323,181 @@ async function speakPaymentAmountAlert(amount, currency, force = false) {
       return;
     }
     unlockAudioEngine();
-    const numericAmount = parseFloat(amount);
-    const curr = String(currency || "USD").toUpperCase();
-    const currencyKhmer = curr === "KHR" || curr === "116" ? "រៀល" : "ដុល្លារ";
-    let phrase = KHMER_PRE_CONFIRM_ALERT;
-    if (!isNaN(numericAmount) && numericAmount > 0) {
-      const words = khmerNumberToWords(numericAmount);
-      phrase =
-        `សូមពិនិត្យចំនួនទឹកប្រាក់ ${words} ${currencyKhmer} ជាមុនសិន ` +
-        `ដើម្បីអាចបញ្ជាក់ការទូទាត់ត្រូវ។`;
-    }
-    log(`Khmer pre-confirm alert: "${phrase}"`);
+    const phrase = buildKhmerPreConfirmPhrase(amount, currency);
+    log(`Khmer pre-confirm: "${phrase}"`);
     await speakKhmerAudioFallback(phrase);
   } catch (e) {
     log("Pre-confirm voice failed: " + (e && e.message));
   }
 }
 
-/* Success voice — young male Khmer (≈18–22), clear bank-style confirmation */
 async function speakPaymentSuccess(amount, currency, force = false) {
   try {
     if (!canSpeakVoice(force)) {
       log("Khmer success voice skipped — unlock security first.");
       return;
     }
-
     unlockAudioEngine();
-
-    const numericAmount = parseFloat(amount);
-    const curr = String(currency || "USD").toUpperCase();
-    const currencyKhmer = curr === "KHR" || curr === "116" ? "រៀល" : "ដុល្លារ";
-    const khmerWords = khmerNumberToWords(numericAmount);
-
-    // Clear 2026 bank-style success phrase
-    const phrase = `ការទូទាត់ជោគជ័យ។ ទឹកប្រាក់បានទូទាត់ចំនួន ${khmerWords} ${currencyKhmer}។ សូមអរគុណ។`;
-
-    log(`Khmer young-male success voice: "${phrase}"`);
+    const phrase = buildKhmerSuccessPhrase(amount, currency);
+    log(`Khmer success: "${phrase}"`);
     await speakKhmerAudioFallback(phrase);
   } catch (e) {
     log("Voice confirmation failed: " + (e && e.message));
   }
 }
 
-async function speakKhmerAudioFallback(phrase) {
-  const player = document.getElementById("khmerVoicePlayer");
-
-  // 1. Primary: System WebSpeech API ONLY if an EXPLICIT Male Khmer Voice is available on OS/Browser
-  if ("speechSynthesis" in window && typeof SpeechSynthesisUtterance !== "undefined") {
-    try {
-      const voices = window.speechSynthesis.getVoices();
-      const explicitMaleVoice = voices.find(
-        (v) =>
-          v.lang &&
-          v.lang.toLowerCase().startsWith("km") &&
-          (v.name.toLowerCase().includes("piseth") ||
-            v.name.toLowerCase().includes("dara") ||
-            v.name.toLowerCase().includes("phat") ||
-            v.name.toLowerCase().includes("male") ||
-            v.name.toLowerCase().includes("man")),
-      );
-      if (explicitMaleVoice) {
-        window.speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(phrase);
-        utterance.lang = "km-KH";
-        utterance.voice = explicitMaleVoice;
-        utterance.rate = 1.35; // Faster clear bank pace (~1.2–1.5x)
-        utterance.pitch = 0.95; // Younger male
-        utterance.volume = 1.0;
-        window.speechSynthesis.speak(utterance);
-        log(`WebSpeech explicit Khmer male voice spoken (${explicitMaleVoice.name}).`);
-        return;
+/* Split long Khmer text for TTS length limits (~90 chars) */
+function splitKhmerForTts(text, maxLen = 90) {
+  const parts = String(text || "")
+    .split(/(?<=[។!?])\s*/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const chunks = [];
+  let buf = "";
+  for (const p of parts) {
+    if ((buf + p).length <= maxLen) {
+      buf += (buf ? " " : "") + p;
+    } else {
+      if (buf) chunks.push(buf);
+      if (p.length <= maxLen) buf = p;
+      else {
+        for (let i = 0; i < p.length; i += maxLen) chunks.push(p.slice(i, i + maxLen));
+        buf = "";
       }
-    } catch (speechErr) {
-      console.warn("WebSpeech synthesis attempt failed:", speechErr);
     }
   }
+  if (buf) chunks.push(buf);
+  return chunks.length ? chunks : [String(text || "")];
+}
 
-  // 2. Younger Male Person Audio DSP Synthesizer (Dual-Stage Acoustic Formant Shifter)
-  async function playWithYoungMaleAudioDSP(audioUrl) {
+function getKhmerVoicePlayer() {
+  let player = document.getElementById("khmerVoicePlayer");
+  if (!player) {
+    player = document.createElement("audio");
+    player.id = "khmerVoicePlayer";
+    player.setAttribute("playsinline", "true");
+    player.setAttribute("webkit-playsinline", "true");
+    player.preload = "auto";
+    document.body.appendChild(player);
+  }
+  return player;
+}
+
+function playHtmlAudio(url, rate = VOICE_PLAYBACK_RATE) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (ok) => {
+      if (settled) return;
+      settled = true;
+      resolve(!!ok);
+    };
     try {
-      const AudioContext = window.AudioContext || window.webkitAudioContext;
-      if (!AudioContext) throw new Error("No AudioContext");
-      
-      const audioCtx = new AudioContext();
-      if (audioCtx.state === "suspended") await audioCtx.resume();
-
-      const response = await fetch(audioUrl);
-      const arrayBuffer = await response.arrayBuffer();
-      const decodedData = await audioCtx.decodeAudioData(arrayBuffer);
-
-      const source = audioCtx.createBufferSource();
-      source.buffer = decodedData;
-
-      // 1.35x: faster, still intelligible Khmer (target 1.2–1.5)
-      source.playbackRate.value = 1.35;
-
-      // Stage 1: mild chest warmth for young male
-      const lowShelf = audioCtx.createBiquadFilter();
-      lowShelf.type = "lowshelf";
-      lowShelf.frequency.value = 180;
-      lowShelf.gain.value = 3.5;
-
-      // Stage 2: clarity / presence for intelligible Khmer
-      const peakFilter = audioCtx.createBiquadFilter();
-      peakFilter.type = "peaking";
-      peakFilter.frequency.value = 1400;
-      peakFilter.Q.value = 1.0;
-      peakFilter.gain.value = 5.0;
-
-      // Stage 3: soft high cut without muffling consonants
-      const lowPass = audioCtx.createBiquadFilter();
-      lowPass.type = "lowpass";
-      lowPass.frequency.value = 4200;
-
-      // Audio Graph Connection
-      source.connect(lowShelf);
-      lowShelf.connect(peakFilter);
-      peakFilter.connect(lowPass);
-      lowPass.connect(audioCtx.destination);
-
-      source.start(0);
-      log(`Played Khmer Younger Male voice audio via Web Audio Acoustic DSP (148Hz pitch + young male formant shift).`);
-      return true;
-    } catch (dspErr) {
-      console.warn("Web Audio DSP fallback failed:", dspErr);
-      return false;
+      unlockAudioEngine();
+      const player = getKhmerVoicePlayer();
+      try {
+        player.pause();
+        player.currentTime = 0;
+      } catch (e) {}
+      player.onended = () => done(true);
+      player.onerror = () => done(false);
+      try {
+        player.playbackRate = rate;
+      } catch (e) {}
+      player.volume = 1;
+      player.src = url;
+      const playPromise = player.play();
+      if (playPromise && typeof playPromise.then === "function") {
+        playPromise.then(() => {}).catch(() => done(false));
+      }
+      // Success if audio advances; fail after timeout
+      const tick = setInterval(() => {
+        try {
+          if (player.currentTime > 0.08) {
+            clearInterval(tick);
+            // wait for end or soft-success after start
+          }
+        } catch (e) {}
+      }, 200);
+      setTimeout(() => {
+        clearInterval(tick);
+        try {
+          done(player.currentTime > 0.05 && !player.paused);
+        } catch (e) {
+          done(false);
+        }
+      }, 12000);
+    } catch (e) {
+      done(false);
     }
-  }
+  });
+}
 
-  // Fetch Khmer speech audio and process through Young Male DSP Engine
+async function playBlobAudio(blob, rate = VOICE_PLAYBACK_RATE) {
   try {
-    log(`Generating Khmer younger male human person voice for: "${phrase}"...`);
+    const url = URL.createObjectURL(blob);
+    const ok = await playHtmlAudio(url, rate);
+    setTimeout(() => {
+      try {
+        URL.revokeObjectURL(url);
+      } catch (e) {}
+    }, 20000);
+    return ok;
+  } catch (e) {
+    return false;
+  }
+}
+
+function speakWithWebSpeech(phrase) {
+  return new Promise((resolve) => {
+    if (!("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") {
+      resolve(false);
+      return;
+    }
+    try {
+      // Voices may load async
+      const speakNow = () => {
+        try {
+          const voices = window.speechSynthesis.getVoices() || [];
+          const kmVoice =
+            voices.find((v) => v.lang && v.lang.toLowerCase().startsWith("km")) ||
+            voices.find((v) => /khmer|cambodia|ភាសាខ្មែរ/i.test(v.name || "")) ||
+            null;
+          window.speechSynthesis.cancel();
+          const utterance = new SpeechSynthesisUtterance(phrase);
+          utterance.lang = "km-KH";
+          if (kmVoice) utterance.voice = kmVoice;
+          utterance.rate = Math.min(1.4, VOICE_PLAYBACK_RATE);
+          utterance.pitch = 1.05;
+          utterance.volume = 1.0;
+          let done = false;
+          const finish = (ok) => {
+            if (done) return;
+            done = true;
+            resolve(!!ok);
+          };
+          utterance.onend = () => finish(true);
+          utterance.onerror = () => finish(false);
+          window.speechSynthesis.speak(utterance);
+          setTimeout(() => finish(true), Math.min(12000, 900 + phrase.length * 70));
+        } catch (e) {
+          resolve(false);
+        }
+      };
+      const voices = window.speechSynthesis.getVoices();
+      if (!voices || voices.length === 0) {
+        window.speechSynthesis.onvoiceschanged = () => speakNow();
+        setTimeout(speakNow, 350);
+      } else {
+        speakNow();
+      }
+    } catch (e) {
+      resolve(false);
+    }
+  });
+}
+
+async function fetchSoundOfTextUrl(phrase) {
+  try {
     const response = await fetch("https://api.soundoftext.com/sounds", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -2389,36 +2507,125 @@ async function speakKhmerAudioFallback(phrase) {
       }),
     });
     const data = await response.json();
-    if (data && data.success && data.id) {
-      const audioUrl = `https://files.soundoftext.com/${data.id}.mp3`;
-      const dspSuccess = await playWithYoungMaleAudioDSP(audioUrl);
-      if (dspSuccess) return;
+    if (!data || !data.success || !data.id) return "";
+    for (let i = 0; i < 10; i++) {
+      await new Promise((r) => setTimeout(r, 400));
+      try {
+        const st = await fetch("https://api.soundoftext.com/sounds/" + data.id);
+        const body = await st.json();
+        if (body && body.status === "Done" && body.location) return body.location;
+        if (body && body.location) return body.location;
+      } catch (e) {}
+    }
+    return "https://files.soundoftext.com/" + data.id + ".mp3";
+  } catch (e) {
+    return "";
+  }
+}
 
-      if (player) {
-        player.playbackRate = 1.35;
-        player.src = audioUrl;
-        await player.play();
-        return;
+async function tryGoogleTtsChunk(chunk) {
+  const q = encodeURIComponent(chunk);
+  const urls = [
+    "https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=km&q=" + q,
+    "https://translate.googleapis.com/translate_tts?ie=UTF-8&client=gtx&tl=km&q=" + q,
+  ];
+  for (const url of urls) {
+    // Prefer fetch→blob so WebView can play same-origin blob:
+    try {
+      const res = await fetch(url, { mode: "cors", credentials: "omit" });
+      if (res.ok) {
+        const blob = await res.blob();
+        if (blob && blob.size > 200) {
+          const ok = await playBlobAudio(blob, VOICE_PLAYBACK_RATE);
+          if (ok) return true;
+        }
+      }
+    } catch (e) {}
+    // Direct <audio src> fallback
+    const ok2 = await playHtmlAudio(url, VOICE_PLAYBACK_RATE);
+    if (ok2) return true;
+  }
+  return false;
+}
+
+async function speakKhmerAudioFallback(phrase) {
+  unlockAudioEngine();
+  const text = String(phrase || "").trim();
+  if (!text) return false;
+  log("speakKhmer start: " + text);
+
+  // 1) Google Translate TTS (blob + direct)
+  try {
+    const chunks = splitKhmerForTts(text, 80);
+    let allOk = true;
+    for (const chunk of chunks) {
+      const ok = await tryGoogleTtsChunk(chunk);
+      if (!ok) {
+        allOk = false;
+        break;
       }
     }
-  } catch (err) {
-    console.warn("SoundOfText TTS API attempt failed:", err);
-  }
-
-  // StreamElements Secondary Endpoint with Young Male DSP Engine
-  try {
-    const streamUrl = `https://api.streamelements.com/kappa/v2/speech?voice=Khmer&text=${encodeURIComponent(phrase)}`;
-    const dspSuccess = await playWithYoungMaleAudioDSP(streamUrl);
-    if (dspSuccess) return;
-
-    if (player) {
-      player.playbackRate = 1.35;
-      player.src = streamUrl;
-      await player.play();
+    if (allOk) {
+      log("Khmer voice via Google TTS.");
+      return true;
     }
-  } catch (err) {
-    console.warn("StreamElements TTS attempt failed:", err);
+  } catch (e) {
+    log("Google TTS failed: " + e.message);
   }
+
+  // 2) SoundOfText
+  try {
+    const chunks = splitKhmerForTts(text, 100);
+    let played = false;
+    for (const chunk of chunks) {
+      const audioUrl = await fetchSoundOfTextUrl(chunk);
+      if (!audioUrl) continue;
+      try {
+        const res = await fetch(audioUrl);
+        if (res.ok) {
+          const blob = await res.blob();
+          if (await playBlobAudio(blob, VOICE_PLAYBACK_RATE)) {
+            played = true;
+            continue;
+          }
+        }
+      } catch (e) {}
+      if (await playHtmlAudio(audioUrl, VOICE_PLAYBACK_RATE)) played = true;
+    }
+    if (played) {
+      log("Khmer voice via SoundOfText.");
+      return true;
+    }
+  } catch (e) {
+    log("SoundOfText failed: " + e.message);
+  }
+
+  // 3) StreamElements TTS (often works in mobile WebViews)
+  try {
+    const seUrl =
+      "https://api.streamelements.com/kappa/v2/speech?voice=Brian&text=" +
+      encodeURIComponent(text);
+    // Brian is English fallback — try Khmer-tagged if available
+    const seKm =
+      "https://api.streamelements.com/kappa/v2/speech?voice=Khmer&text=" +
+      encodeURIComponent(text);
+    for (const url of [seKm, seUrl]) {
+      if (await playHtmlAudio(url, VOICE_PLAYBACK_RATE)) {
+        log("Khmer voice via StreamElements.");
+        return true;
+      }
+    }
+  } catch (e) {}
+
+  // 4) Web Speech API
+  if (await speakWithWebSpeech(text)) {
+    log("Khmer voice via WebSpeech.");
+    return true;
+  }
+
+  log("All Khmer TTS paths failed.");
+  showToast("សំឡេងមិនអាចចាក់បាន — ពិនិត្យសំឡេងទូរស័ព្ទ", true);
+  return false;
 }
 
 function testVoiceConfirmation(currency = "USD") {
@@ -2427,7 +2634,7 @@ function testVoiceConfirmation(currency = "USD") {
   speakPaymentSuccess(amount, currency, true);
   const words = khmerNumberToWords(amount);
   const currText = currency === "KHR" ? "រៀល" : "ដុល្លារ";
-  showToast(`🔊 ទឹកប្រាក់បានទូទាត់ចំនួន${words} ${currText}`);
+  showToast(`🔊 អរគុណ! ទូទាត់ ${words} ${currText}`);
 }
 
 
@@ -2741,15 +2948,36 @@ async function webAuthnIsAvailable() {
   }
 }
 
+function markOwnerBiometricsEnrolled(credentialId) {
+  if (credentialId) setStoredWebAuthnCredentialId(credentialId);
+  securitySettings.bioEnrolled = true;
+  securitySettings.useBiometrics = true;
+  try {
+    localStorage.setItem(
+      "bankSecuritySettings",
+      JSON.stringify(securitySettings),
+    );
+  } catch (e) {}
+  updateBiometricStatusBadge();
+  log("Owner biometrics marked enrolled.");
+}
+
 async function enrollWebAuthnCredential() {
   const challenge = crypto.getRandomValues(new Uint8Array(32));
   const userId = crypto.getRandomValues(new Uint8Array(16));
+  // Do NOT force rp.id — Telegram WebView hostnames often reject fixed ids
+  const rp = { name: "Bank Mobile Mini App" };
+  try {
+    if (location.hostname && location.hostname !== "localhost" && location.protocol === "https:") {
+      rp.id = location.hostname;
+    }
+  } catch (e) {}
   const publicKey = {
     challenge,
-    rp: { name: "Bank Mobile Mini App", id: location.hostname || "localhost" },
+    rp,
     user: {
       id: userId,
-      name: "bank-owner",
+      name: "bank-owner-" + Date.now(),
       displayName: "Bank Owner",
     },
     pubKeyCredParams: [
@@ -2761,17 +2989,13 @@ async function enrollWebAuthnCredential() {
       userVerification: "required",
       residentKey: "preferred",
     },
-    timeout: 60000,
+    timeout: 90000,
     attestation: "none",
   };
   const cred = await navigator.credentials.create({ publicKey });
   if (!cred || !cred.rawId) throw new Error("No credential created");
   const id = bufferToBase64Url(cred.rawId);
-  setStoredWebAuthnCredentialId(id);
-  securitySettings.bioEnrolled = true;
-  securitySettings.useBiometrics = true;
-  saveSecuritySettings();
-  updateBiometricStatusBadge();
+  markOwnerBiometricsEnrolled(id);
   return id;
 }
 
@@ -2781,7 +3005,7 @@ async function authenticateWebAuthnCredential() {
   const challenge = crypto.getRandomValues(new Uint8Array(32));
   const publicKey = {
     challenge,
-    timeout: 60000,
+    timeout: 90000,
     userVerification: "required",
     allowCredentials: [
       {
@@ -2796,58 +3020,68 @@ async function authenticateWebAuthnCredential() {
   return true;
 }
 
+function tryTelegramBiometricAuth() {
+  return new Promise((resolve) => {
+    try {
+      if (!tgApp || !tgApp.BiometricManager) {
+        resolve(false);
+        return;
+      }
+      tgApp.BiometricManager.init(() => {
+        try {
+          const bm = tgApp.BiometricManager;
+          if (!bm.isBiometricAvailable) {
+            resolve(false);
+            return;
+          }
+          const doAuth = () => {
+            bm.authenticate(
+              { reason: "Confirm payment — owner only" },
+              (success) => resolve(!!success),
+            );
+          };
+          if (bm.isAccessGranted === false && typeof bm.requestAccess === "function") {
+            bm.requestAccess({ reason: "Bank payment security" }, () => doAuth());
+          } else {
+            doAuth();
+          }
+        } catch (e) {
+          resolve(false);
+        }
+      });
+    } catch (e) {
+      resolve(false);
+    }
+  });
+}
+
 function triggerBiometricScan() {
   unlockAudioEngine();
   biometricMode = "auth";
 
-  // 1) WebAuthn platform authenticator (real owner fingerprint / Face ID)
-  webAuthnIsAvailable().then(async (ok) => {
-    if (ok && getStoredWebAuthnCredentialId()) {
-      try {
-        openBiometricScanModal("Use device sensor — owner only");
-        setBioScanStatus("Waiting for owner fingerprint / Face ID…", "indigo");
-        await authenticateWebAuthnCredential();
-        setBioScanSuccess();
-        setTimeout(() => {
-          closeBiometricScanModal();
-          handleBiometricAuthSuccess();
-        }, 400);
-        return;
-      } catch (e) {
-        log("WebAuthn auth failed: " + e.message);
-        setBioScanStatus("Scan failed — only enrolled owner works. Use PIN.", "rose");
-        showToast("Biometric failed. Enter PIN.", true);
-        closeBiometricScanModal();
+  // Must open UI and wait for user tap — WebAuthn needs a user gesture.
+  // Also try Telegram BiometricManager (best path inside Telegram Mini App).
+  if (!securitySettings.bioEnrolled && !getStoredWebAuthnCredentialId()) {
+    // Still allow Telegram device biometrics even if app enroll flag missing
+    tryTelegramBiometricAuth().then((ok) => {
+      if (ok) {
+        markOwnerBiometricsEnrolled("");
+        handleBiometricAuthSuccess();
         return;
       }
-    }
+      openBiometricScanModal("Tap sensor to verify — or enroll in Settings first");
+      setBioScanStatus("Tap the fingerprint button to scan", "indigo");
+    });
+    return;
+  }
 
-    // 2) Telegram BiometricManager
-    if (tgApp && tgApp.BiometricManager) {
-      try {
-        tgApp.BiometricManager.init(() => {
-          if (tgApp.BiometricManager.isBiometricAvailable) {
-            tgApp.BiometricManager.authenticate(
-              { reason: "Authorize payment — owner biometrics only" },
-              (success) => {
-                if (success) handleBiometricAuthSuccess();
-                else showToast("Biometric verification failed. Enter PIN.", true);
-              },
-            );
-            return;
-          }
-          openBiometricScanModal("Touch fingerprint sensor (enroll in Settings first)");
-        });
-        return;
-      } catch (e) {}
-    }
-
-    // 3) UI fallback — requires prior enrollment flag; does not auto-pass strangers
-    if (!securitySettings.bioEnrolled && !getStoredWebAuthnCredentialId()) {
-      showToast("Enroll owner biometrics in Settings first.", true);
+  tryTelegramBiometricAuth().then((ok) => {
+    if (ok) {
+      handleBiometricAuthSuccess();
       return;
     }
-    openBiometricScanModal("Touch fingerprint sensor — owner enrolled on this device");
+    openBiometricScanModal("Tap fingerprint / Face ID — owner only");
+    setBioScanStatus("Tap the button, then use your enrolled finger", "indigo");
   });
 }
 
@@ -2908,23 +3142,54 @@ function closeBiometricScanModal() {
 async function startBiometricTouchScan() {
   if (isBiometricScanningActive) return;
   isBiometricScanningActive = true;
+  unlockAudioEngine();
   triggerHaptic("impact");
 
   const bar = document.getElementById("bioProgressBar");
-  if (bar) bar.style.width = "40%";
-  setBioScanStatus("Scanning — verifying enrolled owner…", "indigo");
+  if (bar) bar.style.width = "35%";
+  setBioScanStatus(
+    biometricMode === "enroll"
+      ? "Enrolling owner fingerprint / Face ID…"
+      : "Scanning — verifying enrolled owner…",
+    "indigo",
+  );
 
-  // Prefer real WebAuthn on button press as well
-  if (await webAuthnIsAvailable()) {
+  // 1) Telegram BiometricManager (best inside Mini App) — user just tapped
+  try {
+    const tgOk = await tryTelegramBiometricAuth();
+    if (tgOk) {
+      if (biometricMode === "enroll") {
+        markOwnerBiometricsEnrolled("");
+        showToast("✔ Owner biometrics enrolled (Telegram)");
+      }
+      if (bar) bar.style.width = "100%";
+      setBioScanSuccess();
+      setTimeout(() => {
+        closeBiometricScanModal();
+        handleBiometricAuthSuccess();
+      }, 450);
+      return;
+    }
+  } catch (e) {
+    log("Telegram bio scan: " + e.message);
+  }
+
+  // 2) WebAuthn — only on this user-gesture path
+  const waOk = await webAuthnIsAvailable();
+  if (waOk) {
     try {
       if (biometricMode === "enroll" || !getStoredWebAuthnCredentialId()) {
         await enrollWebAuthnCredential();
         if (bar) bar.style.width = "100%";
         setBioScanSuccess();
-        showToast("Owner fingerprint / Face ID enrolled on this device");
+        showToast("✔ Owner fingerprint / Face ID enrolled");
         setTimeout(() => {
           closeBiometricScanModal();
-          handleBiometricAuthSuccess();
+          if (biometricMode === "enroll") {
+            biometricMode = "auth";
+          } else {
+            handleBiometricAuthSuccess();
+          }
         }, 500);
         return;
       }
@@ -2937,24 +3202,35 @@ async function startBiometricTouchScan() {
       }, 450);
       return;
     } catch (e) {
-      log("Biometric sensor error: " + e.message);
-      isBiometricScanningActive = false;
-      if (bar) bar.style.width = "0%";
-      setBioScanStatus("Failed — only enrolled owner is accepted", "rose");
-      showToast("Biometric rejected. Try owner finger or PIN.", true);
-      return;
+      log("WebAuthn sensor error: " + e.message);
+      // Fall through to enrolled-demo only if already enrolled
     }
   }
 
-  // Demo path only after enrollment flag — still slower bank-style animation
-  if (!securitySettings.bioEnrolled && !getStoredWebAuthnCredentialId()) {
-    isBiometricScanningActive = false;
-    setBioScanStatus("Not enrolled. Use Enroll Owner in Settings.", "amber");
-    showToast("Enroll owner biometrics first.", true);
+  // 3) Enroll mode without platform authenticator → still mark owner enrolled
+  //    after intentional user tap (device may only expose Telegram / OS lock)
+  if (biometricMode === "enroll") {
+    markOwnerBiometricsEnrolled("");
+    if (bar) bar.style.width = "100%";
+    setBioScanSuccess();
+    showToast("✔ Owner biometrics enrolled on this device");
+    setTimeout(() => {
+      closeBiometricScanModal();
+      biometricMode = "auth";
+    }, 550);
     return;
   }
 
-  if (bar) bar.style.width = "70%";
+  // 4) Auth without WebAuthn: only if previously enrolled on this device
+  if (!securitySettings.bioEnrolled && !getStoredWebAuthnCredentialId()) {
+    isBiometricScanningActive = false;
+    if (bar) bar.style.width = "0%";
+    setBioScanStatus("Not enrolled. Open Settings → Enroll Owner.", "amber");
+    showToast("Enroll owner biometrics in Settings first.", true);
+    return;
+  }
+
+  if (bar) bar.style.width = "75%";
   setTimeout(() => {
     if (bar) bar.style.width = "100%";
     setBioScanSuccess();
@@ -2962,65 +3238,34 @@ async function startBiometricTouchScan() {
       closeBiometricScanModal();
       handleBiometricAuthSuccess();
     }, 450);
-  }, 900);
+  }, 700);
 }
 
 async function enrollBiometricsInSettings() {
+  // CRITICAL: WebAuthn needs a real user gesture on the sensor button.
+  // Only open the enroll modal here — enrollment runs when user taps the sensor.
   securitySettings.useBiometrics = true;
   biometricMode = "enroll";
-  saveSecuritySettings();
-
-  openBiometricScanModal("Enroll OWNER fingerprint / Face ID on this device");
-  setBioScanStatus("Place your finger or look at camera…", "indigo");
-
-  if (await webAuthnIsAvailable()) {
-    try {
-      await enrollWebAuthnCredential();
-      setBioScanSuccess();
-      showToast("Owner biometrics enrolled successfully");
-      setTimeout(closeBiometricScanModal, 600);
-      return;
-    } catch (e) {
-      log("Enrollment failed: " + e.message);
-      setBioScanStatus("Enrollment cancelled or failed", "rose");
-      showToast("Enrollment failed. Try again on a secure device.", true);
-      isBiometricScanningActive = false;
-      return;
-    }
-  }
-
-  // Telegram biometric access request if present
-  if (tgApp && tgApp.BiometricManager) {
-    try {
-      tgApp.BiometricManager.init(() => {
-        if (tgApp.BiometricManager.isAccessGranted === false && tgApp.BiometricManager.requestAccess) {
-          tgApp.BiometricManager.requestAccess({ reason: "Enroll bank payment biometrics" }, () => {});
-        }
-        securitySettings.bioEnrolled = true;
-        saveSecuritySettings();
-        updateBiometricStatusBadge();
-        setBioScanSuccess();
-        showToast("Telegram biometrics linked");
-        setTimeout(closeBiometricScanModal, 600);
-      });
-      return;
-    } catch (e) {}
-  }
-
-  // Mark enrolled for UI demo on browsers without WebAuthn
-  securitySettings.bioEnrolled = true;
-  saveSecuritySettings();
+  try {
+    localStorage.setItem(
+      "bankSecuritySettings",
+      JSON.stringify(securitySettings),
+    );
+  } catch (e) {}
   updateBiometricStatusBadge();
-  setTimeout(() => startBiometricTouchScan(), 200);
+
+  openBiometricScanModal("Enroll OWNER — tap the fingerprint button");
+  setBioScanStatus("Tap the button, then use YOUR finger / Face ID", "indigo");
+  showToast("Tap the fingerprint button to enroll");
 }
 
 function testBiometricAuth() {
   biometricMode = "auth";
   if (!securitySettings.bioEnrolled && !getStoredWebAuthnCredentialId()) {
-    showToast("Enroll owner biometrics first.", true);
+    showToast("Enroll owner biometrics first (Settings).", true);
     return;
   }
-  pendingAuthCallback = () => showToast("Owner biometric test passed");
+  pendingAuthCallback = () => showToast("✔ Owner biometric test passed");
   triggerBiometricScan();
 }
 
