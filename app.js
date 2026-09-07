@@ -504,7 +504,8 @@ function clearCapturedReturnUrl() {
 let lastPaymentFlow = ""; // "qr" | "deeplink" | "billpay" | "verify" | ""
 
 /* Called from the "Done" button on the success receipt modal (Deeplink only).
-   Opens return_url in a NEW tab/browser, then closes the Telegram Mini App. */
+   Opens return_url in the CURRENT tab/webview, then closes the Telegram Mini App.
+   Does NOT open a new tab. */
 function handlePaymentDoneAction() {
   const returnUrl = getCapturedReturnUrl();
   if (!returnUrl) {
@@ -514,7 +515,7 @@ function handlePaymentDoneAction() {
     return;
   }
 
-  log("Done clicked — opening merchant return_url in new tab: " + returnUrl);
+  log("Done clicked — opening merchant return_url in current tab: " + returnUrl);
 
   let dest = returnUrl;
   try {
@@ -527,63 +528,60 @@ function handlePaymentDoneAction() {
     dest = returnUrl;
   }
 
-  navigateToReturnUrlNewTabAndClose(dest);
+  navigateToReturnUrlSameTabAndClose(dest);
 }
 
-/* Open return_url in a new tab/browser, then close Telegram Mini App. */
-function navigateToReturnUrlNewTabAndClose(dest) {
-  let opened = false;
-
-  // 1) Telegram Mini App: openLink opens external browser / new tab
-  try {
-    if (tgApp && typeof tgApp.openLink === "function") {
-      tgApp.openLink(dest, { try_instant_view: false });
-      opened = true;
-      log("Opened return_url via Telegram openLink (new tab/browser).");
-    }
-  } catch (e) {
-    log("tgApp.openLink failed: " + e.message);
-  }
-
-  // 2) Browser fallback: window.open new tab
-  if (!opened) {
-    try {
-      const w = window.open(dest, "_blank", "noopener,noreferrer");
-      if (w) {
-        opened = true;
-        log("Opened return_url via window.open(_blank).");
-      }
-    } catch (e) {
-      log("window.open failed: " + e.message);
-    }
-  }
-
-  // 3) Last resort: same-window navigation
-  if (!opened) {
-    try {
-      window.location.href = dest;
-      opened = true;
-    } catch (e) {
-      log("location.href failed: " + e.message);
-    }
-  }
-
-  // Close Telegram Mini App after handing off to the new tab
+/* Open return_url in the same tab, then close Telegram Mini App. */
+function navigateToReturnUrlSameTabAndClose(dest) {
+  // Close Mini App first so control returns to host, then navigate same webview/tab.
+  // Order: schedule close, then same-tab navigation (no _blank / no openLink).
   if (tgApp && typeof tgApp.close === "function") {
-    setTimeout(() => {
-      try {
-        tgApp.close();
-        log("Telegram Mini App closed after Done.");
-      } catch (e) {
-        log("tgApp.close failed: " + e.message);
-      }
-    }, 350);
+    try {
+      // Close slightly after navigation starts so Telegram tears down Mini App
+      setTimeout(() => {
+        try {
+          tgApp.close();
+          log("Telegram Mini App closed after Done.");
+        } catch (e) {
+          log("tgApp.close failed: " + e.message);
+        }
+      }, 120);
+    } catch (e) {
+      log("schedule tgApp.close failed: " + e.message);
+    }
   }
 
-  if (!opened) {
-    showToast("Unable to open return URL", true);
+  // Same-tab navigation only (current tab / current Mini App webview)
+  try {
+    window.location.replace(dest);
+    log("Navigated current tab to return_url via location.replace.");
+    return true;
+  } catch (e) {
+    log("location.replace failed: " + e.message);
   }
-  return opened;
+  try {
+    window.location.href = dest;
+    log("Navigated current tab to return_url via location.href.");
+    return true;
+  } catch (e) {
+    log("location.href failed: " + e.message);
+  }
+  try {
+    const a = document.createElement("a");
+    a.href = dest;
+    a.target = "_self";
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    log("Navigated current tab via anchor _self.");
+    return true;
+  } catch (e) {
+    log("anchor _self failed: " + e.message);
+  }
+
+  showToast("Unable to open return URL", true);
+  return false;
 }
 
 /* Called from the Deeplink home tile / bottom-nav tab (explicit manual
@@ -1402,21 +1400,15 @@ function evaluatePaymentMode() {
   const isDeeplink = !!workflowState.link_token;
   if (amount > 0 && workflowState.payment_token) {
     btn.disabled = false;
-    if (isDeeplink) {
-      btn.className =
-        "w-full dl-confirm-btn text-white font-bold py-4 rounded-2xl text-sm transition-all flex items-center justify-center gap-2 active:scale-[0.97]";
-      btn.innerHTML =
-        '<i class="fa-solid fa-check-circle"></i> <span id="confirmPayBtnLabel">Confirm</span>';
-    } else {
-      btn.className =
-        "w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3.5 rounded-2xl text-xs transition-all shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2";
-      btn.innerHTML =
-        '<i class="fa-solid fa-lock"></i> <span id="confirmPayBtnLabel">Pay Securely</span>';
-    }
+    btn.className =
+      "bank-btn-primary w-full py-4 text-sm flex items-center justify-center gap-2";
+    btn.innerHTML = isDeeplink
+      ? '<i class="fa-solid fa-check-circle"></i> <span id="confirmPayBtnLabel">Confirm Payment</span>'
+      : '<i class="fa-solid fa-lock"></i> <span id="confirmPayBtnLabel">Pay Securely</span>';
   } else {
     btn.disabled = true;
     btn.className =
-      "w-full bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-600 font-bold py-3.5 rounded-2xl text-sm cursor-not-allowed transition-all flex items-center justify-center gap-2";
+      "bank-btn-primary w-full py-4 text-sm flex items-center justify-center gap-2 cursor-not-allowed";
     btn.innerHTML = isDeeplink
       ? '<i class="fa-solid fa-lock"></i> <span id="confirmPayBtnLabel">Confirm</span>'
       : '<i class="fa-solid fa-lock"></i> <span id="confirmPayBtnLabel">Pay Securely</span>';
@@ -1444,11 +1436,13 @@ function evaluateBillPayMode() {
   if (amount > 0 && workflowState.payment_token) {
     btn.disabled = false;
     btn.className =
-      "w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3.5 rounded-2xl text-xs transition-all shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2";
+      "bank-btn-primary w-full py-4 text-sm flex items-center justify-center gap-2";
+    btn.innerHTML = '<i class="fa-solid fa-lock"></i> Pay Securely';
   } else {
     btn.disabled = true;
     btn.className =
-      "w-full bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-600 font-bold py-3.5 rounded-2xl text-xs cursor-not-allowed transition-all flex items-center justify-center gap-2";
+      "bank-btn-primary w-full py-4 text-sm flex items-center justify-center gap-2 cursor-not-allowed";
+    btn.innerHTML = '<i class="fa-solid fa-lock"></i> Pay Securely';
   }
 }
 
