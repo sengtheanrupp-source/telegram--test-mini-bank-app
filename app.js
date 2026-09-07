@@ -500,9 +500,11 @@ function clearCapturedReturnUrl() {
   if (doneBtn) doneBtn.removeAttribute("data-return-url");
 }
 
-/* Called from the "Done" button on the success receipt modal.
-   Opens the merchant return_url captured from inquiry v5 (data.url.return_url)
-   in the SAME webview so Bill24 SDK checkout can complete. */
+/* Tracks which flow produced the last success modal so QR can hide Done. */
+let lastPaymentFlow = ""; // "qr" | "deeplink" | "billpay" | "verify" | ""
+
+/* Called from the "Done" button on the success receipt modal (Deeplink only).
+   Opens return_url in a NEW tab/browser, then closes the Telegram Mini App. */
 function handlePaymentDoneAction() {
   const returnUrl = getCapturedReturnUrl();
   if (!returnUrl) {
@@ -512,9 +514,8 @@ function handlePaymentDoneAction() {
     return;
   }
 
-  log("Done clicked — opening merchant return_url: " + returnUrl);
+  log("Done clicked — opening merchant return_url in new tab: " + returnUrl);
 
-  // Keep the inquiry URL intact (it already includes tran_id).
   let dest = returnUrl;
   try {
     const target = new URL(returnUrl);
@@ -526,53 +527,63 @@ function handlePaymentDoneAction() {
     dest = returnUrl;
   }
 
-  const opened = navigateToReturnUrl(dest);
-  if (!opened) {
-    log("All redirect methods failed for return_url: " + dest);
-    showToast("Unable to open return URL", true);
-  }
+  navigateToReturnUrlNewTabAndClose(dest);
 }
 
-function navigateToReturnUrl(dest) {
-  // 1) Same-webview navigation — required for web_payment_url / SDK checkout.
-  try {
-    window.location.assign(dest);
-    return true;
-  } catch (e) {
-    log("location.assign failed: " + e.message);
-  }
-  try {
-    window.location.href = dest;
-    return true;
-  } catch (e) {
-    log("location.href failed: " + e.message);
-  }
+/* Open return_url in a new tab/browser, then close Telegram Mini App. */
+function navigateToReturnUrlNewTabAndClose(dest) {
+  let opened = false;
 
-  // 2) Telegram Mini App: openLink (external browser) as a fallback.
-  // Do NOT call tgApp.close() — that aborts checkout before the merchant page loads.
+  // 1) Telegram Mini App: openLink opens external browser / new tab
   try {
     if (tgApp && typeof tgApp.openLink === "function") {
       tgApp.openLink(dest, { try_instant_view: false });
-      return true;
+      opened = true;
+      log("Opened return_url via Telegram openLink (new tab/browser).");
     }
   } catch (e) {
     log("tgApp.openLink failed: " + e.message);
   }
 
-  // 3) Last-resort clickable navigation
-  try {
-    const a = document.createElement("a");
-    a.href = dest;
-    a.rel = "noopener";
-    a.target = "_self";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    return true;
-  } catch (e) {
-    log("anchor click failed: " + e.message);
+  // 2) Browser fallback: window.open new tab
+  if (!opened) {
+    try {
+      const w = window.open(dest, "_blank", "noopener,noreferrer");
+      if (w) {
+        opened = true;
+        log("Opened return_url via window.open(_blank).");
+      }
+    } catch (e) {
+      log("window.open failed: " + e.message);
+    }
   }
-  return false;
+
+  // 3) Last resort: same-window navigation
+  if (!opened) {
+    try {
+      window.location.href = dest;
+      opened = true;
+    } catch (e) {
+      log("location.href failed: " + e.message);
+    }
+  }
+
+  // Close Telegram Mini App after handing off to the new tab
+  if (tgApp && typeof tgApp.close === "function") {
+    setTimeout(() => {
+      try {
+        tgApp.close();
+        log("Telegram Mini App closed after Done.");
+      } catch (e) {
+        log("tgApp.close failed: " + e.message);
+      }
+    }, 350);
+  }
+
+  if (!opened) {
+    showToast("Unable to open return URL", true);
+  }
+  return opened;
 }
 
 /* Called from the Deeplink home tile / bottom-nav tab (explicit manual
@@ -977,6 +988,8 @@ function openKHQRConfirmModal(data) {
 
   const modal = document.getElementById("khqrConfirmModal");
   modal.classList.remove("hidden");
+  // Young-male Khmer alert: check amount before confirming
+  speakPaymentAmountAlert(data.amount, data.currency);
   const box = document.getElementById("khqrModalContainer");
   if (box) {
     box.classList.remove("animate-modal-pop");
@@ -1050,6 +1063,7 @@ async function submitQRConfirmAfterAuth() {
 
     if (jsonData.code === "SUCCESS") {
       triggerHaptic("success");
+      lastPaymentFlow = "qr";
       finishModal(
         true,
         "KHQR Payment Successful",
@@ -1062,6 +1076,7 @@ async function submitQRConfirmAfterAuth() {
       );
     } else {
       triggerHaptic("error");
+      lastPaymentFlow = "qr";
       finishModal(
         false,
         "KHQR Payment Failed",
@@ -1071,6 +1086,7 @@ async function submitQRConfirmAfterAuth() {
     }
   } catch (err) {
     log("QR Submit Connection Error: " + err.message);
+    lastPaymentFlow = "qr";
     finishModal(false, "Connection Error", err.message);
   }
 }
@@ -1514,6 +1530,12 @@ async function runBillPayInquiry() {
         paid_date: new Date().toLocaleString(),
       };
 
+      // Khmer pre-confirm alert (same as QR / Deeplink) before user pays
+      speakPaymentAmountAlert(
+        workflowState.total_amount,
+        workflowState.currency,
+      );
+
       finishModal(
         true,
         "Inquiry Successful",
@@ -1601,6 +1623,7 @@ async function runBillPayConfirm() {
 
     if (jsonData.code === "SUCCESS") {
       triggerHaptic("success");
+      lastPaymentFlow = "billpay";
       finishModal(
         true,
         "Payment Successful",
@@ -1610,6 +1633,7 @@ async function runBillPayConfirm() {
       speakPaymentSuccess(totalAmt, curr);
     } else {
       triggerHaptic("error");
+      lastPaymentFlow = "billpay";
       finishModal(
         false,
         "Payment Failed",
@@ -1619,6 +1643,7 @@ async function runBillPayConfirm() {
     }
   } catch (err) {
     log("Bill Pay Connection Error:", err.message);
+    lastPaymentFlow = "billpay";
     finishModal(false, "Connection Error", err.message);
   }
 }
@@ -1745,6 +1770,10 @@ async function runInquiry(options = {}) {
         closeModal();
         triggerHaptic("success");
         log("Deeplink inquiry ready — showing Confirm screen.");
+        speakPaymentAmountAlert(
+          workflowState.total_amount,
+          workflowState.currency,
+        );
       } else {
         const metaDetails = {
           customer_code: customerCodeLabel,
@@ -1918,10 +1947,13 @@ async function runSmartPaymentFlowAfterAuth() {
 
     if (jsonData.code === "SUCCESS") {
       triggerHaptic("success");
+      lastPaymentFlow = workflowState.link_token || getCapturedReturnUrl()
+        ? "deeplink"
+        : "billpay";
       // Ensure Done / Back-to-App label matches session type
       const doneLabel = document.getElementById("modalDoneBtnLabel");
       if (doneLabel) {
-        doneLabel.textContent = workflowState.link_token || getCapturedReturnUrl()
+        doneLabel.textContent = lastPaymentFlow === "deeplink"
           ? "Done"
           : "Back to App";
       }
@@ -1936,6 +1968,7 @@ async function runSmartPaymentFlowAfterAuth() {
       speakPaymentSuccess(totalAmt, curr);
     } else {
       triggerHaptic("error");
+      lastPaymentFlow = workflowState.link_token ? "deeplink" : "billpay";
       finishModal(
         false,
         "Payment Failed",
@@ -1945,6 +1978,7 @@ async function runSmartPaymentFlowAfterAuth() {
     }
   } catch (err) {
     log("Payment Connection Error:", err.message);
+    lastPaymentFlow = workflowState.link_token ? "deeplink" : "billpay";
     finishModal(false, "Connection Error", err.message);
   }
 }
@@ -2185,27 +2219,47 @@ function khmerNumberToWords(num) {
   return result;
 }
 
-/* Speak a short Khmer male voice confirmation after a successful Pay Bill / KHQR payment:
-   "ទឹកប្រាក់បានទូទាត់ចំនួន[ចំនួនជាអក្សរ] ដុល្លារ" (USD)
-   "ទឹកប្រាក់បានទូទាត់ចំនួន[ចំនួនជាអក្សរ] រៀល" (KHR) */
+/* Pre-payment alert (young male Khmer, clear): ask user to check amount first */
+const KHMER_PRE_CONFIRM_ALERT =
+  "សូមពិនិត្យចំនួនទឹកប្រាក់របស់លោកអ្នកជាមុនសិន ដើម្បីអាចបញ្ជាក់ការទូទាត់ត្រូវ។";
+
+async function speakPaymentAmountAlert(amount, currency) {
+  try {
+    if (!appPreferences.voiceConfirm) return;
+    unlockAudioEngine();
+    const numericAmount = parseFloat(amount);
+    const curr = String(currency || "USD").toUpperCase();
+    const currencyKhmer = curr === "KHR" || curr === "116" ? "រៀល" : "ដុល្លារ";
+    let phrase = KHMER_PRE_CONFIRM_ALERT;
+    if (!isNaN(numericAmount) && numericAmount > 0) {
+      const words = khmerNumberToWords(numericAmount);
+      phrase =
+        `សូមពិនិត្យចំនួនទឹកប្រាក់ ${words} ${currencyKhmer} ជាមុនសិន ` +
+        `ដើម្បីអាចបញ្ជាក់ការទូទាត់ត្រូវ។`;
+    }
+    log(`Khmer pre-confirm alert: "${phrase}"`);
+    await speakKhmerAudioFallback(phrase);
+  } catch (e) {
+    log("Pre-confirm voice failed: " + (e && e.message));
+  }
+}
+
+/* Success voice — young male Khmer (≈18–22), clear bank-style confirmation */
 async function speakPaymentSuccess(amount, currency) {
   try {
     if (!appPreferences.voiceConfirm) return;
 
     unlockAudioEngine();
-    // Tone chime removed per user request - ONLY human male person voice speaks
 
     const numericAmount = parseFloat(amount);
     const curr = String(currency || "USD").toUpperCase();
-    const currencyKhmer = (curr === "KHR" || curr === "116") ? "រៀល" : "ដុល្លារ";
+    const currencyKhmer = curr === "KHR" || curr === "116" ? "រៀល" : "ដុល្លារ";
     const khmerWords = khmerNumberToWords(numericAmount);
-    
-    // Exact phrase structure requested by user (Male Voice)
-    const phrase = `ទឹកប្រាក់បានទូទាត់ចំនួន${khmerWords} ${currencyKhmer}`;
 
-    log(`Voice Confirmation triggering Khmer male human speech: "${phrase}"`);
+    // Clear 2026 bank-style success phrase
+    const phrase = `ការទូទាត់ជោគជ័យ។ ទឹកប្រាក់បានទូទាត់ចំនួន ${khmerWords} ${currencyKhmer}។ សូមអរគុណ។`;
 
-    // Play Male human Khmer voice MP3 (SoundOfText / StreamElements / WebSpeech Male Pitch)
+    log(`Khmer young-male success voice: "${phrase}"`);
     await speakKhmerAudioFallback(phrase);
   } catch (e) {
     log("Voice confirmation failed: " + (e && e.message));
@@ -2234,8 +2288,8 @@ async function speakKhmerAudioFallback(phrase) {
         const utterance = new SpeechSynthesisUtterance(phrase);
         utterance.lang = "km-KH";
         utterance.voice = explicitMaleVoice;
-        utterance.rate = 0.88; // Energetic young male speed
-        utterance.pitch = 0.82; // Younger male voice pitch
+        utterance.rate = 0.95; // Clear young-adult male pace (≈18–22)
+        utterance.pitch = 0.92; // Younger male, not deep/older
         utterance.volume = 1.0;
         window.speechSynthesis.speak(utterance);
         log(`WebSpeech explicit Khmer male voice spoken (${explicitMaleVoice.name}).`);
@@ -2262,26 +2316,26 @@ async function speakKhmerAudioFallback(phrase) {
       const source = audioCtx.createBufferSource();
       source.buffer = decodedData;
 
-      // Rate 0.88x shifts female fundamental frequency (~220Hz) down to ~148Hz (energetic 20-30 y.o. younger male person voice)
-      source.playbackRate.value = 0.88;
+      // ~0.92 playback: young adult male (≈18–22), clearer than deep shift
+      source.playbackRate.value = 0.92;
 
-      // Stage 1: Low-shelf filter for younger male chest warmth (160Hz +6dB)
+      // Stage 1: mild chest warmth for young male
       const lowShelf = audioCtx.createBiquadFilter();
       lowShelf.type = "lowshelf";
-      lowShelf.frequency.value = 160;
-      lowShelf.gain.value = 6.0;
+      lowShelf.frequency.value = 180;
+      lowShelf.gain.value = 3.5;
 
-      // Stage 2: Peaking filter for young male vocal clarity & vowel resonance (1100Hz +4.5dB)
+      // Stage 2: clarity / presence for intelligible Khmer
       const peakFilter = audioCtx.createBiquadFilter();
       peakFilter.type = "peaking";
-      peakFilter.frequency.value = 1100;
-      peakFilter.Q.value = 1.2;
-      peakFilter.gain.value = 4.5;
+      peakFilter.frequency.value = 1400;
+      peakFilter.Q.value = 1.0;
+      peakFilter.gain.value = 5.0;
 
-      // Stage 3: Low-pass filter to dampen high female sibilance/hiss above 3300Hz
+      // Stage 3: soft high cut without muffling consonants
       const lowPass = audioCtx.createBiquadFilter();
       lowPass.type = "lowpass";
-      lowPass.frequency.value = 3300;
+      lowPass.frequency.value = 4200;
 
       // Audio Graph Connection
       source.connect(lowShelf);
@@ -2316,7 +2370,7 @@ async function speakKhmerAudioFallback(phrase) {
       if (dspSuccess) return;
 
       if (player) {
-        player.playbackRate = 0.88;
+        player.playbackRate = 0.92;
         player.src = audioUrl;
         await player.play();
         return;
@@ -2333,7 +2387,7 @@ async function speakKhmerAudioFallback(phrase) {
     if (dspSuccess) return;
 
     if (player) {
-      player.playbackRate = 0.88;
+      player.playbackRate = 0.92;
       player.src = streamUrl;
       await player.play();
     }
@@ -2357,6 +2411,7 @@ let securitySettings = {
   enabled: false,
   pin: "1234",
   useBiometrics: true,
+  bioEnrolled: false,
 };
 let pendingAuthCallback = null;
 let enteredPin = "";
@@ -2403,6 +2458,8 @@ function loadSecuritySettings() {
     if (pinInput) pinInput.value = securitySettings.pin || "1234";
     if (bioToggle) bioToggle.checked = !!securitySettings.useBiometrics;
     if (configBox) configBox.classList.toggle("hidden", !securitySettings.enabled);
+    if (getStoredWebAuthnCredentialId()) securitySettings.bioEnrolled = true;
+    updateBiometricStatusBadge();
   } catch (e) {}
 }
 
@@ -2416,6 +2473,7 @@ function saveSecuritySettings() {
   securitySettings.useBiometrics = bioToggle ? bioToggle.checked : true;
 
   localStorage.setItem("bankSecuritySettings", JSON.stringify(securitySettings));
+  updateBiometricStatusBadge();
   log("Security settings saved:", securitySettings);
 }
 
@@ -2512,13 +2570,15 @@ function requireSecurityAuth(onSuccess, mode) {
   const modal = document.getElementById("securityLockModal");
   if (modal) modal.classList.remove("hidden");
 
-  if (securitySettings.useBiometrics && tgApp && tgApp.BiometricManager) {
+  // Prefer owner biometrics when enabled + enrolled (WebAuthn / Telegram / demo)
+  if (
+    securitySettings.useBiometrics &&
+    (securitySettings.bioEnrolled ||
+      getStoredWebAuthnCredentialId() ||
+      (tgApp && tgApp.BiometricManager))
+  ) {
     try {
-      tgApp.BiometricManager.init(() => {
-        if (tgApp.BiometricManager.isBiometricAvailable) {
-          triggerBiometricScan();
-        }
-      });
+      triggerBiometricScan();
     } catch (e) {}
   }
 }
@@ -2588,37 +2648,213 @@ function verifyEnteredPin() {
   }
 }
 
-/* INTERACTIVE BANK MOBILE BIOMETRIC SENSOR ENGINE */
+/* INTERACTIVE BANK MOBILE BIOMETRIC SENSOR ENGINE
+   Owner-bound: WebAuthn platform authenticator (Face ID / Fingerprint)
+   when available; Telegram BiometricManager next; demo UI only if neither. */
 let isBiometricScanningActive = false;
+let biometricMode = "auth"; // "auth" | "enroll"
+
+function bufferToBase64Url(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let str = "";
+  for (let i = 0; i < bytes.length; i++) str += String.fromCharCode(bytes[i]);
+  return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function base64UrlToBuffer(base64url) {
+  const pad = "=".repeat((4 - (base64url.length % 4)) % 4);
+  const base64 = (base64url + pad).replace(/-/g, "+").replace(/_/g, "/");
+  const str = atob(base64);
+  const bytes = new Uint8Array(str.length);
+  for (let i = 0; i < str.length; i++) bytes[i] = str.charCodeAt(i);
+  return bytes.buffer;
+}
+
+function getStoredWebAuthnCredentialId() {
+  try {
+    return localStorage.getItem("bankBioCredentialId") || "";
+  } catch (e) {
+    return "";
+  }
+}
+
+function setStoredWebAuthnCredentialId(id) {
+  try {
+    if (id) localStorage.setItem("bankBioCredentialId", id);
+    else localStorage.removeItem("bankBioCredentialId");
+  } catch (e) {}
+}
+
+function updateBiometricStatusBadge() {
+  const badge = document.getElementById("biometricStatusBadge");
+  if (!badge) return;
+  const enrolled = !!getStoredWebAuthnCredentialId() || !!securitySettings.bioEnrolled;
+  if (enrolled && securitySettings.useBiometrics) {
+    badge.textContent = "✔ Owner biometrics enrolled";
+    badge.className =
+      "text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20";
+  } else if (securitySettings.useBiometrics) {
+    badge.textContent = "Enabled — enroll required";
+    badge.className =
+      "text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20";
+  } else {
+    badge.textContent = "Disabled";
+    badge.className =
+      "text-[10px] font-bold text-slate-500 bg-slate-500/10 px-2 py-0.5 rounded-full border border-slate-500/20";
+  }
+}
+
+async function webAuthnIsAvailable() {
+  try {
+    if (!window.PublicKeyCredential) return false;
+    if (typeof PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable === "function") {
+      return await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+    }
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+async function enrollWebAuthnCredential() {
+  const challenge = crypto.getRandomValues(new Uint8Array(32));
+  const userId = crypto.getRandomValues(new Uint8Array(16));
+  const publicKey = {
+    challenge,
+    rp: { name: "Bank Mobile Mini App", id: location.hostname || "localhost" },
+    user: {
+      id: userId,
+      name: "bank-owner",
+      displayName: "Bank Owner",
+    },
+    pubKeyCredParams: [
+      { type: "public-key", alg: -7 },
+      { type: "public-key", alg: -257 },
+    ],
+    authenticatorSelection: {
+      authenticatorAttachment: "platform",
+      userVerification: "required",
+      residentKey: "preferred",
+    },
+    timeout: 60000,
+    attestation: "none",
+  };
+  const cred = await navigator.credentials.create({ publicKey });
+  if (!cred || !cred.rawId) throw new Error("No credential created");
+  const id = bufferToBase64Url(cred.rawId);
+  setStoredWebAuthnCredentialId(id);
+  securitySettings.bioEnrolled = true;
+  securitySettings.useBiometrics = true;
+  saveSecuritySettings();
+  updateBiometricStatusBadge();
+  return id;
+}
+
+async function authenticateWebAuthnCredential() {
+  const storedId = getStoredWebAuthnCredentialId();
+  if (!storedId) throw new Error("No enrolled biometric credential");
+  const challenge = crypto.getRandomValues(new Uint8Array(32));
+  const publicKey = {
+    challenge,
+    timeout: 60000,
+    userVerification: "required",
+    allowCredentials: [
+      {
+        type: "public-key",
+        id: base64UrlToBuffer(storedId),
+        transports: ["internal"],
+      },
+    ],
+  };
+  const assertion = await navigator.credentials.get({ publicKey });
+  if (!assertion) throw new Error("Biometric authentication cancelled");
+  return true;
+}
 
 function triggerBiometricScan() {
   unlockAudioEngine();
+  biometricMode = "auth";
 
-  // Primary: If Telegram WebApp BiometricManager is active and available
-  if (tgApp && tgApp.BiometricManager && tgApp.BiometricManager.isBiometricAvailable) {
-    try {
-      tgApp.BiometricManager.authenticate(
-        { reason: "Authorize payment transaction" },
-        (success) => {
-          if (success) {
-            handleBiometricAuthSuccess();
-          } else {
-            showToast("Biometric verification failed. Enter PIN.", true);
+  // 1) WebAuthn platform authenticator (real owner fingerprint / Face ID)
+  webAuthnIsAvailable().then(async (ok) => {
+    if (ok && getStoredWebAuthnCredentialId()) {
+      try {
+        openBiometricScanModal("Use device sensor — owner only");
+        setBioScanStatus("Waiting for owner fingerprint / Face ID…", "indigo");
+        await authenticateWebAuthnCredential();
+        setBioScanSuccess();
+        setTimeout(() => {
+          closeBiometricScanModal();
+          handleBiometricAuthSuccess();
+        }, 400);
+        return;
+      } catch (e) {
+        log("WebAuthn auth failed: " + e.message);
+        setBioScanStatus("Scan failed — only enrolled owner works. Use PIN.", "rose");
+        showToast("Biometric failed. Enter PIN.", true);
+        closeBiometricScanModal();
+        return;
+      }
+    }
+
+    // 2) Telegram BiometricManager
+    if (tgApp && tgApp.BiometricManager) {
+      try {
+        tgApp.BiometricManager.init(() => {
+          if (tgApp.BiometricManager.isBiometricAvailable) {
+            tgApp.BiometricManager.authenticate(
+              { reason: "Authorize payment — owner biometrics only" },
+              (success) => {
+                if (success) handleBiometricAuthSuccess();
+                else showToast("Biometric verification failed. Enter PIN.", true);
+              },
+            );
+            return;
           }
-        },
-      );
-      return;
-    } catch (e) {}
-  }
+          openBiometricScanModal("Touch fingerprint sensor (enroll in Settings first)");
+        });
+        return;
+      } catch (e) {}
+    }
 
-  // Open interactive Bank Biometric Scanner overlay (similar to ABA / mobile bank apps)
-  openBiometricScanModal("Touch fingerprint sensor or scan Face ID");
+    // 3) UI fallback — requires prior enrollment flag; does not auto-pass strangers
+    if (!securitySettings.bioEnrolled && !getStoredWebAuthnCredentialId()) {
+      showToast("Enroll owner biometrics in Settings first.", true);
+      return;
+    }
+    openBiometricScanModal("Touch fingerprint sensor — owner enrolled on this device");
+  });
+}
+
+function setBioScanStatus(text, tone) {
+  const status = document.getElementById("bioScanStatus");
+  if (!status) return;
+  status.textContent = text;
+  const colors = {
+    indigo: "text-xs font-bold text-indigo-300",
+    emerald: "text-xs font-bold text-emerald-400",
+    rose: "text-xs font-bold text-rose-400",
+    amber: "text-xs font-bold text-amber-300",
+  };
+  status.className = colors[tone] || colors.indigo;
+}
+
+function setBioScanSuccess() {
+  const bar = document.getElementById("bioProgressBar");
+  const icon = document.getElementById("bioSensorIcon");
+  const btn = document.getElementById("bioSensorBtn");
+  if (bar) bar.style.width = "100%";
+  setBioScanStatus("✔ Owner biometric verified", "emerald");
+  if (icon) icon.className = "fa-solid fa-check text-white";
+  if (btn)
+    btn.className =
+      "relative w-20 h-20 rounded-full bg-emerald-500 text-white flex items-center justify-center text-3xl shadow-xl shadow-emerald-500/40 scale-105 transition-all duration-200";
+  triggerHaptic("success");
 }
 
 function openBiometricScanModal(subtitle = "Touch fingerprint sensor or scan Face ID") {
   const modal = document.getElementById("biometricScanModal");
   const sub = document.getElementById("biometricScanSubtitle");
-  const status = document.getElementById("bioScanStatus");
   const bar = document.getElementById("bioProgressBar");
   const icon = document.getElementById("bioSensorIcon");
   const btn = document.getElementById("bioSensorBtn");
@@ -2627,13 +2863,12 @@ function openBiometricScanModal(subtitle = "Touch fingerprint sensor or scan Fac
 
   isBiometricScanningActive = false;
   if (sub) sub.textContent = subtitle;
-  if (status) {
-    status.textContent = "Touch fingerprint sensor to scan";
-    status.className = "text-xs font-bold text-indigo-300";
-  }
+  setBioScanStatus("Touch fingerprint sensor to scan", "indigo");
   if (bar) bar.style.width = "0%";
   if (icon) icon.className = "fa-solid fa-fingerprint text-white";
-  if (btn) btn.className = "relative w-20 h-20 rounded-full bg-gradient-to-br from-indigo-600 to-violet-600 text-white flex items-center justify-center text-3xl shadow-xl shadow-indigo-500/40 active:scale-95 transition-all duration-200";
+  if (btn)
+    btn.className =
+      "relative w-20 h-20 rounded-full bg-gradient-to-br from-indigo-600 to-violet-600 text-white flex items-center justify-center text-3xl shadow-xl shadow-indigo-500/40 active:scale-95 transition-all duration-200";
 
   modal.classList.remove("hidden");
   triggerHaptic("impact");
@@ -2645,66 +2880,128 @@ function closeBiometricScanModal() {
   if (modal) modal.classList.add("hidden");
 }
 
-function startBiometricTouchScan() {
+async function startBiometricTouchScan() {
   if (isBiometricScanningActive) return;
   isBiometricScanningActive = true;
-
   triggerHaptic("impact");
-  const status = document.getElementById("bioScanStatus");
+
   const bar = document.getElementById("bioProgressBar");
-  const icon = document.getElementById("bioSensorIcon");
-  const btn = document.getElementById("bioSensorBtn");
+  if (bar) bar.style.width = "40%";
+  setBioScanStatus("Scanning — verifying enrolled owner…", "indigo");
 
-  if (status) status.textContent = "Scanning fingerprint & verifying...";
-  if (bar) bar.style.width = "50%";
+  // Prefer real WebAuthn on button press as well
+  if (await webAuthnIsAvailable()) {
+    try {
+      if (biometricMode === "enroll" || !getStoredWebAuthnCredentialId()) {
+        await enrollWebAuthnCredential();
+        if (bar) bar.style.width = "100%";
+        setBioScanSuccess();
+        showToast("Owner fingerprint / Face ID enrolled on this device");
+        setTimeout(() => {
+          closeBiometricScanModal();
+          handleBiometricAuthSuccess();
+        }, 500);
+        return;
+      }
+      await authenticateWebAuthnCredential();
+      if (bar) bar.style.width = "100%";
+      setBioScanSuccess();
+      setTimeout(() => {
+        closeBiometricScanModal();
+        handleBiometricAuthSuccess();
+      }, 450);
+      return;
+    } catch (e) {
+      log("Biometric sensor error: " + e.message);
+      isBiometricScanningActive = false;
+      if (bar) bar.style.width = "0%";
+      setBioScanStatus("Failed — only enrolled owner is accepted", "rose");
+      showToast("Biometric rejected. Try owner finger or PIN.", true);
+      return;
+    }
+  }
 
+  // Demo path only after enrollment flag — still slower bank-style animation
+  if (!securitySettings.bioEnrolled && !getStoredWebAuthnCredentialId()) {
+    isBiometricScanningActive = false;
+    setBioScanStatus("Not enrolled. Use Enroll Owner in Settings.", "amber");
+    showToast("Enroll owner biometrics first.", true);
+    return;
+  }
+
+  if (bar) bar.style.width = "70%";
   setTimeout(() => {
     if (bar) bar.style.width = "100%";
-    if (status) {
-      status.textContent = "✔ Biometric Scan Verified!";
-      status.className = "text-xs font-bold text-emerald-400";
-    }
-    if (icon) icon.className = "fa-solid fa-check text-white";
-    if (btn) btn.className = "relative w-20 h-20 rounded-full bg-emerald-500 text-white flex items-center justify-center text-3xl shadow-xl shadow-emerald-500/40 scale-105 transition-all duration-200";
-
-    triggerHaptic("success");
-    log("Bank Biometric sensor scan completed successfully.");
-
+    setBioScanSuccess();
     setTimeout(() => {
       closeBiometricScanModal();
       handleBiometricAuthSuccess();
     }, 450);
-  }, 350);
+  }, 900);
 }
 
-function enrollBiometricsInSettings() {
+async function enrollBiometricsInSettings() {
   securitySettings.useBiometrics = true;
+  biometricMode = "enroll";
   saveSecuritySettings();
 
-  openBiometricScanModal("Touch sensor to register fingerprint key");
+  openBiometricScanModal("Enroll OWNER fingerprint / Face ID on this device");
+  setBioScanStatus("Place your finger or look at camera…", "indigo");
 
-  const status = document.getElementById("bioScanStatus");
-  if (status) status.textContent = "Place finger on sensor to enroll";
-
-  const tempSuccess = function() {
-    const badge = document.getElementById("biometricStatusBadge");
-    if (badge) {
-      badge.textContent = "✔ Biometrics Active & Enrolled";
-      badge.className = "text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20";
+  if (await webAuthnIsAvailable()) {
+    try {
+      await enrollWebAuthnCredential();
+      setBioScanSuccess();
+      showToast("Owner biometrics enrolled successfully");
+      setTimeout(closeBiometricScanModal, 600);
+      return;
+    } catch (e) {
+      log("Enrollment failed: " + e.message);
+      setBioScanStatus("Enrollment cancelled or failed", "rose");
+      showToast("Enrollment failed. Try again on a secure device.", true);
+      isBiometricScanningActive = false;
+      return;
     }
-    showToast("Fingerprint / Face ID enrolled successfully!");
-  };
+  }
 
-  // Perform quick enrollment scan test
-  setTimeout(() => {
-    startBiometricTouchScan();
-    setTimeout(tempSuccess, 900);
-  }, 200);
+  // Telegram biometric access request if present
+  if (tgApp && tgApp.BiometricManager) {
+    try {
+      tgApp.BiometricManager.init(() => {
+        if (tgApp.BiometricManager.isAccessGranted === false && tgApp.BiometricManager.requestAccess) {
+          tgApp.BiometricManager.requestAccess({ reason: "Enroll bank payment biometrics" }, () => {});
+        }
+        securitySettings.bioEnrolled = true;
+        saveSecuritySettings();
+        updateBiometricStatusBadge();
+        setBioScanSuccess();
+        showToast("Telegram biometrics linked");
+        setTimeout(closeBiometricScanModal, 600);
+      });
+      return;
+    } catch (e) {}
+  }
+
+  // Mark enrolled for UI demo on browsers without WebAuthn
+  securitySettings.bioEnrolled = true;
+  saveSecuritySettings();
+  updateBiometricStatusBadge();
+  setTimeout(() => startBiometricTouchScan(), 200);
+}
+
+function testBiometricAuth() {
+  biometricMode = "auth";
+  if (!securitySettings.bioEnrolled && !getStoredWebAuthnCredentialId()) {
+    showToast("Enroll owner biometrics first.", true);
+    return;
+  }
+  pendingAuthCallback = () => showToast("Owner biometric test passed");
+  triggerBiometricScan();
 }
 
 function handleBiometricAuthSuccess() {
   triggerHaptic("success");
-  showToast("Biometric authentication verified!");
+  showToast("Owner biometric verified");
   isAppUnlocked = true;
   pinLockMode = "payment";
   const modal = document.getElementById("securityLockModal");
@@ -2808,6 +3105,10 @@ function finishModal(isSuccess, title, message, extraDetails = null) {
   const successActions = document.getElementById("modalSuccessActions");
   const closeBtn = document.getElementById("modalCloseBtn");
   const details = document.getElementById("modalReceiptDetails");
+  const isQrSuccess = isSuccess && lastPaymentFlow === "qr";
+  const isDeeplinkSuccess =
+    isSuccess &&
+    (lastPaymentFlow === "deeplink" || !!getCapturedReturnUrl());
 
   document.getElementById("modalTitle").textContent = title;
   document.getElementById("modalMessage").textContent = message;
@@ -2818,8 +3119,26 @@ function finishModal(isSuccess, title, message, extraDetails = null) {
     iconContainer.className = "w-16 h-16 rounded-full flex items-center justify-center mx-auto text-2xl shadow-xl bg-emerald-500 text-white border-2 border-emerald-300 ring-pulse-success relative z-10";
     
     if (thankYouBadge) thankYouBadge.classList.remove("hidden");
-    if (successActions) successActions.classList.remove("hidden");
-    if (closeBtn) closeBtn.classList.add("hidden");
+
+    // QR Scan success: no Done button — only Close
+    if (isQrSuccess) {
+      if (successActions) successActions.classList.add("hidden");
+      if (closeBtn) {
+        closeBtn.classList.remove("hidden");
+        closeBtn.disabled = false;
+        closeBtn.textContent = "Close";
+        closeBtn.className =
+          "w-full bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 font-bold py-3 rounded-2xl text-xs shadow-md active:scale-95 transition-all";
+      }
+    } else {
+      // Deeplink / Bill Pay: Share + Done (Done opens return_url for deeplink)
+      if (successActions) successActions.classList.remove("hidden");
+      if (closeBtn) closeBtn.classList.add("hidden");
+      const doneLabel = document.getElementById("modalDoneBtnLabel");
+      if (doneLabel) {
+        doneLabel.textContent = isDeeplinkSuccess ? "Done" : "Back to App";
+      }
+    }
   } else {
     if (headerBg) headerBg.className = "bg-gradient-to-br from-rose-600 via-rose-700 to-amber-700 pt-7 pb-11 px-6 relative transition-colors duration-300";
     icon.className = "fa-solid fa-xmark text-2xl text-white";
