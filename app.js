@@ -1005,8 +1005,7 @@ function closeKHQRModal() {
 }
 
 async function submitQRConfirm() {
-  // If security is ON: unlock first, then Khmer alert, then pay.
-  // If security is OFF: pre-alert already played on modal open — just pay.
+  unlockAudioEngine();
   const amount =
     parseFloat(document.getElementById("qrAmount")?.value) ||
     parseFloat(
@@ -1019,9 +1018,8 @@ async function submitQRConfirm() {
   const currency =
     (document.getElementById("qrCurrency")?.value || "USD").trim() || "USD";
   requireSecurityAuth(() => {
-    if (securitySettings && securitySettings.enabled) {
-      speakPaymentAmountAlert(amount, currency);
-    }
+    // Always speak on Confirm (user gesture) — reliable for mobile / web
+    speakPaymentAmountAlert(amount, currency, true);
     submitQRConfirmAfterAuth();
   });
 }
@@ -1089,6 +1087,7 @@ async function submitQRConfirmAfterAuth() {
       speakPaymentSuccess(
         data.total_amount !== undefined ? data.total_amount : payload.amount,
         data.currency || payload.currency,
+        true,
       );
     } else {
       triggerHaptic("error");
@@ -1572,16 +1571,15 @@ async function runBillPayInquiry() {
 }
 
 async function runBillPaySmartFlow() {
-  // If security ON: unlock → alert → pay. If OFF: alert already on inquiry.
+  unlockAudioEngine();
   requireSecurityAuth(() => {
-    if (securitySettings && securitySettings.enabled) {
-      speakPaymentAmountAlert(
-        workflowState.total_amount ||
-          parseFloat(document.getElementById("bpPaymentAmount")?.value) ||
-          0,
-        workflowState.currency || "USD",
-      );
-    }
+    speakPaymentAmountAlert(
+      workflowState.total_amount ||
+        parseFloat(document.getElementById("bpPaymentAmount")?.value) ||
+        0,
+      workflowState.currency || "USD",
+      true,
+    );
     runBillPayConfirm();
   });
 }
@@ -1651,7 +1649,7 @@ async function runBillPayConfirm() {
         jsonData.message || `Transaction ${autoRef} completed.`,
         metaDetails,
       );
-      speakPaymentSuccess(totalAmt, curr);
+      speakPaymentSuccess(totalAmt, curr, true);
     } else {
       triggerHaptic("error");
       lastPaymentFlow = "billpay";
@@ -1791,13 +1789,8 @@ async function runInquiry(options = {}) {
         closeModal();
         triggerHaptic("success");
         log("Deeplink inquiry ready — showing Confirm screen.");
-        // Speak now if lock is off; otherwise after unlock on Confirm
-        if (!securitySettings || !securitySettings.enabled) {
-          speakPaymentAmountAlert(
-            workflowState.total_amount,
-            workflowState.currency,
-          );
-        }
+        // Do NOT speak here — browsers block autoplay without user gesture.
+        // Khmer voice plays on Confirm click (web payment URL + Mini App).
       } else {
         const metaDetails = {
           customer_code: customerCodeLabel,
@@ -1883,24 +1876,26 @@ function populateDeeplinkConfirmCard(customerCodeLabel) {
 }
 
 async function runSmartPaymentFlow() {
+  // Critical for web payment URL: unlock audio on the same user gesture as Confirm
+  unlockAudioEngine();
   const accountNo = (document.getElementById("payerAccountNo")?.value || "").trim();
   if (!accountNo) {
     showToast("Enter the payer's Account Number to continue.", true);
     document.getElementById("payerAccountNo")?.focus();
     return;
   }
-  // If security ON: unlock → alert → pay. If OFF: alert already on inquiry.
+  // Always speak on Confirm (user gesture) so web payment URL can play sound
   requireSecurityAuth(() => {
-    if (securitySettings && securitySettings.enabled) {
-      speakPaymentAmountAlert(
-        workflowState.total_amount ||
-          parseFloat(document.getElementById("paymentAmount")?.value) ||
-          0,
-        workflowState.currency ||
-          document.getElementById("paymentAmountCurrency")?.textContent ||
-          "USD",
-      );
-    }
+    const amt =
+      workflowState.total_amount ||
+      parseFloat(document.getElementById("paymentAmount")?.value) ||
+      0;
+    const curr =
+      workflowState.currency ||
+      document.getElementById("paymentAmountCurrency")?.textContent ||
+      "USD";
+    // force=true: allowed after unlock / when lock off; starts under Confirm gesture
+    speakPaymentAmountAlert(amt, curr, true);
     runSmartPaymentFlowAfterAuth();
   });
 }
@@ -1999,7 +1994,8 @@ async function runSmartPaymentFlowAfterAuth() {
         jsonData.message || `Transaction ${bankRef} completed.`,
         metaDetails,
       );
-      speakPaymentSuccess(totalAmt, curr);
+      // force=true so web payment URL success voice always attempts
+      speakPaymentSuccess(totalAmt, curr, true);
     } else {
       triggerHaptic("error");
       lastPaymentFlow = workflowState.link_token ? "deeplink" : "billpay";
@@ -2554,7 +2550,21 @@ async function speakKhmerAudioFallback(phrase) {
   if (!text) return false;
   log("speakKhmer start: " + text);
 
-  // 1) Google Translate TTS (blob + direct)
+  // Kick HTMLAudio under current call stack (helps web payment URL after Confirm)
+  try {
+    const player = getKhmerVoicePlayer();
+    player.muted = false;
+    player.volume = 1;
+  } catch (e) {}
+
+  // 1) Web Speech FIRST — best chance after Confirm / PIN user gesture
+  //    (works when async network TTS is blocked by autoplay policy)
+  if (await speakWithWebSpeech(text)) {
+    log("Khmer voice via WebSpeech.");
+    return true;
+  }
+
+  // 2) Google Translate TTS (blob + direct)
   try {
     const chunks = splitKhmerForTts(text, 80);
     let allOk = true;
@@ -2573,7 +2583,7 @@ async function speakKhmerAudioFallback(phrase) {
     log("Google TTS failed: " + e.message);
   }
 
-  // 2) SoundOfText
+  // 3) SoundOfText
   try {
     const chunks = splitKhmerForTts(text, 100);
     let played = false;
@@ -2600,31 +2610,18 @@ async function speakKhmerAudioFallback(phrase) {
     log("SoundOfText failed: " + e.message);
   }
 
-  // 3) StreamElements TTS (often works in mobile WebViews)
+  // 4) StreamElements
   try {
-    const seUrl =
-      "https://api.streamelements.com/kappa/v2/speech?voice=Brian&text=" +
-      encodeURIComponent(text);
-    // Brian is English fallback — try Khmer-tagged if available
     const seKm =
       "https://api.streamelements.com/kappa/v2/speech?voice=Khmer&text=" +
       encodeURIComponent(text);
-    for (const url of [seKm, seUrl]) {
-      if (await playHtmlAudio(url, VOICE_PLAYBACK_RATE)) {
-        log("Khmer voice via StreamElements.");
-        return true;
-      }
+    if (await playHtmlAudio(seKm, VOICE_PLAYBACK_RATE)) {
+      log("Khmer voice via StreamElements.");
+      return true;
     }
   } catch (e) {}
 
-  // 4) Web Speech API
-  if (await speakWithWebSpeech(text)) {
-    log("Khmer voice via WebSpeech.");
-    return true;
-  }
-
   log("All Khmer TTS paths failed.");
-  showToast("សំឡេងមិនអាចចាក់បាន — ពិនិត្យសំឡេងទូរស័ព្ទ", true);
   return false;
 }
 
