@@ -503,19 +503,31 @@ function clearCapturedReturnUrl() {
 /* Tracks which flow produced the last success modal so QR can hide Done. */
 let lastPaymentFlow = ""; // "qr" | "deeplink" | "billpay" | "verify" | ""
 
-/* Called from the "Done" button on the success receipt modal (Deeplink only).
-   Opens return_url in the CURRENT tab/webview, then closes the Telegram Mini App.
-   Does NOT open a new tab. */
+/* Called from the "Done" / "Back to App" button on the success receipt modal.
+   - Deeplink only: open return_url from inquiry v5, then close Mini App
+   - Pay Bill / QR / Upload QR / other: just close the modal (no return_url required) */
 function handlePaymentDoneAction() {
-  const returnUrl = getCapturedReturnUrl();
-  if (!returnUrl) {
-    log("Done clicked but no return_url was captured from inquiry v5.");
-    showToast("No return URL from inquiry. Cannot redirect.", true);
+  const isDeeplinkFlow =
+    lastPaymentFlow === "deeplink" ||
+    !!workflowState.link_token;
+
+  // Non-deeplink menus (Pay Bill, Scan QR, Upload QR): just close — never require return_url
+  if (!isDeeplinkFlow) {
+    log("Back to App clicked for " + (lastPaymentFlow || "non-deeplink") + " — closing modal only.");
+    clearCapturedReturnUrl();
     closeModal();
     return;
   }
 
-  log("Done clicked — opening merchant return_url in current tab: " + returnUrl);
+  const returnUrl = getCapturedReturnUrl();
+  if (!returnUrl) {
+    // Deeplink but API did not provide return_url — close quietly, no error toast
+    log("Deeplink Done: no return_url from inquiry v5 — closing modal only.");
+    closeModal();
+    return;
+  }
+
+  log("Deeplink Done — opening merchant return_url in current tab: " + returnUrl);
 
   let dest = returnUrl;
   try {
@@ -1010,6 +1022,9 @@ async function submitQRConfirm() {
 
 async function submitQRConfirmAfterAuth() {
   closeKHQRModal();
+  // QR is not deeplink — never redirect via leftover inquiry return_url
+  clearCapturedReturnUrl();
+  workflowState.link_token = "";
 
   const baseUrl = document.getElementById("baseUrl").value.trim();
   const token = document.getElementById("authToken").value.trim();
@@ -1941,18 +1956,18 @@ async function runSmartPaymentFlowAfterAuth() {
 
     if (jsonData.code === "SUCCESS") {
       triggerHaptic("success");
-      lastPaymentFlow = workflowState.link_token || getCapturedReturnUrl()
-        ? "deeplink"
-        : "billpay";
-      // Ensure Done / Back-to-App label matches session type
+      // Only link_token marks deeplink — never leftover return_url
+      lastPaymentFlow = workflowState.link_token ? "deeplink" : "billpay";
       const doneLabel = document.getElementById("modalDoneBtnLabel");
       if (doneLabel) {
-        doneLabel.textContent = lastPaymentFlow === "deeplink"
-          ? "Done"
-          : "Back to App";
+        doneLabel.textContent =
+          lastPaymentFlow === "deeplink" ? "Done" : "Back to App";
       }
-      // Re-stamp return_url onto the Done button at success time.
-      persistReturnUrl(getCapturedReturnUrl());
+      if (lastPaymentFlow === "deeplink") {
+        persistReturnUrl(getCapturedReturnUrl());
+      } else {
+        clearCapturedReturnUrl();
+      }
       finishModal(
         true,
         "Payment Successful",
@@ -2215,7 +2230,7 @@ function khmerNumberToWords(num) {
 
 /* Pre-payment alert (young male Khmer, clear): ask user to check amount first */
 const KHMER_PRE_CONFIRM_ALERT =
-  "សូមពិនិត្យចំនួនទឹកប្រាក់របស់លោកអ្នកជាមុនសិន ដើម្បីអាចបញ្ជាក់ការទូទាត់ត្រូវ។";
+  "សូមពិនិត្យចំនួនទឹកប្រាក់របស់លោកអ្នកជាមុនសិន ដើម្បីអាចបញ្ជាក់ការទូទាត់បានត្រឹមត្រូវ។";
 
 async function speakPaymentAmountAlert(amount, currency) {
   try {
@@ -2229,7 +2244,7 @@ async function speakPaymentAmountAlert(amount, currency) {
       const words = khmerNumberToWords(numericAmount);
       phrase =
         `សូមពិនិត្យចំនួនទឹកប្រាក់ ${words} ${currencyKhmer} ជាមុនសិន ` +
-        `ដើម្បីអាចបញ្ជាក់ការទូទាត់ត្រូវ។`;
+        `ដើម្បីអាចបញ្ជាក់ការទូទាត់បានត្រឹមត្រូវ។`;
     }
     log(`Khmer pre-confirm alert: "${phrase}"`);
     await speakKhmerAudioFallback(phrase);
@@ -2251,7 +2266,7 @@ async function speakPaymentSuccess(amount, currency) {
     const khmerWords = khmerNumberToWords(numericAmount);
 
     // Clear 2026 bank-style success phrase
-    const phrase = `ការទូទាត់ជោគជ័យ។ ទឹកប្រាក់បានទូទាត់ចំនួន ${khmerWords} ${currencyKhmer}។ សូមអរគុណ។`;
+    const phrase = `ការទូទាត់ជោគជ័យ។ ទឹកប្រាក់របស់អ្នកត្រូវបានទូទាត់ចំនួន ${khmerWords} ${currencyKhmer}។ សូមអរគុណ។`;
 
     log(`Khmer young-male success voice: "${phrase}"`);
     await speakKhmerAudioFallback(phrase);
@@ -3134,9 +3149,8 @@ function finishModal(isSuccess, title, message, extraDetails = null) {
   const closeBtn = document.getElementById("modalCloseBtn");
   const details = document.getElementById("modalReceiptDetails");
   const isQrSuccess = isSuccess && lastPaymentFlow === "qr";
-  const isDeeplinkSuccess =
-    isSuccess &&
-    (lastPaymentFlow === "deeplink" || !!getCapturedReturnUrl());
+  // Only true deeplink flow uses return_url — never treat leftover URL as deeplink
+  const isDeeplinkSuccess = isSuccess && lastPaymentFlow === "deeplink";
 
   document.getElementById("modalTitle").textContent = title;
   document.getElementById("modalMessage").textContent = message;
