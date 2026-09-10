@@ -731,6 +731,22 @@
 
             <button
               type="button"
+              data-section="menus"
+              onclick="showSettingsSection('menus')"
+              class="settings-menu-item w-full flex items-center gap-3 px-2.5 py-3 sm:py-2.5 rounded-2xl text-left hover:bg-white dark:hover:bg-slate-900 transition-all"
+            >
+              <span class="w-9 h-9 rounded-xl bg-indigo-500/10 text-indigo-500 flex items-center justify-center text-sm shrink-0"
+                ><i class="fa-solid fa-table-cells-large"></i
+              ></span>
+              <span class="flex-1 min-w-0">
+                <span class="block text-xs font-bold text-slate-800 dark:text-slate-200">Menus &amp; Bills</span>
+                <span class="block text-[10px] text-slate-400 truncate">Deeplink, General &amp; Utility bills</span>
+              </span>
+              <i class="fa-solid fa-chevron-right text-[10px] text-slate-300 sm:hidden"></i>
+            </button>
+
+            <button
+              type="button"
               data-section="camera"
               onclick="showSettingsSection('camera')"
               class="settings-menu-item w-full flex items-center gap-3 px-2.5 py-3 sm:py-2.5 rounded-2xl text-left hover:bg-white dark:hover:bg-slate-900 transition-all"
@@ -997,6 +1013,31 @@
               </div>
             </div>
 
+            <!-- PANEL: MENUS & BILLS -->
+            <div id="settingsPanel-menus" class="settings-panel hidden space-y-3">
+              <label class="flex items-center justify-between gap-3 bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800">
+                <span class="space-y-0.5 pr-2">
+                  <span class="text-xs font-bold text-slate-800 dark:text-slate-200 block">Show Deeplink menu</span>
+                  <span class="text-[10px] text-slate-400 block">Hidden by default. Payment links still open Confirm UI.</span>
+                </span>
+                <input id="showDeeplinkMenuEnabled" type="checkbox" onchange="toggleDeeplinkMenuSetting()" class="w-4 h-4 accent-indigo-600 rounded cursor-pointer shrink-0" />
+              </label>
+              <label class="flex items-center justify-between gap-3 bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800">
+                <span class="space-y-0.5 pr-2">
+                  <span class="text-xs font-bold text-slate-800 dark:text-slate-200 block">General Bills</span>
+                  <span class="text-[10px] text-slate-400 block">Uses prefix code from API Gateway settings</span>
+                </span>
+                <input id="showGeneralBillsEnabled" type="checkbox" checked onchange="toggleBillsMenuSetting()" class="w-4 h-4 accent-indigo-600 rounded cursor-pointer shrink-0" />
+              </label>
+              <label class="flex items-center justify-between gap-3 bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800">
+                <span class="space-y-0.5 pr-2">
+                  <span class="text-xs font-bold text-slate-800 dark:text-slate-200 block">Utility Bills</span>
+                  <span class="text-[10px] text-slate-400 block">No gateway prefix — enter account / meter code</span>
+                </span>
+                <input id="showUtilityBillsEnabled" type="checkbox" checked onchange="toggleBillsMenuSetting()" class="w-4 h-4 accent-indigo-600 rounded cursor-pointer shrink-0" />
+              </label>
+            </div>
+
             <!-- PANEL: CAMERA & VOICE -->
             <div
               id="settingsPanel-camera"
@@ -1261,101 +1302,69 @@
           </div>
         </div>
 
-        <!-- Quick Action Grid -->
+        <!-- Main menus only -->
         <div>
-          <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2.5 px-0.5">Quick actions</p>
-          <div class="grid grid-cols-4 gap-2.5">
-            <button
-              onclick="triggerInstantQRScan()"
-              class="quick-tile p-3 flex flex-col items-center gap-2"
-            >
-              <div class="quick-icon">
-                <i class="fa-solid fa-camera"></i>
-              </div>
-              <span class="text-[10px] font-bold text-slate-700 dark:text-slate-200">Scan QR</span>
+          <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2.5 px-0.5">Main menu</p>
+          <div class="grid grid-cols-3 gap-3">
+            <button onclick="triggerInstantQRScan()" class="quick-tile p-4 flex flex-col items-center gap-2.5">
+              <div class="quick-icon"><i class="fa-solid fa-qrcode"></i></div>
+              <span class="text-[11px] font-bold text-slate-700 dark:text-slate-200">Scan QR</span>
             </button>
-
-            <button
-              onclick="navigateToView('billPayView')"
-              class="quick-tile p-3 flex flex-col items-center gap-2"
-            >
+            <button onclick="openPayBillMenu()" class="quick-tile p-4 flex flex-col items-center gap-2.5">
               <div class="quick-icon" style="background:linear-gradient(145deg,#ecfdf5,#d1fae5);color:#059669">
                 <i class="fa-solid fa-receipt"></i>
               </div>
-              <span class="text-[10px] font-bold text-slate-700 dark:text-slate-200">Pay Bill</span>
+              <span class="text-[11px] font-bold text-slate-700 dark:text-slate-200">Pay Bill</span>
             </button>
-
-            <button
-              onclick="openDeeplinkViewManually()"
-              class="quick-tile p-3 flex flex-col items-center gap-2"
-            >
+            <button onclick="openPostView()" class="quick-tile p-4 flex flex-col items-center gap-2.5">
+              <div class="quick-icon" style="background:linear-gradient(145deg,#fdf2f8,#fce7f3);color:#db2777">
+                <i class="fa-solid fa-clapperboard"></i>
+              </div>
+              <span class="text-[11px] font-bold text-slate-700 dark:text-slate-200">Post</span>
+            </button>
+            <button data-menu-deeplink onclick="openDeeplinkViewManually()" class="hidden quick-tile p-4 flex flex-col items-center gap-2.5">
               <div class="quick-icon" style="background:linear-gradient(145deg,#f5f3ff,#ede9fe);color:#7c3aed">
                 <i class="fa-solid fa-link"></i>
               </div>
-              <span class="text-[10px] font-bold text-slate-700 dark:text-slate-200">Deeplink</span>
-            </button>
-
-            <button
-              onclick="navigateToView('imageScanView')"
-              class="quick-tile p-3 flex flex-col items-center gap-2"
-            >
-              <div class="quick-icon" style="background:linear-gradient(145deg,#fff7ed,#ffedd5);color:#ea580c">
-                <i class="fa-solid fa-image"></i>
-              </div>
-              <span class="text-[10px] font-bold text-slate-700 dark:text-slate-200">Upload</span>
+              <span class="text-[11px] font-bold text-slate-700 dark:text-slate-200">Deeplink</span>
             </button>
           </div>
         </div>
 
-        <!-- Primary CTA — Scan to Pay -->
-        <button
-          onclick="triggerInstantQRScan()"
-          class="bank-btn-primary w-full py-4 text-sm flex items-center justify-center gap-2.5"
-        >
+        <button onclick="triggerInstantQRScan()" class="bank-btn-primary w-full py-4 text-sm flex items-center justify-center gap-2.5">
           <i class="fa-solid fa-qrcode text-base"></i>
           Scan KHQR &amp; Pay Instantly
         </button>
 
-        <!-- Feature Highlight Banner -->
-        <div
-          class="bg-gradient-to-br from-indigo-600 via-indigo-600 to-violet-800 text-white p-4.5 p-5 rounded-[20px] shadow-bank relative overflow-hidden flex items-center justify-between gap-3"
-        >
-          <div class="space-y-1.5 relative z-10 min-w-0">
-            <span
-              class="text-[9px] uppercase tracking-wider font-bold bg-white/20 px-2 py-0.5 rounded-full"
-              >Recommended</span
-            >
-            <h3 class="text-sm font-extrabold leading-snug">Live camera KHQR scan</h3>
-            <p class="text-[11px] text-white/80 leading-relaxed">
-              Point, scan, confirm — payment in under 5 seconds
-            </p>
-          </div>
-          <button
-            onclick="triggerInstantQRScan()"
-            class="relative z-10 bg-white text-indigo-600 font-bold text-xs px-4 py-2.5 rounded-2xl shrink-0 shadow-lg active:scale-95 transition-transform"
-          >
-            Try Now
+        <div class="grid grid-cols-2 gap-2.5">
+          <button onclick="openPayBillMenu()" class="bank-card p-4 text-left active:scale-[0.98] transition-transform">
+            <i class="fa-solid fa-file-invoice-dollar text-emerald-500 mb-2"></i>
+            <p class="text-xs font-extrabold text-slate-800 dark:text-white">Pay bills</p>
+            <p class="text-[10px] text-slate-400 mt-0.5">General &amp; utility</p>
           </button>
-          <i
-            class="fa-solid fa-qrcode absolute -right-3 -bottom-3 text-7xl opacity-10"
-          ></i>
+          <button onclick="openPostView()" class="bank-card p-4 text-left active:scale-[0.98] transition-transform">
+            <i class="fa-solid fa-photo-film text-pink-500 mb-2"></i>
+            <p class="text-xs font-extrabold text-slate-800 dark:text-white">Community</p>
+            <p class="text-[10px] text-slate-400 mt-0.5">Photos, video &amp; react</p>
+          </button>
         </div>
+      </section>
 
-        <!-- Trust row -->
-        <div class="grid grid-cols-3 gap-2 text-center">
-          <div class="bank-card px-2 py-3">
-            <i class="fa-solid fa-bolt text-amber-500 text-sm mb-1"></i>
-            <p class="text-[10px] font-bold text-slate-700 dark:text-slate-200">Instant</p>
+      <!-- COMMUNITY POST FEED -->
+      <section id="postView" class="hidden space-y-4">
+        <div class="flex items-center justify-between gap-2">
+          <div>
+            <h2 class="text-base font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+              <i class="fa-solid fa-clapperboard text-pink-500"></i> Community
+            </h2>
+            <p class="text-[11px] text-slate-400">Share photos &amp; videos with the network</p>
           </div>
-          <div class="bank-card px-2 py-3">
-            <i class="fa-solid fa-lock text-emerald-500 text-sm mb-1"></i>
-            <p class="text-[10px] font-bold text-slate-700 dark:text-slate-200">Encrypted</p>
-          </div>
-          <div class="bank-card px-2 py-3">
-            <i class="fa-solid fa-fingerprint text-indigo-500 text-sm mb-1"></i>
-            <p class="text-[10px] font-bold text-slate-700 dark:text-slate-200">Biometric</p>
-          </div>
+          <button onclick="openPostChannel()" class="text-[10px] font-bold text-indigo-600 bg-indigo-50 dark:bg-indigo-950/40 px-2.5 py-1.5 rounded-full">Channel</button>
         </div>
+        <button onclick="openCreatePostSheet()" class="bank-btn-primary w-full py-3.5 text-sm flex items-center justify-center gap-2">
+          <i class="fa-solid fa-plus"></i> New post
+        </button>
+        <div id="communityFeed" class="space-y-3"></div>
       </section>
 
       <!-- 2. LIVE CAMERA KHQR SCANNER VIEW (Phone & Desktop Camera) -->
@@ -1551,14 +1560,11 @@
 
       <!-- 4. BILL PAY VIEW (Bill24 API v4 Inquiry / v2 Confirm, customer_code based) -->
       <section id="billPayView" class="hidden space-y-4">
-        <div
-          class="flex justify-between items-center border-b border-slate-200 dark:border-slate-800 pb-2"
-        >
-          <h2
-            class="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2"
-          >
+        <div class="border-b border-slate-200 dark:border-slate-800 pb-2">
+          <h2 id="billPayTitle" class="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
             <i class="fa-solid fa-receipt text-indigo-500"></i> Pay Bill
           </h2>
+          <p id="billPayHint" class="text-[11px] text-slate-400 mt-0.5">Choose General or Utility from the menu</p>
         </div>
 
         <!-- Single Input Form -->
@@ -2098,43 +2104,27 @@ System ready...</pre
       class="bottom-nav fixed bottom-0 inset-x-0 z-40 pb-[env(safe-area-inset-bottom)] max-w-md sm:max-w-xl md:max-w-2xl mx-auto"
     >
       <div class="grid grid-cols-5 items-end px-1">
-        <button
-          id="tab-btn-home"
-          onclick="navigateToView('homeView')"
-          class="flex flex-col items-center justify-center gap-0.5 py-2.5 text-indigo-600 dark:text-indigo-400"
-        >
+        <button id="tab-btn-home" onclick="navigateToView('homeView')" class="flex flex-col items-center justify-center gap-0.5 py-2.5 text-indigo-600 dark:text-indigo-400">
           <i class="fa-solid fa-house text-[17px]"></i>
           <span class="text-[9px] font-bold">Home</span>
         </button>
-        <button
-          id="tab-btn-billpay"
-          onclick="navigateToView('billPayView')"
-          class="flex flex-col items-center justify-center gap-0.5 py-2.5 text-slate-400"
-        >
+        <button id="tab-btn-billpay" onclick="openPayBillMenu()" class="flex flex-col items-center justify-center gap-0.5 py-2.5 text-slate-400">
           <i class="fa-solid fa-receipt text-[17px]"></i>
           <span class="text-[9px] font-bold">Pay Bill</span>
         </button>
-        <button
-          id="tab-btn-camera"
-          onclick="triggerInstantQRScan()"
-          class="flex flex-col items-center justify-center gap-0.5 py-1.5 text-white"
-          aria-label="Scan QR"
-        >
+        <button id="tab-btn-camera" onclick="triggerInstantQRScan()" class="flex flex-col items-center justify-center gap-0.5 py-1.5 text-white" aria-label="Scan QR">
           <span class="nav-fab"><i class="fa-solid fa-qrcode"></i></span>
           <span class="text-[9px] font-bold text-indigo-600 dark:text-indigo-400 mt-0.5">Scan</span>
         </button>
-        <button
-          id="tab-btn-payment"
-          onclick="openDeeplinkViewManually()"
-          class="flex flex-col items-center justify-center gap-0.5 py-2.5 text-slate-400"
-        >
+        <button id="tab-btn-post" onclick="openPostView()" class="flex flex-col items-center justify-center gap-0.5 py-2.5 text-slate-400">
+          <i class="fa-solid fa-clapperboard text-[17px]"></i>
+          <span class="text-[9px] font-bold">Post</span>
+        </button>
+        <button id="tab-btn-payment" data-menu-deeplink onclick="openDeeplinkViewManually()" class="hidden flex flex-col items-center justify-center gap-0.5 py-2.5 text-slate-400">
           <i class="fa-solid fa-link text-[17px]"></i>
           <span class="text-[9px] font-bold">Link</span>
         </button>
-        <button
-          onclick="toggleSettingsDrawer()"
-          class="flex flex-col items-center justify-center gap-0.5 py-2.5 text-slate-400"
-        >
+        <button onclick="toggleSettingsDrawer()" class="flex flex-col items-center justify-center gap-0.5 py-2.5 text-slate-400">
           <i class="fa-solid fa-gear text-[17px]"></i>
           <span class="text-[9px] font-bold">Settings</span>
         </button>
@@ -2493,5 +2483,45 @@ System ready...</pre
 
     <!-- Application JavaScript Engine -->
     <script src="app.js"></script>
+  
+    <!-- BILL TYPE PICKER -->
+    <div id="billTypeModal" class="hidden fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-950/60 backdrop-blur-sm p-0 sm:p-4">
+      <div class="bg-white dark:bg-slate-900 w-full max-w-sm rounded-t-3xl sm:rounded-3xl p-5 shadow-2xl space-y-3 animate-modal-pop">
+        <div class="w-10 h-1 rounded-full bg-slate-200 dark:bg-slate-700 mx-auto sm:hidden"></div>
+        <h3 class="text-sm font-extrabold text-slate-900 dark:text-white text-center">Pay which bill?</h3>
+        <button onclick="startGeneralBillPay()" class="w-full bank-card p-4 text-left flex items-center gap-3 active:scale-[0.98]">
+          <span class="w-11 h-11 rounded-2xl bg-indigo-500/10 text-indigo-600 flex items-center justify-center"><i class="fa-solid fa-building"></i></span>
+          <span class="flex-1">
+            <span class="block text-xs font-bold text-slate-800 dark:text-white">General Bills</span>
+            <span class="block text-[10px] text-slate-400">Uses prefix from Payment Gateway settings</span>
+          </span>
+        </button>
+        <button onclick="startUtilityBillPay()" class="w-full bank-card p-4 text-left flex items-center gap-3 active:scale-[0.98]">
+          <span class="w-11 h-11 rounded-2xl bg-amber-500/10 text-amber-600 flex items-center justify-center"><i class="fa-solid fa-bolt"></i></span>
+          <span class="flex-1">
+            <span class="block text-xs font-bold text-slate-800 dark:text-white">Utility Bills</span>
+            <span class="block text-[10px] text-slate-400">No gateway prefix — enter account code</span>
+          </span>
+        </button>
+        <button onclick="closeBillTypeModal()" class="bank-btn-secondary w-full py-3 text-xs">Cancel</button>
+      </div>
+    </div>
+
+    <!-- CREATE POST -->
+    <div id="createPostModal" class="hidden fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-950/60 backdrop-blur-sm p-0 sm:p-4">
+      <div class="bg-white dark:bg-slate-900 w-full max-w-sm rounded-t-3xl sm:rounded-3xl p-5 shadow-2xl space-y-3 max-h-[90vh] overflow-y-auto">
+        <h3 class="text-sm font-extrabold text-slate-900 dark:text-white">New post</h3>
+        <textarea id="postCaptionInput" rows="3" placeholder="Write a caption…" class="w-full rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2.5 text-xs"></textarea>
+        <label class="bank-btn-secondary w-full py-3 text-xs flex items-center justify-center gap-2 cursor-pointer">
+          <i class="fa-solid fa-image"></i> Choose photo or video
+          <input type="file" accept="image/*,video/*" class="hidden" onchange="handlePostMediaPick(event)" />
+        </label>
+        <div id="postMediaPreview" class="hidden"></div>
+        <button onclick="publishCommunityPost()" class="bank-btn-primary w-full py-3.5 text-xs">Publish</button>
+        <button onclick="closeCreatePostSheet()" class="bank-btn-secondary w-full py-3 text-xs">Cancel</button>
+        <p class="text-[10px] text-slate-400 text-center">Posts notify channel generalpost168 · Comments open group chat</p>
+      </div>
+    </div>
+
   </body>
 </html>

@@ -2036,8 +2036,11 @@ async function runVerifyTxn() {
 
 /* 7B. APP PREFERENCES — AUTO-ALLOW CAMERA & KHMER VOICE CONFIRMATION */
 let appPreferences = {
-  autoCamera: true, // default ON: pre-request camera permission (Android & iOS)
-  voiceConfirm: true, // default ON: speak Khmer confirmation on payment success
+  autoCamera: true,
+  voiceConfirm: true,
+  showDeeplinkMenu: false, // hide Deeplink UI by default; payment links still work
+  showGeneralBills: true,
+  showUtilityBills: true,
 };
 
 /* AUDIO ENGINE PRE-UNLOCK & VOICE PREPARATION */
@@ -2083,10 +2086,16 @@ function loadAppPreferences() {
 
   const autoCamToggle = document.getElementById("autoCameraEnabled");
   const voiceToggle = document.getElementById("voiceConfirmEnabled");
+  const dlToggle = document.getElementById("showDeeplinkMenuEnabled");
+  const genToggle = document.getElementById("showGeneralBillsEnabled");
+  const utilToggle = document.getElementById("showUtilityBillsEnabled");
   if (autoCamToggle) autoCamToggle.checked = !!appPreferences.autoCamera;
   if (voiceToggle) voiceToggle.checked = !!appPreferences.voiceConfirm;
+  if (dlToggle) dlToggle.checked = !!appPreferences.showDeeplinkMenu;
+  if (genToggle) genToggle.checked = appPreferences.showGeneralBills !== false;
+  if (utilToggle) utilToggle.checked = appPreferences.showUtilityBills !== false;
+  applyMenuVisibility();
 
-  // Warm up voices silently without prompting OS camera permissions
   if ("speechSynthesis" in window) {
     try {
       window.speechSynthesis.getVoices();
@@ -2097,10 +2106,100 @@ function loadAppPreferences() {
 function saveAppPreferences() {
   const autoCamToggle = document.getElementById("autoCameraEnabled");
   const voiceToggle = document.getElementById("voiceConfirmEnabled");
+  const dlToggle = document.getElementById("showDeeplinkMenuEnabled");
+  const genToggle = document.getElementById("showGeneralBillsEnabled");
+  const utilToggle = document.getElementById("showUtilityBillsEnabled");
   appPreferences.autoCamera = autoCamToggle ? autoCamToggle.checked : true;
   appPreferences.voiceConfirm = voiceToggle ? voiceToggle.checked : true;
+  appPreferences.showDeeplinkMenu = dlToggle ? dlToggle.checked : false;
+  appPreferences.showGeneralBills = genToggle ? genToggle.checked : true;
+  appPreferences.showUtilityBills = utilToggle ? utilToggle.checked : true;
   localStorage.setItem("bankAppPreferences", JSON.stringify(appPreferences));
+  applyMenuVisibility();
   log("App preferences saved:", appPreferences);
+}
+
+function applyMenuVisibility() {
+  const showDl = !!appPreferences.showDeeplinkMenu;
+  document.querySelectorAll("[data-menu-deeplink]").forEach((el) => {
+    el.classList.toggle("hidden", !showDl);
+  });
+  const tabDl = document.getElementById("tab-btn-payment");
+  if (tabDl) tabDl.classList.toggle("hidden", !showDl);
+}
+
+function toggleDeeplinkMenuSetting() {
+  saveAppPreferences();
+  showToast(
+    appPreferences.showDeeplinkMenu
+      ? "Deeplink menu enabled"
+      : "Deeplink menu hidden (payment links still work)",
+  );
+}
+
+function toggleBillsMenuSetting() {
+  saveAppPreferences();
+  showToast("Bills menu settings saved");
+}
+
+/* Pay Bill → choose General (prefix from gateway) or Utility */
+function openPayBillMenu() {
+  const showGen = appPreferences.showGeneralBills !== false;
+  const showUtil = appPreferences.showUtilityBills !== false;
+  if (showGen && !showUtil) {
+    startGeneralBillPay();
+    return;
+  }
+  if (!showGen && showUtil) {
+    startUtilityBillPay();
+    return;
+  }
+  if (!showGen && !showUtil) {
+    showToast("Enable General or Utility Bills in Settings.", true);
+    return;
+  }
+  const modal = document.getElementById("billTypeModal");
+  if (modal) modal.classList.remove("hidden");
+}
+
+function closeBillTypeModal() {
+  const modal = document.getElementById("billTypeModal");
+  if (modal) modal.classList.add("hidden");
+}
+
+function startGeneralBillPay() {
+  closeBillTypeModal();
+  // Prefix from Payment Gateway settings (prefixCode field)
+  const prefixEl = document.getElementById("prefixCode");
+  const prefix = prefixEl ? prefixEl.value.trim() : "";
+  if (prefixEl && !prefix) {
+    // keep empty — user can still type customer code
+  }
+  navigateToView("billPayView");
+  const title = document.getElementById("billPayTitle");
+  if (title) title.innerHTML = '<i class="fa-solid fa-building text-indigo-500"></i> General Bills';
+  const hint = document.getElementById("billPayHint");
+  if (hint) {
+    hint.textContent = prefix
+      ? "Using gateway prefix: " + prefix
+      : "Enter customer / bill code (set prefix in API Gateway settings)";
+  }
+  try {
+    updateBillPayCode();
+  } catch (e) {}
+}
+
+function startUtilityBillPay() {
+  closeBillTypeModal();
+  // Utility: no gateway prefix — clear prefix for this session entry only visually
+  navigateToView("billPayView");
+  const title = document.getElementById("billPayTitle");
+  if (title) title.innerHTML = '<i class="fa-solid fa-bolt text-amber-500"></i> Utility Bills';
+  const hint = document.getElementById("billPayHint");
+  if (hint) hint.textContent = "Utility bills — enter account / meter code (no gateway prefix)";
+  // Do not wipe saved gateway prefix in settings; only clear display combine if needed
+  const raw = document.getElementById("bpRawCode");
+  if (raw) raw.focus();
 }
 
 function toggleAutoCameraSetting() {
@@ -2852,9 +2951,14 @@ function triggerBiometricScan() {
   unlockAudioEngine();
   biometricMode = "auth";
   isBiometricScanningActive = false;
-  // Always show sensor UI — user must tap (required for WebAuthn gesture)
-  openBiometricScanModal("Tap fingerprint to authorize");
-  setBioScanStatus("Tap the fingerprint button", "indigo");
+  // One-tap: open UI and immediately start scan (Confirm/Pay click is the gesture)
+  openBiometricScanModal("Scan fingerprint to authorize");
+  setBioScanStatus("Scanning…", "indigo");
+  setTimeout(() => {
+    try {
+      startBiometricTouchScan();
+    } catch (e) {}
+  }, 80);
 }
 
 function setBioScanStatus(text, tone) {
@@ -3014,6 +3118,7 @@ async function startBiometricTouchScan() {
  * Only open the modal here — enrollment runs when user taps the button.
  */
 async function enrollBiometricsInSettings() {
+  // One-tap enroll: Settings button click is the user gesture
   securitySettings.useBiometrics = true;
   biometricMode = "enroll";
   isBiometricScanningActive = false;
@@ -3024,9 +3129,14 @@ async function enrollBiometricsInSettings() {
   if (bioToggle) bioToggle.checked = true;
   updateBiometricStatusBadge();
 
-  openBiometricScanModal("Step 1: Tap the fingerprint button to enroll");
-  setBioScanStatus("Tap once with YOUR finger", "indigo");
-  showToast("Tap the big fingerprint button to enroll");
+  openBiometricScanModal("Enrolling owner fingerprint…");
+  setBioScanStatus("Scanning…", "indigo");
+  showToast("Scanning fingerprint…");
+  setTimeout(() => {
+    try {
+      startBiometricTouchScan();
+    } catch (e) {}
+  }, 80);
 }
 
 function testBiometricAuth() {
@@ -3069,6 +3179,7 @@ function navigateToView(viewId) {
     "billPayView",
     "paymentView",
     "verifyView",
+    "postView",
   ].forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.classList.add("hidden");
@@ -3087,20 +3198,29 @@ function navigateToView(viewId) {
     "tab-btn-camera",
     "tab-btn-billpay",
     "tab-btn-payment",
+    "tab-btn-post",
   ].forEach((id) => {
     const btn = document.getElementById(id);
     if (btn) btn.className = idleTab;
   });
 
-  if (viewId === "homeView")
-    document.getElementById("tab-btn-home").className = activeTab;
-  else if (viewId === "cameraScanView") {
-    document.getElementById("tab-btn-camera").className = activeTab;
+  if (viewId === "homeView") {
+    const b = document.getElementById("tab-btn-home");
+    if (b) b.className = activeTab;
+  } else if (viewId === "cameraScanView") {
+    const b = document.getElementById("tab-btn-camera");
+    if (b) b.className = activeTab;
     startCameraStream();
-  } else if (viewId === "billPayView")
-    document.getElementById("tab-btn-billpay").className = activeTab;
-  else if (viewId === "paymentView")
-    document.getElementById("tab-btn-payment").className = activeTab;
+  } else if (viewId === "billPayView") {
+    const b = document.getElementById("tab-btn-billpay");
+    if (b) b.className = activeTab;
+  } else if (viewId === "paymentView") {
+    const b = document.getElementById("tab-btn-payment");
+    if (b) b.className = activeTab;
+  } else if (viewId === "postView") {
+    const b = document.getElementById("tab-btn-post");
+    if (b) b.className = activeTab;
+  }
 
   window.scrollTo({ top: 0, behavior: viewId === "cameraScanView" ? "auto" : "smooth" });
 }
@@ -3282,6 +3402,7 @@ function toggleSettingsDrawer() {
 const SETTINGS_SECTIONS = {
   gateway: "API Gateway",
   security: "Security & PIN",
+  menus: "Menus & Bills",
   camera: "Camera & Voice",
   appearance: "Appearance",
   linkgen: "Manual Test: Generate Link",
@@ -3630,3 +3751,249 @@ function initApp() {
 }
 
 document.addEventListener("DOMContentLoaded", initApp);
+
+
+/* ===== SOCIAL POST FEED (channel + comment group) ===== */
+const POST_CHANNEL_URL = "https://t.me/generalpost168";
+const POST_COMMENT_GROUP_URL = "https://t.me/+HiLIJXecodUzZmI1";
+const POSTS_STORAGE_KEY = "bankCommunityPosts_v1";
+
+function loadCommunityPosts() {
+  try {
+    const raw = localStorage.getItem(POSTS_STORAGE_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveCommunityPosts(posts) {
+  try {
+    localStorage.setItem(POSTS_STORAGE_KEY, JSON.stringify(posts.slice(0, 80)));
+  } catch (e) {
+    showToast("Could not save post (storage full).", true);
+  }
+}
+
+function getPostAuthorName() {
+  try {
+    if (tgApp && tgApp.initDataUnsafe && tgApp.initDataUnsafe.user) {
+      const u = tgApp.initDataUnsafe.user;
+      return [u.first_name, u.last_name].filter(Boolean).join(" ") || u.username || "Telegram User";
+    }
+  } catch (e) {}
+  const el = document.getElementById("cardHolderName");
+  return (el && el.textContent) || "Bank User";
+}
+
+function openPostView() {
+  navigateToView("postView");
+  renderCommunityFeed();
+}
+
+function renderCommunityFeed() {
+  const feed = document.getElementById("communityFeed");
+  if (!feed) return;
+  const posts = loadCommunityPosts().slice().reverse();
+  if (!posts.length) {
+    feed.innerHTML =
+      '<div class="bank-card p-6 text-center text-slate-400 text-xs">No posts yet. Be the first to share a photo or video.</div>';
+    return;
+  }
+  feed.innerHTML = posts
+    .map((p) => {
+      const media =
+        p.type === "video"
+          ? '<video src="' +
+            p.media +
+            '" controls class="w-full max-h-72 object-cover bg-black"></video>'
+          : '<img src="' +
+            p.media +
+            '" alt="" class="w-full max-h-72 object-cover bg-slate-100"/>';
+      const reactions = p.reactions || { like: 0, love: 0, fire: 0 };
+      return (
+        '<article class="bank-card overflow-hidden" data-post-id="' +
+        p.id +
+        '">' +
+        '<div class="flex items-center gap-2.5 px-3.5 pt-3.5 pb-2">' +
+        '<div class="w-9 h-9 rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 text-white flex items-center justify-center text-xs font-bold">' +
+        (p.author || "U").charAt(0).toUpperCase() +
+        "</div>" +
+        '<div class="flex-1 min-w-0">' +
+        '<p class="text-xs font-bold text-slate-800 dark:text-slate-100 truncate">' +
+        escapeHtml(p.author || "User") +
+        "</p>" +
+        '<p class="text-[10px] text-slate-400">' +
+        escapeHtml(p.time || "") +
+        "</p></div></div>" +
+        (p.caption
+          ? '<p class="px-3.5 pb-2 text-xs text-slate-700 dark:text-slate-200 whitespace-pre-wrap">' +
+            escapeHtml(p.caption) +
+            "</p>"
+          : "") +
+        media +
+        '<div class="flex items-center gap-1 px-2 py-2 border-t border-slate-100 dark:border-slate-800">' +
+        '<button type="button" onclick="reactToPost(\'' +
+        p.id +
+        "','like')\" class=\"flex-1 py-2 text-[11px] font-bold text-slate-500 hover:text-indigo-600\">👍 " +
+        (reactions.like || 0) +
+        "</button>" +
+        '<button type="button" onclick="reactToPost(\'' +
+        p.id +
+        "','love')\" class=\"flex-1 py-2 text-[11px] font-bold text-slate-500 hover:text-rose-500\">❤️ " +
+        (reactions.love || 0) +
+        "</button>" +
+        '<button type="button" onclick="reactToPost(\'' +
+        p.id +
+        "','fire')\" class=\"flex-1 py-2 text-[11px] font-bold text-slate-500 hover:text-amber-500\">🔥 " +
+        (reactions.fire || 0) +
+        "</button>" +
+        '<button type="button" onclick="commentOnPost(\'' +
+        p.id +
+        '\')" class="flex-1 py-2 text-[11px] font-bold text-slate-500 hover:text-emerald-600">💬 Comment</button>' +
+        "</div></article>"
+      );
+    })
+    .join("");
+}
+
+function escapeHtml(s) {
+  return String(s || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function openCreatePostSheet() {
+  const m = document.getElementById("createPostModal");
+  if (m) m.classList.remove("hidden");
+  const cap = document.getElementById("postCaptionInput");
+  if (cap) cap.value = "";
+  const prev = document.getElementById("postMediaPreview");
+  if (prev) {
+    prev.innerHTML = "";
+    prev.classList.add("hidden");
+  }
+  window._pendingPostMedia = null;
+  window._pendingPostType = "image";
+}
+
+function closeCreatePostSheet() {
+  const m = document.getElementById("createPostModal");
+  if (m) m.classList.add("hidden");
+}
+
+function handlePostMediaPick(ev) {
+  const file = ev.target.files && ev.target.files[0];
+  if (!file) return;
+  if (file.size > 4.5 * 1024 * 1024) {
+    showToast("Please choose a file under 4.5 MB.", true);
+    return;
+  }
+  const isVideo = file.type.startsWith("video/");
+  const reader = new FileReader();
+  reader.onload = () => {
+    window._pendingPostMedia = reader.result;
+    window._pendingPostType = isVideo ? "video" : "image";
+    const prev = document.getElementById("postMediaPreview");
+    if (!prev) return;
+    prev.classList.remove("hidden");
+    prev.innerHTML = isVideo
+      ? '<video src="' + reader.result + '" controls class="w-full max-h-48 rounded-xl"></video>'
+      : '<img src="' + reader.result + '" class="w-full max-h-48 object-cover rounded-xl"/>';
+  };
+  reader.readAsDataURL(file);
+}
+
+function publishCommunityPost() {
+  const media = window._pendingPostMedia;
+  if (!media) {
+    showToast("Add a photo or video first.", true);
+    return;
+  }
+  const caption = (document.getElementById("postCaptionInput")?.value || "").trim();
+  const post = {
+    id: "p_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
+    author: getPostAuthorName(),
+    caption: caption,
+    media: media,
+    type: window._pendingPostType || "image",
+    time: new Date().toLocaleString(),
+    reactions: { like: 0, love: 0, fire: 0 },
+  };
+  const posts = loadCommunityPosts();
+  posts.push(post);
+  saveCommunityPosts(posts);
+  closeCreatePostSheet();
+  renderCommunityFeed();
+  showToast("Posted to community feed");
+  // Push notice to public channel (opens Telegram share / channel)
+  pushPostToTelegramChannel(post);
+}
+
+function pushPostToTelegramChannel(post) {
+  try {
+    const text =
+      "📢 New post by " +
+      (post.author || "User") +
+      (post.caption ? "\n" + post.caption : "") +
+      "\n\nChannel: " +
+      POST_CHANNEL_URL;
+    if (tgApp && typeof tgApp.openTelegramLink === "function") {
+      // Open channel so user can see community posts
+      // Share text via Telegram share URL
+      const share =
+        "https://t.me/share/url?url=" +
+        encodeURIComponent(POST_CHANNEL_URL) +
+        "&text=" +
+        encodeURIComponent(text);
+      tgApp.openTelegramLink(share);
+      return;
+    }
+    window.open(
+      "https://t.me/share/url?url=" +
+        encodeURIComponent(POST_CHANNEL_URL) +
+        "&text=" +
+        encodeURIComponent(text),
+      "_blank",
+    );
+  } catch (e) {
+    log("push channel failed: " + e.message);
+  }
+}
+
+function reactToPost(postId, kind) {
+  const posts = loadCommunityPosts();
+  const p = posts.find((x) => x.id === postId);
+  if (!p) return;
+  if (!p.reactions) p.reactions = { like: 0, love: 0, fire: 0 };
+  p.reactions[kind] = (p.reactions[kind] || 0) + 1;
+  saveCommunityPosts(posts);
+  renderCommunityFeed();
+  triggerHaptic("impact");
+}
+
+function commentOnPost(postId) {
+  // Comments are directed to the Telegram group
+  try {
+    if (tgApp && typeof tgApp.openTelegramLink === "function") {
+      tgApp.openTelegramLink(POST_COMMENT_GROUP_URL);
+    } else {
+      window.open(POST_COMMENT_GROUP_URL, "_blank");
+    }
+    showToast("Open the group to comment on this post");
+  } catch (e) {
+    showToast("Could not open comment group", true);
+  }
+}
+
+function openPostChannel() {
+  try {
+    if (tgApp && typeof tgApp.openTelegramLink === "function") {
+      tgApp.openTelegramLink(POST_CHANNEL_URL);
+    } else window.open(POST_CHANNEL_URL, "_blank");
+  } catch (e) {}
+}
+
