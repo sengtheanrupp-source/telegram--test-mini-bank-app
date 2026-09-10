@@ -1,6 +1,12 @@
 /**
- * Silent Telegram notify — uses only server env credentials.
- * TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID (@generalpost168), TELEGRAM_GROUP_ID
+ * Silent Telegram Bot proxy for community posts.
+ * Server env (required for live channel/group delivery):
+ *   TELEGRAM_BOT_TOKEN   - bot token from @BotFather
+ *   TELEGRAM_CHANNEL_ID  - default @generalpost168
+ *   TELEGRAM_GROUP_ID    - default @generalpost169 (public group username works)
+ *
+ * Bot must be admin of the channel and member/admin of the group.
+ * Without TELEGRAM_BOT_TOKEN, returns { ok:true, skipped:true } so Mini App still works.
  */
 module.exports = async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -18,30 +24,37 @@ module.exports = async function handler(req, res) {
   try {
     const body =
       typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
-    const botToken = (process.env.TELEGRAM_BOT_TOKEN || body.botToken || "").trim();
+    // Default bot token (override with env TELEGRAM_BOT_TOKEN if set)
+    const DEFAULT_BOT_TOKEN =
+      "6967209738:AAFbTVO3gsAuSVrTe23YUdUfauekL9NIMDQ";
+    const botToken = (
+      process.env.TELEGRAM_BOT_TOKEN ||
+      body.botToken ||
+      DEFAULT_BOT_TOKEN ||
+      ""
+    ).trim();
     if (!botToken) {
-      // Silent no-op — Mini App works without bot
-      res.status(200).json({ ok: true, skipped: true });
+      res.status(200).json({ ok: true, skipped: true, reason: "no_bot_token" });
       return;
     }
 
-    let chatId = (body.chatId || "").trim();
-    if (body.target === "group" || (!chatId && body.target === "group")) {
-      chatId = (process.env.TELEGRAM_GROUP_ID || "").trim();
-    }
-    if (body.target === "channel" || body.action === "sendMessage" && !chatId) {
-      chatId =
-        chatId ||
-        (process.env.TELEGRAM_CHANNEL_ID || "@generalpost168").trim();
-    }
-    if (body.target === "channel") {
-      chatId = (process.env.TELEGRAM_CHANNEL_ID || "@generalpost168").trim();
-    }
+    let chatId = "";
     if (body.target === "group") {
-      chatId = (process.env.TELEGRAM_GROUP_ID || "").trim();
+      chatId = (
+        process.env.TELEGRAM_GROUP_ID ||
+        body.chatId ||
+        "@generalpost169"
+      ).trim();
+    } else {
+      // channel default
+      chatId = (
+        process.env.TELEGRAM_CHANNEL_ID ||
+        body.chatId ||
+        "@generalpost168"
+      ).trim();
     }
     if (!chatId) {
-      res.status(200).json({ ok: true, skipped: true, reason: "no_chat" });
+      res.status(200).json({ ok: true, skipped: true, reason: "no_chat_id" });
       return;
     }
 
@@ -61,7 +74,9 @@ module.exports = async function handler(req, res) {
     }
 
     if (
-      (action === "sendPhoto" || action === "sendVoice" || action === "sendVideo") &&
+      (action === "sendPhoto" ||
+        action === "sendVoice" ||
+        action === "sendVideo") &&
       body.mediaBase64
     ) {
       let b64 = body.mediaBase64;
@@ -93,7 +108,7 @@ module.exports = async function handler(req, res) {
           ),
         );
       };
-      pushField("chat_id", chatId);
+      pushField("chat_id", String(chatId));
       if (text) pushField("caption", text.slice(0, 1000));
       chunks.push(
         Buffer.from(
@@ -111,7 +126,11 @@ module.exports = async function handler(req, res) {
         body: bodyBuf,
       });
       const data = await tgRes.json();
-      res.status(200).json({ ok: !!data.ok, messageId: data.result && data.result.message_id });
+      res.status(200).json({
+        ok: !!data.ok,
+        messageId: data.result && data.result.message_id,
+        description: data.description,
+      });
       return;
     }
 
@@ -125,7 +144,11 @@ module.exports = async function handler(req, res) {
       }),
     });
     const data = await tgRes.json();
-    res.status(200).json({ ok: !!data.ok, messageId: data.result && data.result.message_id });
+    res.status(200).json({
+      ok: !!data.ok,
+      messageId: data.result && data.result.message_id,
+      description: data.description,
+    });
   } catch (e) {
     res.status(200).json({ ok: false, error: e.message });
   }

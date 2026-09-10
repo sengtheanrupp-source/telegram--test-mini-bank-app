@@ -1322,12 +1322,14 @@
               </div>
               <span class="text-[10px] font-bold text-slate-700 dark:text-slate-200">Upload QR</span>
             </button>
-            <button onclick="openPostView()" class="relative quick-tile p-3 flex flex-col items-center gap-2">
-              <div class="quick-icon" style="background:linear-gradient(145deg,#fdf2f8,#fce7f3);color:#db2777">
-                <i class="fa-solid fa-clapperboard"></i>
+            <button onclick="openPostView()" class="quick-tile p-3 flex flex-col items-center gap-2">
+              <div class="relative">
+                <div class="quick-icon" style="background:linear-gradient(145deg,#fdf2f8,#fce7f3);color:#db2777">
+                  <i class="fa-solid fa-clapperboard"></i>
+                </div>
+                <span id="postHomeBadge" class="hidden absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-bold leading-4 text-center z-10">0</span>
               </div>
               <span class="text-[10px] font-bold text-slate-700 dark:text-slate-200">Post</span>
-              <span id="postHomeBadge" class="hidden absolute top-1 right-1 min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-bold leading-4 text-center">0</span>
             </button>
             <button data-menu-deeplink onclick="openDeeplinkViewManually()" class="hidden quick-tile p-3 flex flex-col items-center gap-2">
               <div class="quick-icon" style="background:linear-gradient(145deg,#f5f3ff,#ede9fe);color:#7c3aed">
@@ -2123,10 +2125,12 @@ System ready...</pre
           <span class="nav-fab"><i class="fa-solid fa-qrcode"></i></span>
           <span class="text-[9px] font-bold text-indigo-600 dark:text-indigo-400 mt-0.5">Scan</span>
         </button>
-        <button id="tab-btn-post" onclick="openPostView()" class="relative flex flex-col items-center justify-center gap-0.5 py-2.5 text-slate-400">
-          <i class="fa-solid fa-clapperboard text-[17px]"></i>
+        <button id="tab-btn-post" onclick="openPostView()" class="flex flex-col items-center justify-center gap-0.5 py-2.5 text-slate-400">
+          <span class="relative inline-flex items-center justify-center">
+            <i class="fa-solid fa-clapperboard text-[17px]"></i>
+            <span id="postNavBadge" class="hidden absolute -top-1.5 -right-2.5 min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-bold leading-4 text-center z-10 pointer-events-none">0</span>
+          </span>
           <span class="text-[9px] font-bold">Post</span>
-          <span id="postNavBadge" class="hidden absolute top-1 right-3 min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-bold leading-4 text-center">0</span>
         </button>
         <button id="tab-btn-settings" onclick="toggleSettingsDrawer()" class="flex flex-col items-center justify-center gap-0.5 py-2.5 text-slate-400">
           <i class="fa-solid fa-gear text-[17px]"></i>

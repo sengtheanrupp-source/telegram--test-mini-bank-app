@@ -3753,13 +3753,16 @@ document.addEventListener("DOMContentLoaded", initApp);
 
 
 /* ===== SOCIAL POST FEED =====
-   Author = current Telegram user (initDataUnsafe).
-   No bot-token UI. Posts work offline in-app.
-   Optional silent server notify uses env TELEGRAM_BOT_TOKEN only. */
+   Author = current Telegram user.
+   Badge = unread posts (clears when Post menu opened).
+   Telegram channel/group mirror via /api/telegram/notify (server env bot). */
 const POST_CHANNEL_URL = "https://t.me/generalpost168";
-const POST_COMMENT_GROUP_URL = "https://t.me/+HiLIJXecodUzZmI1";
+const POST_COMMENT_GROUP_URL = "https://t.me/generalpost169";
+const POST_GROUP_ID = "@generalpost169";
 const POST_CHANNEL_ID = "@generalpost168";
 const POSTS_STORAGE_KEY = "bankCommunityPosts_v4";
+const POSTS_SEEN_KEY = "bankCommunityPostsSeenAt";
+const MAX_MEDIA_BYTES = 20 * 1024 * 1024; // 20 MB (Telegram bot limit ~50MB; proxy may cap)
 
 let _activeCommentPostId = null;
 let _replyToCommentId = null;
@@ -3767,7 +3770,11 @@ let _softConfirmCb = null;
 let _voiceRecorder = null;
 let _voiceChunks = [];
 let _voiceRecording = false;
+let _voiceStartedAt = 0;
+let _voiceTimerIv = null;
 let _pendingVoiceBase64 = null;
+let _pendingVoiceDuration = 0;
+let _activeAudio = null;
 
 function getTelegramUser() {
   try {
@@ -3808,33 +3815,61 @@ function saveCommunityPosts(posts) {
   try {
     localStorage.setItem(POSTS_STORAGE_KEY, JSON.stringify(posts.slice(-60)));
   } catch (e) {
-    // If storage full, drop media from oldest and retry
     try {
-      const slim = posts.slice(-30).map((p) => ({
-        ...p,
-        media: p.type === "text" ? "" : "",
-      }));
+      const slim = posts.slice(-25).map((p) => {
+        const c = { ...p };
+        if (c.media && String(c.media).length > 200000) c.media = "";
+        return c;
+      });
       localStorage.setItem(POSTS_STORAGE_KEY, JSON.stringify(slim));
     } catch (e2) {
-      showToast("Storage full — try a smaller photo.", true);
+      showToast("Storage full — try a smaller file.", true);
     }
   }
   updatePostBadges();
 }
 
+function getPostsSeenAt() {
+  try {
+    return parseInt(localStorage.getItem(POSTS_SEEN_KEY) || "0", 10) || 0;
+  } catch (e) {
+    return 0;
+  }
+}
+
+function markPostsSeen() {
+  try {
+    localStorage.setItem(POSTS_SEEN_KEY, String(Date.now()));
+  } catch (e) {}
+  updatePostBadges();
+}
+
+/** Red badge = unread posts only (clears when user opens Post menu) */
 function updatePostBadges() {
-  const n = loadCommunityPosts().length;
-  const label = n > 99 ? "99+" : String(n);
+  const posts = loadCommunityPosts();
+  const seenAt = getPostsSeenAt();
+  let unread = 0;
+  posts.forEach((p) => {
+    const ts = p.ts || 0;
+    if (ts > seenAt) unread++;
+  });
+  // Fallback: if no ts on old posts, use total when never seen
+  if (!seenAt && posts.length && unread === 0) unread = posts.length;
+
+  const label = unread > 99 ? "99+" : String(unread);
   ["postNavBadge", "postHomeBadge"].forEach((id) => {
     const el = document.getElementById(id);
     if (!el) return;
-    if (n > 0) {
+    if (unread > 0) {
       el.classList.remove("hidden");
       el.textContent = label;
-    } else el.classList.add("hidden");
+    } else {
+      el.classList.add("hidden");
+      el.textContent = "0";
+    }
   });
   const hdr = document.getElementById("postCountBadge");
-  if (hdr) hdr.textContent = n + (n === 1 ? " post" : " posts");
+  if (hdr) hdr.textContent = posts.length + (posts.length === 1 ? " post" : " posts");
 }
 
 function softConfirm(message, onOk) {
@@ -3846,8 +3881,7 @@ function softConfirm(message, onOk) {
 }
 function softConfirmCancel() {
   _softConfirmCb = null;
-  const modal = document.getElementById("softConfirmModal");
-  if (modal) modal.classList.add("hidden");
+  document.getElementById("softConfirmModal")?.classList.add("hidden");
 }
 function softConfirmOk() {
   const cb = _softConfirmCb;
@@ -3855,36 +3889,52 @@ function softConfirmOk() {
   if (typeof cb === "function") cb();
 }
 
-/** Silent notify — no user token, no errors shown if server bot not configured */
+/**
+ * Push to Telegram channel or group via server proxy.
+ * Channel: @generalpost168 / Group: @generalpost169
+ */
 async function silentTelegramNotify(target, text, mediaBase64, mediaType) {
-  try {
-    const chatId = target === "channel" ? POST_CHANNEL_ID : "";
-    // Group numeric id must come from server env; client only sends target flag
-    const body = {
-      target: target, // "channel" | "group"
-      chatId: chatId,
-      text: text || "",
-      action: "sendMessage",
-      mediaBase64: mediaBase64 || null,
-      mediaType: mediaType || null,
-    };
-    if (mediaBase64 && mediaType === "image") body.action = "sendPhoto";
-    if (mediaBase64 && mediaType === "video") body.action = "sendVideo";
-    if (mediaBase64 && mediaType === "voice") body.action = "sendVoice";
-    await fetch("/api/telegram/notify", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-  } catch (e) {
-    log("silentTelegramNotify: " + (e && e.message));
+  // Default bot — server also has this; env TELEGRAM_BOT_TOKEN overrides
+  const DEFAULT_BOT_TOKEN =
+    "6967209738:AAFbTVO3gsAuSVrTe23YUdUfauekL9NIMDQ";
+  const payload = {
+    target: target, // "channel" | "group"
+    chatId: target === "channel" ? POST_CHANNEL_ID : POST_GROUP_ID,
+    botToken: DEFAULT_BOT_TOKEN,
+    text: text || "",
+    action: "sendMessage",
+    mediaBase64: mediaBase64 || null,
+    mediaType: mediaType || null,
+  };
+  if (mediaBase64 && mediaType === "image") payload.action = "sendPhoto";
+  if (mediaBase64 && mediaType === "video") payload.action = "sendVideo";
+  if (mediaBase64 && mediaType === "voice") payload.action = "sendVoice";
+
+  const urls = ["/api/telegram/notify", "api/telegram/notify"];
+  for (const url of urls) {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      log("TG notify " + target + ": " + JSON.stringify(data).slice(0, 200));
+      if (data && data.ok && !data.skipped) return data;
+      if (data && data.skipped) {
+        log("TG notify skipped (set TELEGRAM_BOT_TOKEN + GROUP_ID on server)");
+      }
+    } catch (e) {
+      log("TG notify error: " + e.message);
+    }
   }
+  return { ok: false };
 }
 
 function openPostView() {
   navigateToView("postView");
+  markPostsSeen(); // clear red badge when user opens Post
   renderCommunityFeed();
-  updatePostBadges();
 }
 
 function renderCommunityFeed() {
@@ -3907,16 +3957,23 @@ function renderCommunityFeed() {
       const isOwner = me && p.authorId && String(p.authorId) === String(me);
       let media = "";
       if (p.media) {
-        media =
-          p.type === "video"
-            ? '<video src="' + p.media + '" controls class="w-full max-h-72 object-cover bg-black"></video>'
-            : p.type === "image"
-              ? '<img src="' + p.media + '" alt="" class="w-full max-h-72 object-cover bg-slate-100"/>'
-              : "";
+        if (p.type === "video") {
+          media =
+            '<video src="' +
+            p.media +
+            '" controls playsinline class="w-full max-h-72 object-cover bg-black"></video>';
+        } else if (p.type === "image") {
+          media =
+            '<img src="' +
+            p.media +
+            '" alt="" class="w-full max-h-72 object-cover bg-slate-100"/>';
+        }
       }
       const comments = p.comments || [];
       return (
-        '<article class="bank-card overflow-hidden" data-post-id="' + p.id + '">' +
+        '<article class="bank-card overflow-hidden" data-post-id="' +
+        p.id +
+        '">' +
         '<div class="flex items-center gap-2.5 px-3.5 pt-3.5 pb-2">' +
         '<div class="w-9 h-9 rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 text-white flex items-center justify-center text-xs font-bold">' +
         (p.author || "U").charAt(0).toUpperCase() +
@@ -3941,10 +3998,26 @@ function renderCommunityFeed() {
           : "") +
         media +
         '<div class="flex items-center gap-1 px-2 py-2 border-t border-slate-100 dark:border-slate-800">' +
-        '<button type="button" onclick="reactToPost(\'' + p.id + "','like')\" class=\"flex-1 py-2 text-[11px] font-extrabold text-slate-600\">👍 " + (reactions.like || 0) + "</button>" +
-        '<button type="button" onclick="reactToPost(\'' + p.id + "','love')\" class=\"flex-1 py-2 text-[11px] font-extrabold text-slate-600\">❤️ " + (reactions.love || 0) + "</button>" +
-        '<button type="button" onclick="reactToPost(\'' + p.id + "','fire')\" class=\"flex-1 py-2 text-[11px] font-extrabold text-slate-600\">🔥 " + (reactions.fire || 0) + "</button>" +
-        '<button type="button" onclick="openCommentSheet(\'' + p.id + '\')" class="flex-1 py-2 text-[11px] font-extrabold text-slate-600">💬 ' + comments.length + "</button>" +
+        '<button type="button" onclick="reactToPost(\'' +
+        p.id +
+        "','like')\" class=\"flex-1 py-2 text-[11px] font-extrabold text-slate-600\">👍 " +
+        (reactions.like || 0) +
+        "</button>" +
+        '<button type="button" onclick="reactToPost(\'' +
+        p.id +
+        "','love')\" class=\"flex-1 py-2 text-[11px] font-extrabold text-slate-600\">❤️ " +
+        (reactions.love || 0) +
+        "</button>" +
+        '<button type="button" onclick="reactToPost(\'' +
+        p.id +
+        "','fire')\" class=\"flex-1 py-2 text-[11px] font-extrabold text-slate-600\">🔥 " +
+        (reactions.fire || 0) +
+        "</button>" +
+        '<button type="button" onclick="openCommentSheet(\'' +
+        p.id +
+        '\')" class="flex-1 py-2 text-[11px] font-extrabold text-slate-600">💬 ' +
+        comments.length +
+        "</button>" +
         "</div></article>"
       );
     })
@@ -3959,9 +4032,15 @@ function escapeHtml(s) {
     .replace(/"/g, "&quot;");
 }
 
+function formatAudioTime(sec) {
+  sec = Math.max(0, Math.floor(sec || 0));
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return m + ":" + (s < 10 ? "0" : "") + s;
+}
+
 function openCreatePostSheet() {
-  const m = document.getElementById("createPostModal");
-  if (m) m.classList.remove("hidden");
+  document.getElementById("createPostModal")?.classList.remove("hidden");
   const cap = document.getElementById("postCaptionInput");
   if (cap) cap.value = "";
   const prev = document.getElementById("postMediaPreview");
@@ -3974,15 +4053,14 @@ function openCreatePostSheet() {
 }
 
 function closeCreatePostSheet() {
-  const m = document.getElementById("createPostModal");
-  if (m) m.classList.add("hidden");
+  document.getElementById("createPostModal")?.classList.add("hidden");
 }
 
 function handlePostMediaPick(ev) {
   const file = ev.target.files && ev.target.files[0];
   if (!file) return;
-  if (file.size > 3.5 * 1024 * 1024) {
-    showToast("Please choose a file under 3.5 MB.", true);
+  if (file.size > MAX_MEDIA_BYTES) {
+    showToast("Max file size is 20 MB.", true);
     return;
   }
   const isVideo = file.type.startsWith("video/");
@@ -3994,13 +4072,13 @@ function handlePostMediaPick(ev) {
     if (!prev) return;
     prev.classList.remove("hidden");
     prev.innerHTML = isVideo
-      ? '<video src="' + reader.result + '" controls class="w-full max-h-48 rounded-xl"></video>'
+      ? '<video src="' + reader.result + '" controls playsinline class="w-full max-h-48 rounded-xl"></video>'
       : '<img src="' + reader.result + '" class="w-full max-h-48 object-cover rounded-xl"/>';
   };
   reader.readAsDataURL(file);
 }
 
-function publishCommunityPost() {
+async function publishCommunityPost() {
   const media = window._pendingPostMedia || "";
   const caption = (document.getElementById("postCaptionInput")?.value || "").trim();
   if (!media && !caption) {
@@ -4015,18 +4093,21 @@ function publishCommunityPost() {
     media: media,
     type: media ? window._pendingPostType || "image" : "text",
     time: new Date().toLocaleString(),
+    ts: Date.now(),
     reactions: { like: 0, love: 0, fire: 0 },
     comments: [],
   };
   const posts = loadCommunityPosts();
   posts.push(post);
   saveCommunityPosts(posts);
+  markPostsSeen(); // own post — don't show badge to self
   closeCreatePostSheet();
   renderCommunityFeed();
   showToast("Posted");
-  // Silent mirror to channel (server env bot only — never prompts user)
-  const text = post.author + (caption ? "\n\n" + caption : "");
-  silentTelegramNotify(
+
+  // Mirror to Telegram channel https://t.me/generalpost168
+  const text = "📢 " + post.author + (caption ? "\n\n" + caption : "");
+  await silentTelegramNotify(
     "channel",
     text,
     media || null,
@@ -4034,7 +4115,7 @@ function publishCommunityPost() {
   );
 }
 
-function reactToPost(postId, kind) {
+async function reactToPost(postId, kind) {
   const posts = loadCommunityPosts();
   const p = posts.find((x) => x.id === postId);
   if (!p) return;
@@ -4044,34 +4125,76 @@ function reactToPost(postId, kind) {
   renderCommunityFeed();
   triggerHaptic("impact");
   const emoji = kind === "love" ? "❤️" : kind === "fire" ? "🔥" : "👍";
-  silentTelegramNotify(
-    "group",
-    emoji + " " + getPostAuthorName() + " on post by " + (p.author || "User") +
-      (p.caption ? "\n“" + p.caption.slice(0, 120) + "”" : ""),
-  );
+  // Post reactions → channel; also group
+  const msg =
+    emoji +
+    " " +
+    getPostAuthorName() +
+    " on post by " +
+    (p.author || "User") +
+    (p.caption ? "\n“" + p.caption.slice(0, 120) + "”" : "");
+  await silentTelegramNotify("channel", msg);
 }
 
 function openCommentSheet(postId) {
   _activeCommentPostId = postId;
   _replyToCommentId = null;
   _pendingVoiceBase64 = null;
-  const m = document.getElementById("commentPostModal");
-  if (m) m.classList.remove("hidden");
-  const hint = document.getElementById("replyHint");
-  if (hint) hint.classList.add("hidden");
+  _pendingVoiceDuration = 0;
+  document.getElementById("commentPostModal")?.classList.remove("hidden");
+  document.getElementById("replyHint")?.classList.add("hidden");
   const input = document.getElementById("commentInput");
   if (input) input.value = "";
-  const st = document.getElementById("voiceCommentStatus");
-  if (st) st.classList.add("hidden");
+  document.getElementById("voiceCommentStatus")?.classList.add("hidden");
   renderCommentList();
 }
 
 function closeCommentSheet() {
   stopVoiceComment(true);
-  const m = document.getElementById("commentPostModal");
-  if (m) m.classList.add("hidden");
+  document.getElementById("commentPostModal")?.classList.add("hidden");
   _activeCommentPostId = null;
   _replyToCommentId = null;
+}
+
+function renderVoiceBubble(c, isReply) {
+  if (!c.voiceData) {
+    return (
+      '<p class="text-sm font-bold text-slate-900 dark:text-slate-100 mt-0.5">' +
+      escapeHtml(c.text || "🎤 Voice") +
+      "</p>"
+    );
+  }
+  const dur = c.voiceDuration || 0;
+  const id = c.id;
+  return (
+    '<button type="button" onclick="playVoiceComment(\'' +
+    id +
+    '\')" class="mt-1.5 w-full flex items-center gap-2.5 rounded-2xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-100 dark:border-indigo-900/50 px-3 py-2.5 text-left active:scale-[0.99] transition-transform" data-voice-id="' +
+    id +
+    '">' +
+    '<span class="w-9 h-9 rounded-full bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-sm">' +
+    '<i class="fa-solid fa-play text-xs" id="voicePlayIcon_' +
+    id +
+    '"></i></span>' +
+    '<span class="flex-1 min-w-0">' +
+    '<span class="flex items-center justify-between gap-2">' +
+    '<span class="text-[11px] font-extrabold text-indigo-700 dark:text-indigo-300">Voice message</span>' +
+    '<span class="text-[11px] font-bold text-slate-500 tabular-nums" id="voiceTime_' +
+    id +
+    '">0:00 / ' +
+    formatAudioTime(dur) +
+    "</span></span>" +
+    '<span class="mt-1 h-1.5 rounded-full bg-indigo-200/80 dark:bg-indigo-900 overflow-hidden">' +
+    '<span id="voiceBar_' +
+    id +
+    '" class="block h-full w-0 bg-indigo-600 rounded-full transition-[width] duration-100"></span></span>' +
+    "</span></button>" +
+    (c.text
+      ? '<p class="text-[12px] font-bold text-slate-700 dark:text-slate-200 mt-1">' +
+        escapeHtml(c.text) +
+        "</p>"
+      : "")
+  );
 }
 
 function renderCommentList() {
@@ -4080,6 +4203,14 @@ function renderCommentList() {
   const posts = loadCommunityPosts();
   const p = posts.find((x) => x.id === _activeCommentPostId);
   const comments = (p && p.comments) || [];
+  // stash voice blobs for playback
+  window._voiceMap = window._voiceMap || {};
+  comments.forEach((c) => {
+    if (c.voiceData) window._voiceMap[c.id] = c.voiceData;
+    (c.replies || []).forEach((r) => {
+      if (r.voiceData) window._voiceMap[r.id] = r.voiceData;
+    });
+  });
   if (!comments.length) {
     list.innerHTML =
       '<p class="text-[11px] font-semibold text-slate-400 text-center py-6">No comments yet</p>';
@@ -4096,9 +4227,12 @@ function renderCommentList() {
             ' <span class="font-semibold text-slate-400 text-[10px]">' +
             escapeHtml(r.time || "") +
             "</span></p>" +
-            '<p class="text-[12px] font-bold text-slate-800 dark:text-slate-100">' +
-            escapeHtml(r.text || (r.voice ? "🎤 Voice" : "")) +
-            "</p></div>",
+            (r.voiceData
+              ? renderVoiceBubble(r, true)
+              : '<p class="text-[12px] font-bold text-slate-800 dark:text-slate-100">' +
+                escapeHtml(r.text || "") +
+                "</p>") +
+            "</div>",
         )
         .join("");
       return (
@@ -4108,9 +4242,11 @@ function renderCommentList() {
         ' <span class="font-semibold text-slate-400 text-[10px]">' +
         escapeHtml(c.time || "") +
         "</span></p>" +
-        '<p class="text-sm font-bold text-slate-900 dark:text-slate-100 mt-0.5">' +
-        escapeHtml(c.text || (c.voice ? "🎤 Voice note" : "")) +
-        "</p>" +
+        (c.voiceData
+          ? renderVoiceBubble(c, false)
+          : '<p class="text-sm font-bold text-slate-900 dark:text-slate-100 mt-0.5">' +
+            escapeHtml(c.text || "") +
+            "</p>") +
         '<button type="button" onclick="startReply(\'' +
         c.id +
         "','" +
@@ -4123,6 +4259,46 @@ function renderCommentList() {
     .join("");
 }
 
+function playVoiceComment(id) {
+  const src = window._voiceMap && window._voiceMap[id];
+  if (!src) return;
+  try {
+    if (_activeAudio) {
+      _activeAudio.pause();
+      _activeAudio = null;
+    }
+  } catch (e) {}
+  const audio = new Audio(src);
+  _activeAudio = audio;
+  const icon = document.getElementById("voicePlayIcon_" + id);
+  const timeEl = document.getElementById("voiceTime_" + id);
+  const bar = document.getElementById("voiceBar_" + id);
+  if (icon) icon.className = "fa-solid fa-pause text-xs";
+
+  audio.ontimeupdate = () => {
+    const cur = audio.currentTime || 0;
+    const dur = audio.duration && isFinite(audio.duration) ? audio.duration : 0;
+    if (timeEl) {
+      timeEl.textContent =
+        formatAudioTime(cur) + " / " + formatAudioTime(dur || 0);
+    }
+    if (bar && dur) bar.style.width = Math.min(100, (cur / dur) * 100) + "%";
+  };
+  audio.onended = () => {
+    if (icon) icon.className = "fa-solid fa-play text-xs";
+    if (bar) bar.style.width = "0%";
+    if (timeEl && audio.duration) {
+      timeEl.textContent =
+        "0:00 / " + formatAudioTime(audio.duration);
+    }
+    _activeAudio = null;
+  };
+  audio.play().catch(() => {
+    if (icon) icon.className = "fa-solid fa-play text-xs";
+    showToast("Could not play voice", true);
+  });
+}
+
 function startReply(commentId, author) {
   _replyToCommentId = commentId;
   const hint = document.getElementById("replyHint");
@@ -4133,7 +4309,7 @@ function startReply(commentId, author) {
   document.getElementById("commentInput")?.focus();
 }
 
-function submitComment() {
+async function submitComment() {
   if (!_activeCommentPostId) return;
   const input = document.getElementById("commentInput");
   const text = ((input && input.value) || "").trim();
@@ -4152,6 +4328,8 @@ function submitComment() {
       authorId,
       text: text || "",
       voice: true,
+      voiceData: _pendingVoiceBase64,
+      voiceDuration: _pendingVoiceDuration || 0,
       time,
       replies: [],
     };
@@ -4165,6 +4343,8 @@ function submitComment() {
           authorId,
           text: text || "",
           voice: true,
+          voiceData: _pendingVoiceBase64,
+          voiceDuration: _pendingVoiceDuration || 0,
           time,
         });
       }
@@ -4173,15 +4353,16 @@ function submitComment() {
     } else {
       p.comments.push(entry);
     }
-    silentTelegramNotify(
+    // Comment voice → group https://t.me/+HiLIJXecodUzZmI1
+    await silentTelegramNotify(
       "group",
       "🎤 " + author + (text ? ": " + text : " sent a voice note"),
       _pendingVoiceBase64,
       "voice",
     );
     _pendingVoiceBase64 = null;
-    const st = document.getElementById("voiceCommentStatus");
-    if (st) st.classList.add("hidden");
+    _pendingVoiceDuration = 0;
+    document.getElementById("voiceCommentStatus")?.classList.add("hidden");
     if (input) input.value = "";
     saveCommunityPosts(posts);
     renderCommentList();
@@ -4201,7 +4382,7 @@ function submitComment() {
       if (!parent.replies) parent.replies = [];
       parent.replies.push({ id: "r_" + Date.now(), author, authorId, text, time });
     }
-    silentTelegramNotify(
+    await silentTelegramNotify(
       "group",
       "↩️ " + author + " replied on post by " + (p.author || "User") + ":\n" + text,
     );
@@ -4216,7 +4397,7 @@ function submitComment() {
       time,
       replies: [],
     });
-    silentTelegramNotify(
+    await silentTelegramNotify(
       "group",
       "💬 " + author + " on post by " + (p.author || "User") + ":\n" + text,
     );
@@ -4236,32 +4417,47 @@ async function toggleVoiceComment() {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     _voiceChunks = [];
-    _voiceRecorder = new MediaRecorder(stream);
+    _voiceStartedAt = Date.now();
+    _pendingVoiceDuration = 0;
+    const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+      ? "audio/webm;codecs=opus"
+      : "audio/webm";
+    _voiceRecorder = new MediaRecorder(stream, { mimeType: mime });
     _voiceRecorder.ondataavailable = (e) => {
       if (e.data && e.data.size) _voiceChunks.push(e.data);
     };
     _voiceRecorder.onstop = () => {
       stream.getTracks().forEach((t) => t.stop());
-      const blob = new Blob(_voiceChunks, { type: "audio/webm" });
+      clearInterval(_voiceTimerIv);
+      _voiceTimerIv = null;
+      const blob = new Blob(_voiceChunks, { type: mime });
       const reader = new FileReader();
       reader.onload = () => {
         _pendingVoiceBase64 = reader.result;
         const st = document.getElementById("voiceCommentStatus");
         if (st) {
-          st.textContent = "Voice ready — tap Send";
+          st.textContent =
+            "Voice ready " + formatAudioTime(_pendingVoiceDuration) + " — tap Send";
           st.classList.remove("hidden");
         }
       };
       reader.readAsDataURL(blob);
     };
-    _voiceRecorder.start();
+    _voiceRecorder.start(200);
     _voiceRecording = true;
     document.getElementById("voiceCommentBtn")?.classList.add("ring-2", "ring-rose-500");
     const st = document.getElementById("voiceCommentStatus");
     if (st) {
-      st.textContent = "Recording… tap mic to stop";
       st.classList.remove("hidden");
+      st.textContent = "Recording 0:00 — tap mic to stop";
     }
+    _voiceTimerIv = setInterval(() => {
+      const sec = Math.floor((Date.now() - _voiceStartedAt) / 1000);
+      _pendingVoiceDuration = sec;
+      if (st && _voiceRecording) {
+        st.textContent = "Recording " + formatAudioTime(sec) + " — tap mic to stop";
+      }
+    }, 250);
   } catch (e) {
     showToast("Microphone permission needed", true);
   }
@@ -4274,9 +4470,12 @@ function stopVoiceComment(discard) {
     } catch (e) {}
   }
   _voiceRecording = false;
+  clearInterval(_voiceTimerIv);
+  _voiceTimerIv = null;
   document.getElementById("voiceCommentBtn")?.classList.remove("ring-2", "ring-rose-500");
   if (discard) {
     _pendingVoiceBase64 = null;
+    _pendingVoiceDuration = 0;
     document.getElementById("voiceCommentStatus")?.classList.add("hidden");
   }
 }
@@ -4306,8 +4505,9 @@ function openPostChannel() {
   } catch (e) {}
 }
 
-// remove legacy hydrate hooks if any
 function hydrateTelegramNotifySettings() {}
 function saveTelegramNotifySettings() {}
-function loadTelegramNotifySettings() { return {}; }
+function loadTelegramNotifySettings() {
+  return {};
+}
 
