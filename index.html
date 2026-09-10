@@ -1036,13 +1036,6 @@
                 </span>
                 <input id="showUtilityBillsEnabled" type="checkbox" checked onchange="toggleBillsMenuSetting()" class="w-4 h-4 accent-indigo-600 rounded cursor-pointer shrink-0" />
               </label>
-              <div class="bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2">
-                <p class="text-xs font-bold text-slate-800 dark:text-slate-200">Community Telegram (required for Post)</p>
-                <p class="text-[10px] text-slate-400">Add bot token — bot must be <b>admin</b> of channel @generalpost168 and the comment group. Posts/comments are stored on Telegram only.</p>
-                <input id="telegramBotToken" type="password" placeholder="Bot token" class="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs" onchange="saveTelegramNotifySettings()" />
-                <input id="telegramChannelId" type="text" placeholder="Channel id e.g. @generalpost168" value="@generalpost168" class="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs" onchange="saveTelegramNotifySettings()" />
-                <input id="telegramGroupId" type="text" placeholder="Group chat id (numeric)" class="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs" onchange="saveTelegramNotifySettings()" />
-              </div>
             </div>
 
             <!-- PANEL: CAMERA & VOICE -->
@@ -2522,14 +2515,13 @@ System ready...</pre
     <div id="createPostModal" class="hidden fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-950/60 backdrop-blur-sm p-0 sm:p-4">
       <div class="bg-white dark:bg-slate-900 w-full max-w-sm rounded-t-3xl sm:rounded-3xl p-5 shadow-2xl space-y-3 max-h-[90vh] overflow-y-auto">
         <h3 class="text-sm font-extrabold text-slate-900 dark:text-white">New post</h3>
-        <p class="text-[10px] text-slate-500">Publishes to Telegram channel <b>@generalpost168</b> (not stored as media in app).</p>
         <textarea id="postCaptionInput" rows="4" placeholder="Write your post…" class="w-full rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-3 text-sm font-bold text-slate-900 dark:text-white leading-relaxed focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
         <label class="bank-btn-secondary w-full py-3 text-xs flex items-center justify-center gap-2 cursor-pointer">
           <i class="fa-solid fa-image"></i> Photo or video (optional)
           <input type="file" accept="image/*,video/*" class="hidden" onchange="handlePostMediaPick(event)" />
         </label>
         <div id="postMediaPreview" class="hidden"></div>
-        <button onclick="publishCommunityPost()" class="bank-btn-primary w-full py-3.5 text-sm font-bold">Publish to channel</button>
+        <button onclick="publishCommunityPost()" class="bank-btn-primary w-full py-3.5 text-sm font-bold">Post</button>
         <button onclick="closeCreatePostSheet()" class="bank-btn-secondary w-full py-3 text-xs">Cancel</button>
       </div>
     </div>
@@ -2542,7 +2534,6 @@ System ready...</pre
           <h3 class="text-sm font-extrabold text-slate-900 dark:text-white">Comments</h3>
           <button type="button" onclick="closeCommentSheet()" class="text-slate-400 text-sm"><i class="fa-solid fa-xmark"></i></button>
         </div>
-        <p class="text-[10px] text-slate-500">Comments, replies, reactions &amp; voice go to the Telegram group (stay in Mini App).</p>
         <div id="commentList" class="flex-1 overflow-y-auto space-y-2 min-h-[120px] max-h-[40vh]"></div>
         <div class="space-y-2 border-t border-slate-100 dark:border-slate-800 pt-2">
           <p id="replyHint" class="hidden text-[11px] text-indigo-600 font-bold"></p>

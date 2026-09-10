@@ -1,7 +1,6 @@
 /**
- * Telegram Bot API proxy — keeps Mini App in-app (no CORS issues).
- * POST body: { botToken, chatId, text?, action?, messageId?, mediaBase64?, mediaType?, filename? }
- * action: sendMessage | sendPhoto | sendVoice | deleteMessage
+ * Silent Telegram notify — uses only server env credentials.
+ * TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID (@generalpost168), TELEGRAM_GROUP_ID
  */
 module.exports = async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -12,76 +11,79 @@ module.exports = async function handler(req, res) {
     return;
   }
   if (req.method !== "POST") {
-    res.status(405).json({ ok: false, error: "Method not allowed" });
+    res.status(405).json({ ok: false });
     return;
   }
 
   try {
     const body =
       typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
-    const botToken = (body.botToken || process.env.TELEGRAM_BOT_TOKEN || "").trim();
-    const chatId = (body.chatId || "").trim();
+    const botToken = (process.env.TELEGRAM_BOT_TOKEN || body.botToken || "").trim();
+    if (!botToken) {
+      // Silent no-op — Mini App works without bot
+      res.status(200).json({ ok: true, skipped: true });
+      return;
+    }
+
+    let chatId = (body.chatId || "").trim();
+    if (body.target === "group" || (!chatId && body.target === "group")) {
+      chatId = (process.env.TELEGRAM_GROUP_ID || "").trim();
+    }
+    if (body.target === "channel" || body.action === "sendMessage" && !chatId) {
+      chatId =
+        chatId ||
+        (process.env.TELEGRAM_CHANNEL_ID || "@generalpost168").trim();
+    }
+    if (body.target === "channel") {
+      chatId = (process.env.TELEGRAM_CHANNEL_ID || "@generalpost168").trim();
+    }
+    if (body.target === "group") {
+      chatId = (process.env.TELEGRAM_GROUP_ID || "").trim();
+    }
+    if (!chatId) {
+      res.status(200).json({ ok: true, skipped: true, reason: "no_chat" });
+      return;
+    }
+
     const action = (body.action || "sendMessage").trim();
     const text = body.text != null ? String(body.text) : "";
-
-    if (!botToken) {
-      res.status(400).json({ ok: false, error: "botToken required" });
-      return;
-    }
-    if (!chatId && action !== "getMe") {
-      res.status(400).json({ ok: false, error: "chatId required" });
-      return;
-    }
-
     const api = "https://api.telegram.org/bot" + botToken;
 
-    if (action === "deleteMessage") {
-      const messageId = body.messageId;
-      if (!messageId) {
-        res.status(400).json({ ok: false, error: "messageId required" });
-        return;
-      }
+    if (action === "deleteMessage" && body.messageId) {
       const tgRes = await fetch(api + "/deleteMessage", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chat_id: chatId, message_id: messageId }),
+        body: JSON.stringify({ chat_id: chatId, message_id: body.messageId }),
       });
       const data = await tgRes.json();
-      res.status(data.ok ? 200 : 502).json({ ok: !!data.ok, result: data });
+      res.status(200).json({ ok: !!data.ok, result: data });
       return;
     }
 
-    if (action === "sendPhoto" || action === "sendVoice" || action === "sendVideo") {
-      const mediaBase64 = body.mediaBase64 || "";
-      if (!mediaBase64) {
-        res.status(400).json({ ok: false, error: "mediaBase64 required" });
-        return;
-      }
-      // data URL or raw base64
-      let b64 = mediaBase64;
+    if (
+      (action === "sendPhoto" || action === "sendVoice" || action === "sendVideo") &&
+      body.mediaBase64
+    ) {
+      let b64 = body.mediaBase64;
       let mime = "application/octet-stream";
-      const m = /^data:([^;]+);base64,(.+)$/s.exec(mediaBase64);
+      const m = /^data:([^;]+);base64,(.+)$/s.exec(body.mediaBase64);
       if (m) {
         mime = m[1];
         b64 = m[2];
       }
       const bin = Buffer.from(b64, "base64");
       let field = "photo";
-      let filename = body.filename || "file.jpg";
+      let filename = "file.jpg";
       let method = "sendPhoto";
       if (action === "sendVoice") {
         field = "voice";
-        filename = body.filename || "voice.ogg";
+        filename = "voice.ogg";
         method = "sendVoice";
       } else if (action === "sendVideo") {
         field = "video";
-        filename = body.filename || "video.mp4";
+        filename = "video.mp4";
         method = "sendVideo";
-      } else if (mime.includes("png")) {
-        filename = "image.png";
       }
-
-      // multipart/form-data
       const boundary = "----BankMini" + Date.now();
       const chunks = [];
       const pushField = (name, value) => {
@@ -101,41 +103,30 @@ module.exports = async function handler(req, res) {
       chunks.push(bin);
       chunks.push(Buffer.from(`\r\n--${boundary}--\r\n`));
       const bodyBuf = Buffer.concat(chunks);
-
       const tgRes = await fetch(api + "/" + method, {
         method: "POST",
         headers: {
           "Content-Type": "multipart/form-data; boundary=" + boundary,
-          "Content-Length": String(bodyBuf.length),
         },
         body: bodyBuf,
       });
       const data = await tgRes.json();
-      res.status(data.ok ? 200 : 502).json({
-        ok: !!data.ok,
-        messageId: data.result && data.result.message_id,
-        result: data,
-      });
+      res.status(200).json({ ok: !!data.ok, messageId: data.result && data.result.message_id });
       return;
     }
 
-    // default sendMessage
     const tgRes = await fetch(api + "/sendMessage", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         chat_id: chatId,
-        text: text.slice(0, 4000) || "(empty)",
+        text: (text || "(empty)").slice(0, 4000),
         disable_web_page_preview: true,
       }),
     });
     const data = await tgRes.json();
-    res.status(data.ok ? 200 : 502).json({
-      ok: !!data.ok,
-      messageId: data.result && data.result.message_id,
-      result: data,
-    });
+    res.status(200).json({ ok: !!data.ok, messageId: data.result && data.result.message_id });
   } catch (e) {
-    res.status(500).json({ ok: false, error: e.message || "notify failed" });
+    res.status(200).json({ ok: false, error: e.message });
   }
 };
