@@ -1036,6 +1036,13 @@
                 </span>
                 <input id="showUtilityBillsEnabled" type="checkbox" checked onchange="toggleBillsMenuSetting()" class="w-4 h-4 accent-indigo-600 rounded cursor-pointer shrink-0" />
               </label>
+              <div class="bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2">
+                <p class="text-xs font-bold text-slate-800 dark:text-slate-200">Community Telegram (optional)</p>
+                <p class="text-[10px] text-slate-400">Bot must be admin of channel &amp; group. Used to push posts/comments without leaving Mini App.</p>
+                <input id="telegramBotToken" type="password" placeholder="Bot token" class="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs" onchange="saveTelegramNotifySettings()" />
+                <input id="telegramChannelId" type="text" placeholder="Channel id e.g. @generalpost168" value="@generalpost168" class="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs" onchange="saveTelegramNotifySettings()" />
+                <input id="telegramGroupId" type="text" placeholder="Group chat id (numeric)" class="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs" onchange="saveTelegramNotifySettings()" />
+              </div>
             </div>
 
             <!-- PANEL: CAMERA & VOICE -->
@@ -1359,7 +1366,7 @@
             </h2>
             <p class="text-[11px] text-slate-400">Share photos &amp; videos with the network</p>
           </div>
-          <button onclick="openPostChannel()" class="text-[10px] font-bold text-indigo-600 bg-indigo-50 dark:bg-indigo-950/40 px-2.5 py-1.5 rounded-full">Channel</button>
+          <span id="postCountBadge" class="text-[10px] font-bold text-pink-600 bg-pink-50 dark:bg-pink-950/40 px-2.5 py-1.5 rounded-full">0 posts</span>
         </div>
         <button onclick="openCreatePostSheet()" class="bank-btn-primary w-full py-3.5 text-sm flex items-center justify-center gap-2">
           <i class="fa-solid fa-plus"></i> New post
@@ -2110,21 +2117,18 @@ System ready...</pre
         </button>
         <button id="tab-btn-billpay" onclick="openPayBillMenu()" class="flex flex-col items-center justify-center gap-0.5 py-2.5 text-slate-400">
           <i class="fa-solid fa-receipt text-[17px]"></i>
-          <span class="text-[9px] font-bold">Pay Bill</span>
+          <span class="text-[9px] font-bold">Pay Bills</span>
         </button>
         <button id="tab-btn-camera" onclick="triggerInstantQRScan()" class="flex flex-col items-center justify-center gap-0.5 py-1.5 text-white" aria-label="Scan QR">
           <span class="nav-fab"><i class="fa-solid fa-qrcode"></i></span>
           <span class="text-[9px] font-bold text-indigo-600 dark:text-indigo-400 mt-0.5">Scan</span>
         </button>
-        <button id="tab-btn-post" onclick="openPostView()" class="flex flex-col items-center justify-center gap-0.5 py-2.5 text-slate-400">
+        <button id="tab-btn-post" onclick="openPostView()" class="relative flex flex-col items-center justify-center gap-0.5 py-2.5 text-slate-400">
           <i class="fa-solid fa-clapperboard text-[17px]"></i>
           <span class="text-[9px] font-bold">Post</span>
+          <span id="postNavBadge" class="hidden absolute top-1 right-3 min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-bold leading-4 text-center">0</span>
         </button>
-        <button id="tab-btn-payment" data-menu-deeplink onclick="openDeeplinkViewManually()" class="hidden flex flex-col items-center justify-center gap-0.5 py-2.5 text-slate-400">
-          <i class="fa-solid fa-link text-[17px]"></i>
-          <span class="text-[9px] font-bold">Link</span>
-        </button>
-        <button onclick="toggleSettingsDrawer()" class="flex flex-col items-center justify-center gap-0.5 py-2.5 text-slate-400">
+        <button id="tab-btn-settings" onclick="toggleSettingsDrawer()" class="flex flex-col items-center justify-center gap-0.5 py-2.5 text-slate-400">
           <i class="fa-solid fa-gear text-[17px]"></i>
           <span class="text-[9px] font-bold">Settings</span>
         </button>
@@ -2519,9 +2523,27 @@ System ready...</pre
         <div id="postMediaPreview" class="hidden"></div>
         <button onclick="publishCommunityPost()" class="bank-btn-primary w-full py-3.5 text-xs">Publish</button>
         <button onclick="closeCreatePostSheet()" class="bank-btn-secondary w-full py-3 text-xs">Cancel</button>
-        <p class="text-[10px] text-slate-400 text-center">Posts notify channel generalpost168 · Comments open group chat</p>
+        <p class="text-[10px] text-slate-400 text-center">Text-only is OK. Photo/video optional. Stays inside the Mini App.</p>
       </div>
     </div>
 
-  </body>
+  
+    <!-- IN-APP COMMENT SHEET -->
+    <div id="commentPostModal" class="hidden fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-950/60 backdrop-blur-sm p-0 sm:p-4">
+      <div class="bg-white dark:bg-slate-900 w-full max-w-sm rounded-t-3xl sm:rounded-3xl p-5 shadow-2xl space-y-3 max-h-[85vh] flex flex-col">
+        <div class="flex items-center justify-between">
+          <h3 class="text-sm font-extrabold text-slate-900 dark:text-white">Comments</h3>
+          <button type="button" onclick="closeCommentSheet()" class="text-slate-400 text-sm"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div id="commentList" class="flex-1 overflow-y-auto space-y-2 min-h-[120px] max-h-[40vh]"></div>
+        <div class="space-y-2 border-t border-slate-100 dark:border-slate-800 pt-2">
+          <p id="replyHint" class="hidden text-[10px] text-indigo-500 font-semibold"></p>
+          <div class="flex gap-2">
+            <input id="commentInput" type="text" placeholder="Write a comment…" class="flex-1 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2.5 text-xs" />
+            <button type="button" onclick="submitComment()" class="bank-btn-primary px-4 py-2.5 text-xs shrink-0">Send</button>
+          </div>
+        </div>
+      </div>
+    </div>
+</body>
 </html>

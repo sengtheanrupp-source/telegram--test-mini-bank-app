@@ -6,6 +6,10 @@
     {
       "source": "/transaction/generatelinks",
       "destination": "/api/transaction/generatelinks"
+    },
+    {
+      "source": "/api/telegram/notify",
+      "destination": "/api/telegram/notify"
     }
   ],
   "headers": [
