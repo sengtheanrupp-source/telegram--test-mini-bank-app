@@ -2095,6 +2095,8 @@ function loadAppPreferences() {
   if (genToggle) genToggle.checked = appPreferences.showGeneralBills !== false;
   if (utilToggle) utilToggle.checked = appPreferences.showUtilityBills !== false;
   applyMenuVisibility();
+  try { hydrateTelegramNotifySettings(); } catch (e) {}
+  try { updatePostBadges(); } catch (e) {}
 
   if ("speechSynthesis" in window) {
     try {
@@ -3750,14 +3752,21 @@ function initApp() {
 document.addEventListener("DOMContentLoaded", initApp);
 
 
-/* ===== SOCIAL POST FEED (in-app; Telegram notify via bot API proxy) ===== */
+/* ===== SOCIAL POST FEED — Telegram channel/group is source of truth =====
+   App keeps only lightweight index (no media blobs) for owner/delete + badge.
+   Full content lives on Telegram via Bot API proxy. */
 const POST_CHANNEL_URL = "https://t.me/generalpost168";
 const POST_COMMENT_GROUP_URL = "https://t.me/+HiLIJXecodUzZmI1";
-const POSTS_STORAGE_KEY = "bankCommunityPosts_v2";
+const POSTS_INDEX_KEY = "bankCommunityPostIndex_v3"; // lightweight only
 const TG_NOTIFY_KEY = "bankTelegramNotifySettings";
 
 let _activeCommentPostId = null;
 let _replyToCommentId = null;
+let _softConfirmCb = null;
+let _voiceRecorder = null;
+let _voiceChunks = [];
+let _voiceRecording = false;
+let _pendingVoiceBase64 = null;
 
 function loadTelegramNotifySettings() {
   try {
@@ -3775,7 +3784,7 @@ function saveTelegramNotifySettings() {
     groupId: (document.getElementById("telegramGroupId")?.value || "").trim(),
   };
   localStorage.setItem(TG_NOTIFY_KEY, JSON.stringify(s));
-  showToast("Telegram notify settings saved");
+  showToast("Telegram settings saved");
 }
 
 function hydrateTelegramNotifySettings() {
@@ -3788,38 +3797,13 @@ function hydrateTelegramNotifySettings() {
   if (gr && s.groupId) gr.value = s.groupId;
 }
 
-function loadCommunityPosts() {
+function getTelegramUserId() {
   try {
-    const raw = localStorage.getItem(POSTS_STORAGE_KEY);
-    const arr = raw ? JSON.parse(raw) : [];
-    return Array.isArray(arr) ? arr : [];
-  } catch (e) {
-    return [];
-  }
-}
-
-function saveCommunityPosts(posts) {
-  try {
-    localStorage.setItem(POSTS_STORAGE_KEY, JSON.stringify(posts.slice(0, 100)));
-  } catch (e) {
-    showToast("Could not save post (storage full).", true);
-  }
-  updatePostBadges();
-}
-
-function updatePostBadges() {
-  const n = loadCommunityPosts().length;
-  const nav = document.getElementById("postNavBadge");
-  if (nav) {
-    if (n > 0) {
-      nav.classList.remove("hidden");
-      nav.textContent = n > 99 ? "99+" : String(n);
-    } else {
-      nav.classList.add("hidden");
+    if (tgApp && tgApp.initDataUnsafe && tgApp.initDataUnsafe.user) {
+      return String(tgApp.initDataUnsafe.user.id || "");
     }
-  }
-  const hdr = document.getElementById("postCountBadge");
-  if (hdr) hdr.textContent = n + (n === 1 ? " post" : " posts");
+  } catch (e) {}
+  return "";
 }
 
 function getPostAuthorName() {
@@ -3833,6 +3817,148 @@ function getPostAuthorName() {
   return (el && el.textContent) || "Bank User";
 }
 
+/** Lightweight index only — no image/video data URLs */
+function loadPostIndex() {
+  try {
+    const raw = localStorage.getItem(POSTS_INDEX_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function savePostIndex(list) {
+  try {
+    // strip any accidental media fields
+    const slim = list.slice(-80).map((p) => ({
+      id: p.id,
+      author: p.author,
+      authorId: p.authorId || "",
+      caption: (p.caption || "").slice(0, 500),
+      type: p.type || "text",
+      time: p.time,
+      channelMessageId: p.channelMessageId || null,
+      reactions: p.reactions || { like: 0, love: 0, fire: 0 },
+      commentCount: p.commentCount || 0,
+    }));
+    localStorage.setItem(POSTS_INDEX_KEY, JSON.stringify(slim));
+  } catch (e) {}
+  updatePostBadges();
+}
+
+function updatePostBadges() {
+  const n = loadPostIndex().length;
+  const label = n > 99 ? "99+" : String(n);
+  ["postNavBadge", "postHomeBadge"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (n > 0) {
+      el.classList.remove("hidden");
+      el.textContent = label;
+    } else {
+      el.classList.add("hidden");
+    }
+  });
+  const hdr = document.getElementById("postCountBadge");
+  if (hdr) hdr.textContent = n + (n === 1 ? " post" : " posts");
+}
+
+function softConfirm(message, onOk) {
+  _softConfirmCb = onOk;
+  const modal = document.getElementById("softConfirmModal");
+  const text = document.getElementById("softConfirmText");
+  if (text) text.textContent = message;
+  if (modal) modal.classList.remove("hidden");
+}
+
+function softConfirmCancel() {
+  _softConfirmCb = null;
+  const modal = document.getElementById("softConfirmModal");
+  if (modal) modal.classList.add("hidden");
+}
+
+function softConfirmOk() {
+  const cb = _softConfirmCb;
+  softConfirmCancel();
+  if (typeof cb === "function") cb();
+}
+
+/**
+ * Call Bot API via our Vercel proxy (stays in Mini App).
+ */
+async function telegramApi(payload) {
+  const s = loadTelegramNotifySettings();
+  const botToken = payload.botToken || s.botToken || "";
+  if (!botToken) {
+    showToast("Set Bot Token in Settings → Menus & Bills", true);
+    return { ok: false, error: "no_token" };
+  }
+  const body = { ...payload, botToken };
+  const urls = ["/api/telegram/notify", "api/telegram/notify"];
+  for (const url of urls) {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.ok) return data;
+      if (data && data.result) {
+        log("Telegram API: " + JSON.stringify(data.result).slice(0, 300));
+      }
+      if (data && data.error) return data;
+    } catch (e) {
+      log("telegramApi fetch fail: " + e.message);
+    }
+  }
+  return { ok: false, error: "network" };
+}
+
+async function notifyTelegramChannel(text, mediaBase64, mediaType) {
+  const s = loadTelegramNotifySettings();
+  const chatId = s.channelId || "@generalpost168";
+  if (mediaBase64 && mediaType === "video") {
+    return telegramApi({
+      chatId,
+      action: "sendVideo",
+      text,
+      mediaBase64,
+      filename: "post.mp4",
+    });
+  }
+  if (mediaBase64 && mediaType === "image") {
+    return telegramApi({
+      chatId,
+      action: "sendPhoto",
+      text,
+      mediaBase64,
+      filename: "post.jpg",
+    });
+  }
+  return telegramApi({ chatId, action: "sendMessage", text });
+}
+
+async function notifyTelegramGroup(text, mediaBase64, mediaType) {
+  const s = loadTelegramNotifySettings();
+  const chatId = s.groupId || "";
+  if (!chatId) {
+    showToast("Set Group chat id in Settings → Menus & Bills", true);
+    return { ok: false, error: "no_group" };
+  }
+  if (mediaBase64 && mediaType === "voice") {
+    return telegramApi({
+      chatId,
+      action: "sendVoice",
+      text,
+      mediaBase64,
+      filename: "voice.ogg",
+    });
+  }
+  return telegramApi({ chatId, action: "sendMessage", text });
+}
+
 function openPostView() {
   navigateToView("postView");
   renderCommunityFeed();
@@ -3842,51 +3968,70 @@ function openPostView() {
 function renderCommunityFeed() {
   const feed = document.getElementById("communityFeed");
   if (!feed) return;
-  const posts = loadCommunityPosts().slice().reverse();
+  const posts = loadPostIndex().slice().reverse();
   updatePostBadges();
   if (!posts.length) {
     feed.innerHTML =
-      '<div class="bank-card p-6 text-center text-slate-400 text-xs">No posts yet. Share text, photo, or video.</div>';
+      '<div class="bank-card p-6 text-center space-y-2">' +
+      '<p class="text-xs font-bold text-slate-600 dark:text-slate-300">No posts in this app index yet</p>' +
+      '<p class="text-[11px] text-slate-400">Publish sends to Telegram channel. Add Bot Token in Settings → Menus & Bills (bot must be channel admin).</p>' +
+      "</div>";
     return;
   }
+  const me = getTelegramUserId();
   feed.innerHTML = posts
     .map((p) => {
-      let media = "";
-      if (p.media) {
-        media =
-          p.type === "video"
-            ? '<video src="' + p.media + '" controls class="w-full max-h-72 object-cover bg-black"></video>'
-            : '<img src="' + p.media + '" alt="" class="w-full max-h-72 object-cover bg-slate-100"/>';
-      }
       const reactions = p.reactions || { like: 0, love: 0, fire: 0 };
-      const cCount = (p.comments || []).length;
-      const canDelete = true;
+      const isOwner = me && p.authorId && String(p.authorId) === String(me);
+      const typeIcon =
+        p.type === "image" ? "🖼️ " : p.type === "video" ? "🎬 " : "";
       return (
-        '<article class="bank-card overflow-hidden" data-post-id="' + p.id + '">' +
+        '<article class="bank-card overflow-hidden" data-post-id="' +
+        p.id +
+        '">' +
         '<div class="flex items-center gap-2.5 px-3.5 pt-3.5 pb-2">' +
         '<div class="w-9 h-9 rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 text-white flex items-center justify-center text-xs font-bold">' +
         (p.author || "U").charAt(0).toUpperCase() +
         "</div>" +
         '<div class="flex-1 min-w-0">' +
-        '<p class="text-xs font-bold text-slate-800 dark:text-slate-100 truncate">' +
+        '<p class="text-sm font-extrabold text-slate-900 dark:text-white truncate">' +
         escapeHtml(p.author || "User") +
         "</p>" +
-        '<p class="text-[10px] text-slate-400">' + escapeHtml(p.time || "") + "</p></div>" +
-        (canDelete
-          ? '<button type="button" onclick="deleteCommunityPost(\'' + p.id + '\')" class="text-slate-400 hover:text-rose-500 text-xs px-2" title="Delete"><i class="fa-solid fa-trash"></i></button>'
+        '<p class="text-[10px] font-semibold text-slate-400">' +
+        escapeHtml(p.time || "") +
+        (p.channelMessageId ? " · on channel" : "") +
+        "</p></div>" +
+        (isOwner
+          ? '<button type="button" onclick="deleteCommunityPost(\'' +
+            p.id +
+            '\')" class="text-slate-400 hover:text-rose-500 text-xs px-2" title="Delete"><i class="fa-solid fa-trash"></i></button>'
           : "") +
         "</div>" +
-        (p.caption
-          ? '<p class="px-3.5 pb-2 text-xs text-slate-700 dark:text-slate-200 whitespace-pre-wrap">' +
-            escapeHtml(p.caption) +
-            "</p>"
-          : "") +
-        media +
+        '<p class="px-3.5 pb-3 text-sm font-bold text-slate-800 dark:text-slate-100 whitespace-pre-wrap leading-relaxed">' +
+        typeIcon +
+        escapeHtml(p.caption || "(media on Telegram channel)") +
+        "</p>" +
         '<div class="flex items-center gap-1 px-2 py-2 border-t border-slate-100 dark:border-slate-800">' +
-        '<button type="button" onclick="reactToPost(\'' + p.id + "','like')\" class=\"flex-1 py-2 text-[11px] font-bold text-slate-500\">👍 " + (reactions.like || 0) + "</button>" +
-        '<button type="button" onclick="reactToPost(\'' + p.id + "','love')\" class=\"flex-1 py-2 text-[11px] font-bold text-slate-500\">❤️ " + (reactions.love || 0) + "</button>" +
-        '<button type="button" onclick="reactToPost(\'' + p.id + "','fire')\" class=\"flex-1 py-2 text-[11px] font-bold text-slate-500\">🔥 " + (reactions.fire || 0) + "</button>" +
-        '<button type="button" onclick="openCommentSheet(\'' + p.id + '\')" class="flex-1 py-2 text-[11px] font-bold text-slate-500">💬 ' + cCount + "</button>" +
+        '<button type="button" onclick="reactToPost(\'' +
+        p.id +
+        "','like')\" class=\"flex-1 py-2 text-[11px] font-extrabold text-slate-600\">👍 " +
+        (reactions.like || 0) +
+        "</button>" +
+        '<button type="button" onclick="reactToPost(\'' +
+        p.id +
+        "','love')\" class=\"flex-1 py-2 text-[11px] font-extrabold text-slate-600\">❤️ " +
+        (reactions.love || 0) +
+        "</button>" +
+        '<button type="button" onclick="reactToPost(\'' +
+        p.id +
+        "','fire')\" class=\"flex-1 py-2 text-[11px] font-extrabold text-slate-600\">🔥 " +
+        (reactions.fire || 0) +
+        "</button>" +
+        '<button type="button" onclick="openCommentSheet(\'' +
+        p.id +
+        '\')" class="flex-1 py-2 text-[11px] font-extrabold text-slate-600">💬 ' +
+        (p.commentCount || 0) +
+        "</button>" +
         "</div></article>"
       );
     })
@@ -3923,8 +4068,8 @@ function closeCreatePostSheet() {
 function handlePostMediaPick(ev) {
   const file = ev.target.files && ev.target.files[0];
   if (!file) return;
-  if (file.size > 4.5 * 1024 * 1024) {
-    showToast("Please choose a file under 4.5 MB.", true);
+  if (file.size > 4 * 1024 * 1024) {
+    showToast("File must be under 4 MB for Telegram upload.", true);
     return;
   }
   const isVideo = file.type.startsWith("video/");
@@ -3942,251 +4087,271 @@ function handlePostMediaPick(ev) {
   reader.readAsDataURL(file);
 }
 
-function publishCommunityPost() {
+async function publishCommunityPost() {
   const media = window._pendingPostMedia || "";
   const caption = (document.getElementById("postCaptionInput")?.value || "").trim();
   if (!media && !caption) {
     showToast("Write text or add a photo/video.", true);
     return;
   }
+  const s = loadTelegramNotifySettings();
+  if (!s.botToken) {
+    showToast("Add Bot Token in Settings → Menus & Bills first", true);
+    return;
+  }
+
+  showToast("Publishing to Telegram channel…");
+  const author = getPostAuthorName();
+  const authorId = getTelegramUserId();
+  const text =
+    "📢 " + author + (caption ? "\n\n" + caption : "") + "\n\n— via Bank Mini App";
+
+  const mediaType = media ? window._pendingPostType : "text";
+  const result = await notifyTelegramChannel(
+    text,
+    media || null,
+    mediaType === "video" ? "video" : mediaType === "image" ? "image" : null,
+  );
+
+  if (!result || !result.ok) {
+    const err =
+      (result && result.result && result.result.description) ||
+      (result && result.error) ||
+      "failed";
+    showToast("Channel post failed: " + err, true);
+    log("publish fail " + JSON.stringify(result).slice(0, 400));
+    return;
+  }
+
+  // Lightweight index only (no media stored in app)
   const post = {
-    id: "p_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
-    author: getPostAuthorName(),
-    caption: caption,
-    media: media || "",
-    type: media ? window._pendingPostType || "image" : "text",
+    id: "p_" + Date.now(),
+    author,
+    authorId,
+    caption: caption || (media ? "[" + mediaType + " on channel]" : ""),
+    type: mediaType,
     time: new Date().toLocaleString(),
+    channelMessageId: result.messageId || null,
     reactions: { like: 0, love: 0, fire: 0 },
-    comments: [],
+    commentCount: 0,
   };
-  const posts = loadCommunityPosts();
-  posts.push(post);
-  saveCommunityPosts(posts);
+  const list = loadPostIndex();
+  list.push(post);
+  savePostIndex(list);
+
   closeCreatePostSheet();
   renderCommunityFeed();
-  showToast("Posted");
-  // Stay in Mini App — notify channel via bot API (no openTelegramLink)
-  notifyTelegramChannel(
-    "📢 New post by " +
-      post.author +
-      (post.caption ? "\n" + post.caption : "") +
-      (post.media ? "\n[" + post.type + " attached in Mini App]" : ""),
-  );
+  showToast("Posted to Telegram channel");
 }
 
-/** Server-side Bot API proxy — never leaves Mini App */
-async function notifyTelegram(target, text) {
-  const s = loadTelegramNotifySettings();
-  const botToken = s.botToken || "";
-  let chatId = "";
-  if (target === "channel") chatId = s.channelId || "@generalpost168";
-  else chatId = s.groupId || "";
-  if (!botToken || !chatId) {
-    log("Telegram notify skipped (set bot token + chat id in Menus & Bills)");
-    return false;
-  }
-  try {
-    const endpoints = [
-      "/api/telegram/notify",
-      "api/telegram/notify",
-    ];
-    for (const url of endpoints) {
-      try {
-        const res = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ botToken, chatId, text }),
-        });
-        if (res.ok) {
-          log("Telegram notify OK → " + target);
-          return true;
-        }
-      } catch (e) {}
-    }
-    // Fallback: direct Bot API (may fail CORS in browser)
-    const res2 = await fetch(
-      "https://api.telegram.org/bot" + botToken + "/sendMessage",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chat_id: chatId, text: text }),
-      },
-    );
-    return res2.ok;
-  } catch (e) {
-    log("Telegram notify error: " + e.message);
-    return false;
-  }
-}
-
-function notifyTelegramChannel(text) {
-  return notifyTelegram("channel", text);
-}
-
-function notifyTelegramGroup(text) {
-  return notifyTelegram("group", text);
-}
-
-function reactToPost(postId, kind) {
-  const posts = loadCommunityPosts();
-  const p = posts.find((x) => x.id === postId);
+async function reactToPost(postId, kind) {
+  const list = loadPostIndex();
+  const p = list.find((x) => x.id === postId);
   if (!p) return;
   if (!p.reactions) p.reactions = { like: 0, love: 0, fire: 0 };
   p.reactions[kind] = (p.reactions[kind] || 0) + 1;
-  saveCommunityPosts(posts);
+  savePostIndex(list);
   renderCommunityFeed();
   triggerHaptic("impact");
   const emoji = kind === "love" ? "❤️" : kind === "fire" ? "🔥" : "👍";
-  notifyTelegramChannel(
+  const msg =
     emoji +
-      " " +
-      getPostAuthorName() +
-      " reacted on post by " +
-      (p.author || "User") +
-      (p.caption ? "\n“" + p.caption.slice(0, 120) + "”" : ""),
-  );
+    " " +
+    getPostAuthorName() +
+    " reacted on post by " +
+    (p.author || "User") +
+    (p.caption ? "\n“" + p.caption.slice(0, 150) + "”" : "");
+  // Reactions also go to the group (and channel summary)
+  await notifyTelegramGroup(msg);
+  await notifyTelegramChannel(msg);
 }
 
 function openCommentSheet(postId) {
   _activeCommentPostId = postId;
   _replyToCommentId = null;
+  _pendingVoiceBase64 = null;
   const m = document.getElementById("commentPostModal");
   if (m) m.classList.remove("hidden");
   const hint = document.getElementById("replyHint");
   if (hint) hint.classList.add("hidden");
   const input = document.getElementById("commentInput");
   if (input) input.value = "";
+  const st = document.getElementById("voiceCommentStatus");
+  if (st) st.classList.add("hidden");
   renderCommentList();
 }
 
 function closeCommentSheet() {
+  stopVoiceComment(true);
   const m = document.getElementById("commentPostModal");
   if (m) m.classList.add("hidden");
   _activeCommentPostId = null;
   _replyToCommentId = null;
 }
 
+/** Comments are on Telegram group — app shows tip only, not full storage */
 function renderCommentList() {
   const list = document.getElementById("commentList");
-  if (!list || !_activeCommentPostId) return;
-  const posts = loadCommunityPosts();
-  const p = posts.find((x) => x.id === _activeCommentPostId);
-  const comments = (p && p.comments) || [];
-  if (!comments.length) {
-    list.innerHTML =
-      '<p class="text-[11px] text-slate-400 text-center py-6">No comments yet</p>';
-    return;
-  }
-  list.innerHTML = comments
-    .map((c) => {
-      const replies = (c.replies || [])
-        .map(
-          (r) =>
-            '<div class="ml-6 mt-1.5 pl-2 border-l-2 border-slate-200 dark:border-slate-700">' +
-            '<p class="text-[10px] font-bold text-slate-600 dark:text-slate-300">' +
-            escapeHtml(r.author) +
-            ' <span class="font-normal text-slate-400">' +
-            escapeHtml(r.time || "") +
-            "</span></p>" +
-            '<p class="text-[11px] text-slate-700 dark:text-slate-200">' +
-            escapeHtml(r.text) +
-            "</p></div>",
-        )
-        .join("");
-      return (
-        '<div class="bank-card p-2.5">' +
-        '<p class="text-[10px] font-bold text-slate-700 dark:text-slate-200">' +
-        escapeHtml(c.author) +
-        ' <span class="font-normal text-slate-400">' +
-        escapeHtml(c.time || "") +
-        "</span></p>" +
-        '<p class="text-[11px] text-slate-800 dark:text-slate-100 mt-0.5">' +
-        escapeHtml(c.text) +
-        "</p>" +
-        '<button type="button" onclick="startReply(\'' +
-        c.id +
-        "','" +
-        escapeHtml(c.author).replace(/'/g, "") +
-        '\')" class="text-[10px] font-bold text-indigo-500 mt-1">Reply</button>' +
-        replies +
-        "</div>"
-      );
-    })
-    .join("");
+  if (!list) return;
+  list.innerHTML =
+    '<div class="bank-card p-3 text-[11px] font-semibold text-slate-600 dark:text-slate-300 leading-relaxed">' +
+    "Comments, replies, reactions and voice notes are sent to the <b>Telegram group</b> and stay there. " +
+    "Type below or hold the mic — you stay inside the Mini App." +
+    "</div>";
 }
 
 function startReply(commentId, author) {
   _replyToCommentId = commentId;
   const hint = document.getElementById("replyHint");
   if (hint) {
-    hint.textContent = "Replying to " + author;
+    hint.textContent = "Replying…";
     hint.classList.remove("hidden");
   }
   const input = document.getElementById("commentInput");
   if (input) input.focus();
 }
 
-function submitComment() {
+async function submitComment() {
   if (!_activeCommentPostId) return;
   const input = document.getElementById("commentInput");
-  const text = (input && input.value || "").trim();
-  if (!text) {
-    showToast("Write a comment first.", true);
+  const text = ((input && input.value) || "").trim();
+  const list = loadPostIndex();
+  const p = list.find((x) => x.id === _activeCommentPostId);
+
+  if (_pendingVoiceBase64) {
+    const caption =
+      "🎤 Voice from " +
+      getPostAuthorName() +
+      (p ? " on post by " + (p.author || "User") : "") +
+      (text ? "\n" + text : "");
+    const r = await notifyTelegramGroup(caption, _pendingVoiceBase64, "voice");
+    _pendingVoiceBase64 = null;
+    if (!r || !r.ok) {
+      showToast("Voice send failed — check Group chat id & bot admin", true);
+      return;
+    }
+    if (p) {
+      p.commentCount = (p.commentCount || 0) + 1;
+      savePostIndex(list);
+    }
+    if (input) input.value = "";
+    showToast("Voice sent to Telegram group");
+    renderCommunityFeed();
     return;
   }
-  const posts = loadCommunityPosts();
-  const p = posts.find((x) => x.id === _activeCommentPostId);
-  if (!p) return;
-  if (!p.comments) p.comments = [];
-  const author = getPostAuthorName();
-  const time = new Date().toLocaleString();
-  if (_replyToCommentId) {
-    const parent = p.comments.find((c) => c.id === _replyToCommentId);
-    if (parent) {
-      if (!parent.replies) parent.replies = [];
-      parent.replies.push({
-        id: "r_" + Date.now(),
-        author,
-        text,
-        time,
-      });
-      notifyTelegramGroup(
-        "↩️ Reply by " + author + " on post by " + (p.author || "User") + ":\n" + text,
-      );
-    }
-    _replyToCommentId = null;
-    const hint = document.getElementById("replyHint");
-    if (hint) hint.classList.add("hidden");
-  } else {
-    p.comments.push({
-      id: "c_" + Date.now(),
-      author,
-      text,
-      time,
-      replies: [],
-    });
-    notifyTelegramGroup(
-      "💬 Comment by " + author + " on post by " + (p.author || "User") + ":\n" + text,
-    );
+
+  if (!text) {
+    showToast("Write a comment or record voice.", true);
+    return;
   }
-  saveCommunityPosts(posts);
+  const author = getPostAuthorName();
+  const prefix = _replyToCommentId ? "↩️ Reply by " : "💬 Comment by ";
+  const msg =
+    prefix +
+    author +
+    (p ? " on post by " + (p.author || "User") : "") +
+    ":\n" +
+    text;
+  const r = await notifyTelegramGroup(msg);
+  if (!r || !r.ok) {
+    showToast("Comment failed — set Group chat id (numeric) & bot as admin", true);
+    return;
+  }
+  if (p) {
+    p.commentCount = (p.commentCount || 0) + 1;
+    savePostIndex(list);
+  }
+  _replyToCommentId = null;
+  const hint = document.getElementById("replyHint");
+  if (hint) hint.classList.add("hidden");
   if (input) input.value = "";
-  renderCommentList();
+  showToast("Sent to Telegram group");
   renderCommunityFeed();
-  showToast("Comment added");
+}
+
+async function toggleVoiceComment() {
+  if (_voiceRecording) {
+    stopVoiceComment(false);
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    _voiceChunks = [];
+    _voiceRecorder = new MediaRecorder(stream);
+    _voiceRecorder.ondataavailable = (e) => {
+      if (e.data && e.data.size) _voiceChunks.push(e.data);
+    };
+    _voiceRecorder.onstop = async () => {
+      stream.getTracks().forEach((t) => t.stop());
+      const blob = new Blob(_voiceChunks, { type: "audio/webm" });
+      const reader = new FileReader();
+      reader.onload = () => {
+        _pendingVoiceBase64 = reader.result;
+        const st = document.getElementById("voiceCommentStatus");
+        if (st) {
+          st.textContent = "Voice ready — tap Send";
+          st.classList.remove("hidden");
+        }
+        showToast("Voice ready — tap Send");
+      };
+      reader.readAsDataURL(blob);
+    };
+    _voiceRecorder.start();
+    _voiceRecording = true;
+    const btn = document.getElementById("voiceCommentBtn");
+    if (btn) btn.classList.add("ring-2", "ring-rose-500");
+    const st = document.getElementById("voiceCommentStatus");
+    if (st) {
+      st.textContent = "Recording… tap mic to stop";
+      st.classList.remove("hidden");
+    }
+  } catch (e) {
+    showToast("Microphone permission required", true);
+  }
+}
+
+function stopVoiceComment(discard) {
+  if (_voiceRecorder && _voiceRecording) {
+    try {
+      _voiceRecorder.stop();
+    } catch (e) {}
+  }
+  _voiceRecording = false;
+  const btn = document.getElementById("voiceCommentBtn");
+  if (btn) btn.classList.remove("ring-2", "ring-rose-500");
+  if (discard) {
+    _pendingVoiceBase64 = null;
+    const st = document.getElementById("voiceCommentStatus");
+    if (st) st.classList.add("hidden");
+  }
 }
 
 function deleteCommunityPost(postId) {
-  if (!confirm("Delete this post?")) return;
-  const posts = loadCommunityPosts().filter((x) => x.id !== postId);
-  saveCommunityPosts(posts);
-  if (_activeCommentPostId === postId) closeCommentSheet();
-  renderCommunityFeed();
-  showToast("Post deleted");
+  const me = getTelegramUserId();
+  const list = loadPostIndex();
+  const p = list.find((x) => x.id === postId);
+  if (!p) return;
+  if (p.authorId && me && String(p.authorId) !== String(me)) {
+    showToast("Only the owner can delete this post", true);
+    return;
+  }
+  softConfirm("Delete this post from the channel?", async () => {
+    if (p.channelMessageId) {
+      const s = loadTelegramNotifySettings();
+      await telegramApi({
+        chatId: s.channelId || "@generalpost168",
+        action: "deleteMessage",
+        messageId: p.channelMessageId,
+      });
+    }
+    savePostIndex(list.filter((x) => x.id !== postId));
+    if (_activeCommentPostId === postId) closeCommentSheet();
+    renderCommunityFeed();
+    showToast("Post deleted");
+  });
 }
 
 function openPostChannel() {
-  // Optional: user can still open channel manually; not used on publish
   try {
     if (tgApp && typeof tgApp.openTelegramLink === "function") {
       tgApp.openTelegramLink(POST_CHANNEL_URL);

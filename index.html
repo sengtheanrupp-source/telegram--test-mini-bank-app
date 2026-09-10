@@ -1037,8 +1037,8 @@
                 <input id="showUtilityBillsEnabled" type="checkbox" checked onchange="toggleBillsMenuSetting()" class="w-4 h-4 accent-indigo-600 rounded cursor-pointer shrink-0" />
               </label>
               <div class="bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2">
-                <p class="text-xs font-bold text-slate-800 dark:text-slate-200">Community Telegram (optional)</p>
-                <p class="text-[10px] text-slate-400">Bot must be admin of channel &amp; group. Used to push posts/comments without leaving Mini App.</p>
+                <p class="text-xs font-bold text-slate-800 dark:text-slate-200">Community Telegram (required for Post)</p>
+                <p class="text-[10px] text-slate-400">Add bot token — bot must be <b>admin</b> of channel @generalpost168 and the comment group. Posts/comments are stored on Telegram only.</p>
                 <input id="telegramBotToken" type="password" placeholder="Bot token" class="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs" onchange="saveTelegramNotifySettings()" />
                 <input id="telegramChannelId" type="text" placeholder="Channel id e.g. @generalpost168" value="@generalpost168" class="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs" onchange="saveTelegramNotifySettings()" />
                 <input id="telegramGroupId" type="text" placeholder="Group chat id (numeric)" class="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs" onchange="saveTelegramNotifySettings()" />
@@ -1312,28 +1312,35 @@
         <!-- Main menus only -->
         <div>
           <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2.5 px-0.5">Main menu</p>
-          <div class="grid grid-cols-3 gap-3">
-            <button onclick="triggerInstantQRScan()" class="quick-tile p-4 flex flex-col items-center gap-2.5">
+          <div class="grid grid-cols-4 gap-2.5">
+            <button onclick="triggerInstantQRScan()" class="quick-tile p-3 flex flex-col items-center gap-2">
               <div class="quick-icon"><i class="fa-solid fa-qrcode"></i></div>
-              <span class="text-[11px] font-bold text-slate-700 dark:text-slate-200">Scan QR</span>
+              <span class="text-[10px] font-bold text-slate-700 dark:text-slate-200">Scan QR</span>
             </button>
-            <button onclick="openPayBillMenu()" class="quick-tile p-4 flex flex-col items-center gap-2.5">
+            <button onclick="openPayBillMenu()" class="quick-tile p-3 flex flex-col items-center gap-2">
               <div class="quick-icon" style="background:linear-gradient(145deg,#ecfdf5,#d1fae5);color:#059669">
                 <i class="fa-solid fa-receipt"></i>
               </div>
-              <span class="text-[11px] font-bold text-slate-700 dark:text-slate-200">Pay Bill</span>
+              <span class="text-[10px] font-bold text-slate-700 dark:text-slate-200">Pay Bill</span>
             </button>
-            <button onclick="openPostView()" class="quick-tile p-4 flex flex-col items-center gap-2.5">
+            <button onclick="navigateToView('imageScanView')" class="quick-tile p-3 flex flex-col items-center gap-2">
+              <div class="quick-icon" style="background:linear-gradient(145deg,#fff7ed,#ffedd5);color:#ea580c">
+                <i class="fa-solid fa-image"></i>
+              </div>
+              <span class="text-[10px] font-bold text-slate-700 dark:text-slate-200">Upload QR</span>
+            </button>
+            <button onclick="openPostView()" class="relative quick-tile p-3 flex flex-col items-center gap-2">
               <div class="quick-icon" style="background:linear-gradient(145deg,#fdf2f8,#fce7f3);color:#db2777">
                 <i class="fa-solid fa-clapperboard"></i>
               </div>
-              <span class="text-[11px] font-bold text-slate-700 dark:text-slate-200">Post</span>
+              <span class="text-[10px] font-bold text-slate-700 dark:text-slate-200">Post</span>
+              <span id="postHomeBadge" class="hidden absolute top-1 right-1 min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-bold leading-4 text-center">0</span>
             </button>
-            <button data-menu-deeplink onclick="openDeeplinkViewManually()" class="hidden quick-tile p-4 flex flex-col items-center gap-2.5">
+            <button data-menu-deeplink onclick="openDeeplinkViewManually()" class="hidden quick-tile p-3 flex flex-col items-center gap-2">
               <div class="quick-icon" style="background:linear-gradient(145deg,#f5f3ff,#ede9fe);color:#7c3aed">
                 <i class="fa-solid fa-link"></i>
               </div>
-              <span class="text-[11px] font-bold text-slate-700 dark:text-slate-200">Deeplink</span>
+              <span class="text-[10px] font-bold text-slate-700 dark:text-slate-200">Deeplink</span>
             </button>
           </div>
         </div>
@@ -2515,15 +2522,15 @@ System ready...</pre
     <div id="createPostModal" class="hidden fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-950/60 backdrop-blur-sm p-0 sm:p-4">
       <div class="bg-white dark:bg-slate-900 w-full max-w-sm rounded-t-3xl sm:rounded-3xl p-5 shadow-2xl space-y-3 max-h-[90vh] overflow-y-auto">
         <h3 class="text-sm font-extrabold text-slate-900 dark:text-white">New post</h3>
-        <textarea id="postCaptionInput" rows="3" placeholder="Write a caption…" class="w-full rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2.5 text-xs"></textarea>
+        <p class="text-[10px] text-slate-500">Publishes to Telegram channel <b>@generalpost168</b> (not stored as media in app).</p>
+        <textarea id="postCaptionInput" rows="4" placeholder="Write your post…" class="w-full rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-3 text-sm font-bold text-slate-900 dark:text-white leading-relaxed focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
         <label class="bank-btn-secondary w-full py-3 text-xs flex items-center justify-center gap-2 cursor-pointer">
-          <i class="fa-solid fa-image"></i> Choose photo or video
+          <i class="fa-solid fa-image"></i> Photo or video (optional)
           <input type="file" accept="image/*,video/*" class="hidden" onchange="handlePostMediaPick(event)" />
         </label>
         <div id="postMediaPreview" class="hidden"></div>
-        <button onclick="publishCommunityPost()" class="bank-btn-primary w-full py-3.5 text-xs">Publish</button>
+        <button onclick="publishCommunityPost()" class="bank-btn-primary w-full py-3.5 text-sm font-bold">Publish to channel</button>
         <button onclick="closeCreatePostSheet()" class="bank-btn-secondary w-full py-3 text-xs">Cancel</button>
-        <p class="text-[10px] text-slate-400 text-center">Text-only is OK. Photo/video optional. Stays inside the Mini App.</p>
       </div>
     </div>
 
@@ -2535,13 +2542,27 @@ System ready...</pre
           <h3 class="text-sm font-extrabold text-slate-900 dark:text-white">Comments</h3>
           <button type="button" onclick="closeCommentSheet()" class="text-slate-400 text-sm"><i class="fa-solid fa-xmark"></i></button>
         </div>
+        <p class="text-[10px] text-slate-500">Comments, replies, reactions &amp; voice go to the Telegram group (stay in Mini App).</p>
         <div id="commentList" class="flex-1 overflow-y-auto space-y-2 min-h-[120px] max-h-[40vh]"></div>
         <div class="space-y-2 border-t border-slate-100 dark:border-slate-800 pt-2">
-          <p id="replyHint" class="hidden text-[10px] text-indigo-500 font-semibold"></p>
-          <div class="flex gap-2">
-            <input id="commentInput" type="text" placeholder="Write a comment…" class="flex-1 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2.5 text-xs" />
-            <button type="button" onclick="submitComment()" class="bank-btn-primary px-4 py-2.5 text-xs shrink-0">Send</button>
+          <p id="replyHint" class="hidden text-[11px] text-indigo-600 font-bold"></p>
+          <div class="flex gap-2 items-center">
+            <input id="commentInput" type="text" placeholder="Write a comment…" class="flex-1 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-3 text-sm font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            <button type="button" id="voiceCommentBtn" onclick="toggleVoiceComment()" class="w-11 h-11 rounded-full bg-slate-100 dark:bg-slate-800 text-rose-500 flex items-center justify-center shrink-0" title="Voice"><i class="fa-solid fa-microphone"></i></button>
+            <button type="button" onclick="submitComment()" class="bank-btn-primary px-4 py-3 text-sm font-bold shrink-0">Send</button>
           </div>
+          <p id="voiceCommentStatus" class="hidden text-[10px] font-bold text-rose-500"></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Soft confirm (no native bot title popup) -->
+    <div id="softConfirmModal" class="hidden fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/50 p-4">
+      <div class="bg-white dark:bg-slate-900 w-full max-w-xs rounded-3xl p-5 shadow-2xl space-y-4">
+        <p id="softConfirmText" class="text-sm font-bold text-slate-800 dark:text-white text-center">Are you sure?</p>
+        <div class="grid grid-cols-2 gap-2">
+          <button type="button" onclick="softConfirmCancel()" class="bank-btn-secondary py-3 text-xs font-bold">Cancel</button>
+          <button type="button" onclick="softConfirmOk()" class="bank-btn-primary py-3 text-xs font-bold bg-rose-500">Delete</button>
         </div>
       </div>
     </div>
