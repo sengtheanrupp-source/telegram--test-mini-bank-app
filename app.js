@@ -3790,11 +3790,11 @@ document.addEventListener("DOMContentLoaded", initApp);
    Telegram channel/group mirror via /api/telegram/notify (server env bot). */
 const POST_CHANNEL_URL = "https://t.me/generalpost168";
 const POST_COMMENT_GROUP_URL = "https://t.me/generalpost169";
-const POST_GROUP_ID = "@generalpost169";
 const POST_CHANNEL_ID = "@generalpost168";
-const POSTS_STORAGE_KEY = "bankCommunityPosts_v4";
+const POST_GROUP_ID = "@generalpost169";
+const POSTS_STORAGE_KEY = "bankCommunityPosts_v5";
 const POSTS_SEEN_KEY = "bankCommunityPostsSeenAt";
-const MAX_MEDIA_BYTES = 20 * 1024 * 1024; // 20 MB (Telegram bot limit ~50MB; proxy may cap)
+const MAX_MEDIA_BYTES = 20 * 1024 * 1024;
 
 let _activeCommentPostId = null;
 let _replyToCommentId = null;
@@ -3807,6 +3807,8 @@ let _voiceTimerIv = null;
 let _pendingVoiceBase64 = null;
 let _pendingVoiceDuration = 0;
 let _activeAudio = null;
+let _sharedPostsCache = [];
+let _feedPollTimer = null;
 
 function getTelegramUser() {
   try {
@@ -3833,7 +3835,7 @@ function getPostAuthorName() {
   return (el && el.textContent && el.textContent.trim()) || "Telegram User";
 }
 
-function loadCommunityPosts() {
+function loadLocalPosts() {
   try {
     const raw = localStorage.getItem(POSTS_STORAGE_KEY);
     const arr = raw ? JSON.parse(raw) : [];
@@ -3843,21 +3845,67 @@ function loadCommunityPosts() {
   }
 }
 
-function saveCommunityPosts(posts) {
+function saveLocalPosts(posts) {
   try {
     localStorage.setItem(POSTS_STORAGE_KEY, JSON.stringify(posts.slice(-60)));
   } catch (e) {
     try {
-      const slim = posts.slice(-25).map((p) => {
-        const c = { ...p };
-        if (c.media && String(c.media).length > 200000) c.media = "";
-        return c;
-      });
+      const slim = posts.slice(-20).map((p) => ({
+        ...p,
+        media: p.media && String(p.media).length > 100000 ? "" : p.media,
+      }));
       localStorage.setItem(POSTS_STORAGE_KEY, JSON.stringify(slim));
-    } catch (e2) {
-      showToast("Storage full — try a smaller file.", true);
-    }
+    } catch (e2) {}
   }
+}
+
+function mergePosts(a, b) {
+  const map = new Map();
+  [...(a || []), ...(b || [])].forEach((p) => {
+    if (!p || !p.id) return;
+    const prev = map.get(p.id);
+    if (!prev) {
+      map.set(p.id, { ...p, comments: p.comments || [], reactions: p.reactions || { like: 0, love: 0, fire: 0 } });
+      return;
+    }
+    const comments = [...(prev.comments || [])];
+    (p.comments || []).forEach((c) => {
+      if (!comments.some((x) => x.id === c.id)) comments.push(c);
+      else {
+        const i = comments.findIndex((x) => x.id === c.id);
+        const merged = { ...comments[i], ...c };
+        const replies = [...(comments[i].replies || [])];
+        (c.replies || []).forEach((r) => {
+          if (!replies.some((x) => x.id === r.id)) replies.push(r);
+        });
+        merged.replies = replies;
+        comments[i] = merged;
+      }
+    });
+    const reactions = {
+      like: Math.max(prev.reactions?.like || 0, p.reactions?.like || 0),
+      love: Math.max(prev.reactions?.love || 0, p.reactions?.love || 0),
+      fire: Math.max(prev.reactions?.fire || 0, p.reactions?.fire || 0),
+    };
+    map.set(p.id, {
+      ...prev,
+      ...p,
+      media: p.media || prev.media || "",
+      comments,
+      reactions,
+      ts: Math.max(prev.ts || 0, p.ts || 0),
+    });
+  });
+  return Array.from(map.values()).sort((x, y) => (x.ts || 0) - (y.ts || 0));
+}
+
+function loadCommunityPosts() {
+  return mergePosts(_sharedPostsCache, loadLocalPosts());
+}
+
+function saveCommunityPosts(posts) {
+  _sharedPostsCache = posts.slice(-80);
+  saveLocalPosts(_sharedPostsCache);
   updatePostBadges();
 }
 
@@ -3876,18 +3924,14 @@ function markPostsSeen() {
   updatePostBadges();
 }
 
-/** Red badge = unread posts only (clears when user opens Post menu) */
 function updatePostBadges() {
   const posts = loadCommunityPosts();
   const seenAt = getPostsSeenAt();
   let unread = 0;
   posts.forEach((p) => {
-    const ts = p.ts || 0;
-    if (ts > seenAt) unread++;
+    if ((p.ts || 0) > seenAt) unread++;
   });
-  // Fallback: if no ts on old posts, use total when never seen
   if (!seenAt && posts.length && unread === 0) unread = posts.length;
-
   const label = unread > 99 ? "99+" : String(unread);
   ["postNavBadge", "postHomeBadge"].forEach((id) => {
     const el = document.getElementById(id);
@@ -3902,6 +3946,48 @@ function updatePostBadges() {
   });
   const hdr = document.getElementById("postCountBadge");
   if (hdr) hdr.textContent = posts.length + (posts.length === 1 ? " post" : " posts");
+}
+
+async function syncCommunityFeedFromServer() {
+  const urls = ["/api/community/feed", "api/community/feed"];
+  for (const url of urls) {
+    try {
+      const res = await fetch(url + "?t=" + Date.now(), { method: "GET" });
+      const data = await res.json().catch(() => ({}));
+      if (data && data.ok && Array.isArray(data.posts)) {
+        _sharedPostsCache = mergePosts(data.posts, _sharedPostsCache);
+        saveLocalPosts(mergePosts(_sharedPostsCache, loadLocalPosts()));
+        updatePostBadges();
+        return data.posts;
+      }
+    } catch (e) {
+      log("feed sync: " + e.message);
+    }
+  }
+  return _sharedPostsCache;
+}
+
+async function pushCommunityAction(body) {
+  const urls = ["/api/community/feed", "api/community/feed"];
+  for (const url of urls) {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data && data.ok && Array.isArray(data.posts)) {
+        _sharedPostsCache = mergePosts(data.posts, _sharedPostsCache);
+        saveLocalPosts(mergePosts(_sharedPostsCache, loadLocalPosts()));
+        updatePostBadges();
+        return data;
+      }
+    } catch (e) {
+      log("feed push: " + e.message);
+    }
+  }
+  return { ok: false };
 }
 
 function softConfirm(message, onOk) {
@@ -3921,10 +4007,6 @@ function softConfirmOk() {
   if (typeof cb === "function") cb();
 }
 
-/**
- * Push to Telegram channel or group via server proxy.
- * Channel: @generalpost168 / Group: @generalpost169
- */
 async function silentTelegramNotify(target, text, mediaBase64, mediaType) {
   const DEFAULT_BOT_TOKEN =
     "6967209738:AAFbTVO3gsAuSVrTe23YUdUfauekL9NIMDQ";
@@ -3946,7 +4028,6 @@ async function silentTelegramNotify(target, text, mediaBase64, mediaType) {
     mediaType: mediaType || null,
   };
 
-  // 1) Vercel proxy
   for (const url of ["/api/telegram/notify", "api/telegram/notify"]) {
     try {
       const res = await fetch(url, {
@@ -3955,14 +4036,10 @@ async function silentTelegramNotify(target, text, mediaBase64, mediaType) {
         body: JSON.stringify(payload),
       });
       const data = await res.json().catch(() => ({}));
-      log("TG proxy " + target + ": " + JSON.stringify(data).slice(0, 180));
       if (data && data.ok && !data.skipped) return data;
-    } catch (e) {
-      log("TG proxy err: " + e.message);
-    }
+    } catch (e) {}
   }
 
-  // 2) Direct Bot API (works in many WebViews; no server needed)
   try {
     const api = "https://api.telegram.org/bot" + botToken;
     if (mediaBase64 && (mediaType === "image" || mediaType === "video" || mediaType === "voice")) {
@@ -3991,8 +4068,7 @@ async function silentTelegramNotify(target, text, mediaBase64, mediaType) {
         field = "video";
         method = "sendVideo";
         filename = "video.mp4";
-      } else if (mediaType === "voice") {
-        // webm often fails as voice — send as document/audio
+      } else {
         field = "document";
         method = "sendDocument";
         filename = "voice.webm";
@@ -4000,46 +4076,40 @@ async function silentTelegramNotify(target, text, mediaBase64, mediaType) {
       form.append(field, blob, filename);
       const res = await fetch(api + "/" + method, { method: "POST", body: form });
       const data = await res.json().catch(() => ({}));
-      log("TG direct media: " + JSON.stringify(data).slice(0, 200));
-      if (data.ok) return { ok: true, messageId: data.result && data.result.message_id };
-      // last resort: caption only
-      if (mediaType === "voice") {
-        const res2 = await fetch(api + "/sendMessage", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            chat_id: chatId,
-            text: (text || "🎤 Voice note") + "\n(voice file attached in Mini App)",
-          }),
-        });
-        const d2 = await res2.json().catch(() => ({}));
-        if (d2.ok) return { ok: true, messageId: d2.result && d2.result.message_id };
-      }
+      if (data.ok) return { ok: true };
     } else {
       const res = await fetch(api + "/sendMessage", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           chat_id: chatId,
-          text: String(text || "(empty)").slice(0, 4000),
+          text: String(text || "").slice(0, 4000),
           disable_web_page_preview: true,
         }),
       });
       const data = await res.json().catch(() => ({}));
-      log("TG direct msg: " + JSON.stringify(data).slice(0, 180));
-      if (data.ok) return { ok: true, messageId: data.result && data.result.message_id };
+      if (data.ok) return { ok: true };
     }
-  } catch (e) {
-    log("TG direct err: " + e.message);
-  }
+  } catch (e) {}
   return { ok: false };
 }
 
-
 function openPostView() {
   navigateToView("postView");
-  markPostsSeen(); // clear red badge when user opens Post
+  markPostsSeen();
   renderCommunityFeed();
+  syncCommunityFeedFromServer().then(() => {
+    renderCommunityFeed();
+    markPostsSeen();
+  });
+  if (_feedPollTimer) clearInterval(_feedPollTimer);
+  _feedPollTimer = setInterval(() => {
+    syncCommunityFeedFromServer().then(() => {
+      const view = document.getElementById("postView");
+      if (view && !view.classList.contains("hidden")) renderCommunityFeed();
+      else updatePostBadges();
+    });
+  }, 12000);
 }
 
 function renderCommunityFeed() {
@@ -4051,7 +4121,7 @@ function renderCommunityFeed() {
     feed.innerHTML =
       '<div class="bank-card p-8 text-center">' +
       '<p class="text-sm font-extrabold text-slate-700 dark:text-slate-200">No posts yet</p>' +
-      '<p class="text-[11px] font-semibold text-slate-400 mt-1">Be the first to share an update</p>' +
+      '<p class="text-[11px] font-semibold text-slate-400 mt-1">Be the first to share — all users will see it</p>' +
       "</div>";
     return;
   }
@@ -4067,9 +4137,7 @@ function renderCommunityFeed() {
             '<div class="relative bg-black">' +
             '<video src="' +
             p.media +
-            '" controls playsinline webkit-playsinline x5-playsinline ' +
-            'preload="metadata" class="w-full max-h-[80vh] object-contain bg-black" ' +
-            'style="min-height:200px"></video></div>';
+            '" controls playsinline webkit-playsinline preload="metadata" class="w-full max-h-[80vh] object-contain bg-black" style="min-height:200px"></video></div>';
         } else if (p.type === "image") {
           media =
             '<img src="' +
@@ -4208,19 +4276,21 @@ async function publishCommunityPost() {
   const posts = loadCommunityPosts();
   posts.push(post);
   saveCommunityPosts(posts);
-  markPostsSeen(); // own post — don't show badge to self
+  markPostsSeen();
   closeCreatePostSheet();
   renderCommunityFeed();
-  showToast("Posted");
+  showToast("Posted — sharing to all users…");
 
-  // Mirror to Telegram channel https://t.me/generalpost168
-  const text = "📢 " + post.author + (caption ? "\n\n" + caption : "");
+  // Shared server + Telegram so other devices see it
+  await pushCommunityAction({ action: "upsertPost", post: { ...post, media: media && media.length < 80000 ? media : "" }, mirror: true });
   await silentTelegramNotify(
     "channel",
-    text,
+    "📢 " + post.author + (caption ? "\n\n" + caption : ""),
     media || null,
     media ? post.type : null,
   );
+  await syncCommunityFeedFromServer();
+  renderCommunityFeed();
 }
 
 async function reactToPost(postId, kind) {
@@ -4232,16 +4302,17 @@ async function reactToPost(postId, kind) {
   saveCommunityPosts(posts);
   renderCommunityFeed();
   triggerHaptic("impact");
+  await pushCommunityAction({
+    action: "react",
+    postId,
+    kind,
+    author: getPostAuthorName(),
+  });
   const emoji = kind === "love" ? "❤️" : kind === "fire" ? "🔥" : "👍";
-  // Post reactions → channel; also group
-  const msg =
-    emoji +
-    " " +
-    getPostAuthorName() +
-    " on post by " +
-    (p.author || "User") +
-    (p.caption ? "\n“" + p.caption.slice(0, 120) + "”" : "");
-  await silentTelegramNotify("channel", msg);
+  silentTelegramNotify(
+    "channel",
+    emoji + " " + getPostAuthorName() + " on post by " + (p.author || "User"),
+  );
 }
 
 function openCommentSheet(postId) {
@@ -4255,6 +4326,7 @@ function openCommentSheet(postId) {
   if (input) input.value = "";
   document.getElementById("voiceCommentStatus")?.classList.add("hidden");
   renderCommentList();
+  syncCommunityFeedFromServer().then(() => renderCommentList());
 }
 
 function closeCommentSheet() {
@@ -4264,11 +4336,11 @@ function closeCommentSheet() {
   _replyToCommentId = null;
 }
 
-function renderVoiceBubble(c, isReply) {
+function renderVoiceBubble(c) {
   if (!c.voiceData) {
     return (
       '<p class="text-sm font-bold text-slate-900 dark:text-slate-100 mt-0.5">' +
-      escapeHtml(c.text || "🎤 Voice") +
+      escapeHtml(c.text || (c.voice ? "🎤 Voice" : "")) +
       "</p>"
     );
   }
@@ -4277,11 +4349,10 @@ function renderVoiceBubble(c, isReply) {
   return (
     '<button type="button" onclick="playVoiceComment(\'' +
     id +
-    '\')" class="mt-1.5 w-full flex items-center gap-2.5 rounded-2xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-100 dark:border-indigo-900/50 px-3 py-2.5 text-left active:scale-[0.99] transition-transform" data-voice-id="' +
+    '\')" class="mt-1.5 w-full flex items-center gap-2.5 rounded-2xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-100 dark:border-indigo-900/50 px-3 py-2.5 text-left" data-voice-id="' +
     id +
     '">' +
-    '<span class="w-9 h-9 rounded-full bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-sm">' +
-    '<i class="fa-solid fa-play text-xs" id="voicePlayIcon_' +
+    '<span class="w-9 h-9 rounded-full bg-indigo-600 text-white flex items-center justify-center shrink-0"><i class="fa-solid fa-play text-xs" id="voicePlayIcon_' +
     id +
     '"></i></span>' +
     '<span class="flex-1 min-w-0">' +
@@ -4292,11 +4363,9 @@ function renderVoiceBubble(c, isReply) {
     '">0:00 / ' +
     formatAudioTime(dur) +
     "</span></span>" +
-    '<span class="mt-1 h-1.5 rounded-full bg-indigo-200/80 dark:bg-indigo-900 overflow-hidden">' +
-    '<span id="voiceBar_' +
+    '<span class="mt-1 h-1.5 rounded-full bg-indigo-200/80 overflow-hidden"><span id="voiceBar_' +
     id +
-    '" class="block h-full w-0 bg-indigo-600 rounded-full transition-[width] duration-100"></span></span>' +
-    "</span></button>" +
+    '" class="block h-full w-0 bg-indigo-600 rounded-full"></span></span></span></button>' +
     (c.text
       ? '<p class="text-[12px] font-bold text-slate-700 dark:text-slate-200 mt-1">' +
         escapeHtml(c.text) +
@@ -4311,7 +4380,6 @@ function renderCommentList() {
   const posts = loadCommunityPosts();
   const p = posts.find((x) => x.id === _activeCommentPostId);
   const comments = (p && p.comments) || [];
-  // stash voice blobs for playback
   window._voiceMap = window._voiceMap || {};
   comments.forEach((c) => {
     if (c.voiceData) window._voiceMap[c.id] = c.voiceData;
@@ -4335,8 +4403,8 @@ function renderCommentList() {
             ' <span class="font-semibold text-slate-400 text-[10px]">' +
             escapeHtml(r.time || "") +
             "</span></p>" +
-            (r.voiceData
-              ? renderVoiceBubble(r, true)
+            (r.voiceData || r.voice
+              ? renderVoiceBubble(r)
               : '<p class="text-[12px] font-bold text-slate-800 dark:text-slate-100">' +
                 escapeHtml(r.text || "") +
                 "</p>") +
@@ -4350,8 +4418,8 @@ function renderCommentList() {
         ' <span class="font-semibold text-slate-400 text-[10px]">' +
         escapeHtml(c.time || "") +
         "</span></p>" +
-        (c.voiceData
-          ? renderVoiceBubble(c, false)
+        (c.voiceData || c.voice
+          ? renderVoiceBubble(c)
           : '<p class="text-sm font-bold text-slate-900 dark:text-slate-100 mt-0.5">' +
             escapeHtml(c.text || "") +
             "</p>") +
@@ -4382,29 +4450,18 @@ function playVoiceComment(id) {
   const timeEl = document.getElementById("voiceTime_" + id);
   const bar = document.getElementById("voiceBar_" + id);
   if (icon) icon.className = "fa-solid fa-pause text-xs";
-
   audio.ontimeupdate = () => {
     const cur = audio.currentTime || 0;
     const dur = audio.duration && isFinite(audio.duration) ? audio.duration : 0;
-    if (timeEl) {
-      timeEl.textContent =
-        formatAudioTime(cur) + " / " + formatAudioTime(dur || 0);
-    }
+    if (timeEl) timeEl.textContent = formatAudioTime(cur) + " / " + formatAudioTime(dur || 0);
     if (bar && dur) bar.style.width = Math.min(100, (cur / dur) * 100) + "%";
   };
   audio.onended = () => {
     if (icon) icon.className = "fa-solid fa-play text-xs";
     if (bar) bar.style.width = "0%";
-    if (timeEl && audio.duration) {
-      timeEl.textContent =
-        "0:00 / " + formatAudioTime(audio.duration);
-    }
     _activeAudio = null;
   };
-  audio.play().catch(() => {
-    if (icon) icon.className = "fa-solid fa-play text-xs";
-    showToast("Could not play voice", true);
-  });
+  audio.play().catch(() => showToast("Could not play voice", true));
 }
 
 function startReply(commentId, author) {
@@ -4428,93 +4485,67 @@ async function submitComment() {
   const author = getPostAuthorName();
   const authorId = getTelegramUserId();
   const time = new Date().toLocaleString();
+  const baseComment = {
+    id: "c_" + Date.now(),
+    author,
+    authorId,
+    text: text || "",
+    time,
+    ts: Date.now(),
+    replies: [],
+  };
 
   if (_pendingVoiceBase64) {
-    const entry = {
-      id: "c_" + Date.now(),
-      author,
-      authorId,
-      text: text || "",
-      voice: true,
-      voiceData: _pendingVoiceBase64,
-      voiceDuration: _pendingVoiceDuration || 0,
-      time,
-      replies: [],
-    };
-    if (_replyToCommentId) {
-      const parent = p.comments.find((c) => c.id === _replyToCommentId);
-      if (parent) {
-        if (!parent.replies) parent.replies = [];
-        parent.replies.push({
-          id: "r_" + Date.now(),
-          author,
-          authorId,
-          text: text || "",
-          voice: true,
-          voiceData: _pendingVoiceBase64,
-          voiceDuration: _pendingVoiceDuration || 0,
-          time,
-        });
-      }
-      _replyToCommentId = null;
-      document.getElementById("replyHint")?.classList.add("hidden");
-    } else {
-      p.comments.push(entry);
-    }
-    // Comment voice → group https://t.me/+HiLIJXecodUzZmI1
-    await silentTelegramNotify(
-      "group",
-      "🎤 " + author + (text ? ": " + text : " sent a voice note"),
-      _pendingVoiceBase64,
-      "voice",
-    );
-    _pendingVoiceBase64 = null;
-    _pendingVoiceDuration = 0;
-    document.getElementById("voiceCommentStatus")?.classList.add("hidden");
-    if (input) input.value = "";
-    saveCommunityPosts(posts);
-    renderCommentList();
-    renderCommunityFeed();
-    showToast("Voice sent");
-    return;
-  }
-
-  if (!text) {
+    baseComment.voice = true;
+    baseComment.voiceData = _pendingVoiceBase64;
+    baseComment.voiceDuration = _pendingVoiceDuration || 0;
+  } else if (!text) {
     showToast("Write a comment first.", true);
     return;
   }
 
   if (_replyToCommentId) {
+    baseComment.replyTo = _replyToCommentId;
     const parent = p.comments.find((c) => c.id === _replyToCommentId);
     if (parent) {
       if (!parent.replies) parent.replies = [];
-      parent.replies.push({ id: "r_" + Date.now(), author, authorId, text, time });
+      parent.replies.push({ ...baseComment, id: "r_" + Date.now() });
     }
-    await silentTelegramNotify(
-      "group",
-      "↩️ " + author + " replied on post by " + (p.author || "User") + ":\n" + text,
-    );
     _replyToCommentId = null;
     document.getElementById("replyHint")?.classList.add("hidden");
   } else {
-    p.comments.push({
-      id: "c_" + Date.now(),
-      author,
-      authorId,
-      text,
-      time,
-      replies: [],
-    });
-    await silentTelegramNotify(
-      "group",
-      "💬 " + author + " on post by " + (p.author || "User") + ":\n" + text,
-    );
+    p.comments.push(baseComment);
   }
+
   if (input) input.value = "";
+  _pendingVoiceBase64 = null;
+  _pendingVoiceDuration = 0;
+  document.getElementById("voiceCommentStatus")?.classList.add("hidden");
   saveCommunityPosts(posts);
   renderCommentList();
   renderCommunityFeed();
-  showToast("Comment added");
+  showToast("Comment shared");
+
+  await pushCommunityAction({
+    action: "addComment",
+    postId: p.id,
+    comment: {
+      ...baseComment,
+      voiceData: undefined, // keep payload small for server
+      voice: !!baseComment.voice,
+      postAuthor: p.author,
+      postCaption: p.caption,
+    },
+  });
+  await silentTelegramNotify(
+    "group",
+    (baseComment.voice ? "🎤 " : "💬 ") + author + (text ? ": " + text : ""),
+    baseComment.voiceData || null,
+    baseComment.voice ? "voice" : null,
+  );
+  await syncCommunityFeedFromServer();
+  renderCommentList();
+  renderCommunityFeed();
 }
 
 async function toggleVoiceComment() {
@@ -4535,9 +4566,8 @@ async function toggleVoiceComment() {
       if (e.data && e.data.size) _voiceChunks.push(e.data);
     };
     _voiceRecorder.onstop = () => {
-      stream.getTracks().forEach((t) => t.stop());
+      stream.getTracks().forEach((tr) => tr.stop());
       clearInterval(_voiceTimerIv);
-      _voiceTimerIv = null;
       const blob = new Blob(_voiceChunks, { type: mime });
       const reader = new FileReader();
       reader.onload = () => {
@@ -4579,7 +4609,6 @@ function stopVoiceComment(discard) {
   }
   _voiceRecording = false;
   clearInterval(_voiceTimerIv);
-  _voiceTimerIv = null;
   document.getElementById("voiceCommentBtn")?.classList.remove("ring-2", "ring-rose-500");
   if (discard) {
     _pendingVoiceBase64 = null;
@@ -4601,6 +4630,7 @@ function deleteCommunityPost(postId) {
     saveCommunityPosts(posts.filter((x) => x.id !== postId));
     if (_activeCommentPostId === postId) closeCommentSheet();
     renderCommunityFeed();
+    pushCommunityAction({ action: "deletePost", postId });
     showToast("Post deleted");
   });
 }
@@ -4619,6 +4649,17 @@ function loadTelegramNotifySettings() {
   return {};
 }
 
+// Background badge refresh for all users
+setTimeout(() => {
+  try {
+    syncCommunityFeedFromServer().then(() => updatePostBadges());
+  } catch (e) {}
+}, 1500);
+setInterval(() => {
+  try {
+    syncCommunityFeedFromServer().then(() => updatePostBadges());
+  } catch (e) {}
+}, 20000);
 
 /* ===== KHMER VOICE COMMAND (ACLEDA-style) ===== */
 let _voiceCmdRecognition = null;

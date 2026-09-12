@@ -10,6 +10,10 @@
     {
       "source": "/api/telegram/notify",
       "destination": "/api/telegram/notify"
+    },
+    {
+      "source": "/api/community/feed",
+      "destination": "/api/community/feed"
     }
   ],
   "headers": [
