@@ -3205,6 +3205,10 @@ function handleBiometricAuthSuccess() {
 
 /* 9. NAV & MODAL HELPERS */
 function navigateToView(viewId) {
+  try {
+    setTimeout(syncVoiceCmdFabVisibility, 30);
+  } catch (e) {}
+
   if (viewId !== "cameraScanView") {
     stopCameraStream();
   }
@@ -4644,58 +4648,73 @@ function speechRecognitionSupported() {
 }
 
 function refreshVoiceCommandUI() {
-  const card = document.getElementById("voiceCmdCard");
   const fab = document.getElementById("voiceCmdFab");
   const enabled = appPreferences.voiceCommand !== false;
-  if (card) card.classList.toggle("opacity-50", !enabled);
-  if (fab) fab.disabled = !enabled;
-  if (!enabled) {
-    updateVoiceCmdStatus("Off — enable in Settings");
-    return;
-  }
-  if (!speechRecognitionSupported()) {
-    updateVoiceCmdStatus("Device limited — try Chrome Android");
-    return;
-  }
-  updateVoiceCmdStatus("Ready — tap mic & speak Khmer");
+  if (!fab) return;
+  fab.disabled = !enabled;
+  syncVoiceCmdFabVisibility();
 }
 
-async function ensureMicPermission() {
+/** Small floating mic: visible everywhere except Settings */
+function syncVoiceCmdFabVisibility() {
+  const fab = document.getElementById("voiceCmdFab");
+  if (!fab) return;
+  const enabled = appPreferences.voiceCommand !== false;
+  let settingsOpen = document.body.dataset.settingsOpen === "1";
   try {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    const drawer = document.getElementById("settingsDrawer");
+    if (drawer) {
+      const hidden =
+        drawer.classList.contains("hidden") ||
+        drawer.classList.contains("translate-x-full") ||
+        drawer.style.display === "none";
+      if (!hidden && drawer.offsetParent !== null) {
+        // If drawer is open class
+        if (drawer.classList.contains("open") || drawer.classList.contains("settings-open")) {
+          settingsOpen = true;
+        }
+      }
+      if (hidden) settingsOpen = false;
+    }
+  } catch (e) {}
+  const hide = !enabled || settingsOpen;
+  fab.classList.toggle("vc-hidden", hide);
+}
+
+function ensureMicPermission() {
+  return (async () => {
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        return false;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((tr) => tr.stop());
+      return true;
+    } catch (e) {
+      log("mic permission: " + (e && e.message));
       return false;
     }
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    stream.getTracks().forEach((t) => t.stop());
-    return true;
-  } catch (e) {
-    log("mic permission: " + (e && e.message));
-    return false;
-  }
+  })();
 }
 
 function initVoiceCommandUI() {
   refreshVoiceCommandUI();
-  // Auto-prepare when enabled (permission may wait for first tap on iOS)
-  if (appPreferences.voiceCommand === false) return;
-  // Soft warm: register for first pointer so mic+speech unlock together
-  const warm = async () => {
-    document.removeEventListener("pointerdown", warm, true);
-    if (appPreferences.voiceCommand === false) return;
-    unlockAudioEngine();
-    const ok = await ensureMicPermission();
-    if (ok) {
-      updateVoiceCmdStatus("Mic ready — tap & speak");
-    } else if (speechRecognitionSupported()) {
-      updateVoiceCmdStatus("Tap mic to allow microphone");
-    }
-  };
-  document.addEventListener("pointerdown", warm, { capture: true, once: true, passive: true });
+  syncVoiceCmdFabVisibility();
 }
 
 function updateVoiceCmdStatus(msg) {
-  const el = document.getElementById("voiceCmdStatus");
-  if (el) el.textContent = msg;
+  const el = document.getElementById("voiceCmdStatusToast");
+  if (!el) return;
+  el.textContent = msg || "";
+  if (!msg) {
+    el.classList.add("hidden");
+    return;
+  }
+  el.classList.remove("hidden");
+  clearTimeout(el._hideT);
+  if (!/កំពុង|Speaking|listening/i.test(msg)) {
+    el._hideT = setTimeout(() => el.classList.add("hidden"), 2800);
+  }
 }
 
 function toggleVoiceCommand() {
@@ -4716,8 +4735,16 @@ function stopVoiceCommand() {
     if (_voiceCmdRecognition) _voiceCmdRecognition.stop();
   } catch (e) {}
   const btn = document.getElementById("voiceCmdFab");
-  if (btn) btn.classList.remove("ring-4", "ring-rose-400", "animate-pulse");
-  updateVoiceCmdStatus("Ready");
+  if (btn) {
+    btn.classList.remove(
+      "listening",
+      "ring-4",
+      "ring-rose-400",
+      "animate-pulse",
+    );
+  }
+  updateVoiceCmdStatus("");
+  syncVoiceCmdFabVisibility();
 }
 
 async function startVoiceCommand() {
@@ -4760,8 +4787,11 @@ async function startVoiceCommand() {
 
   _voiceCmdActive = true;
   const btn = document.getElementById("voiceCmdFab");
-  if (btn) btn.classList.add("ring-4", "ring-rose-400", "animate-pulse");
-  updateVoiceCmdStatus("កំពុងស្តាប់… Speaking…");
+  if (btn) {
+    btn.classList.add("listening");
+    btn.classList.remove("vc-hidden");
+  }
+  updateVoiceCmdStatus("កំពុងស្តាប់…");
   showToast("🎤 និយាយពាក្យបញ្ជា…");
 
   rec.onresult = (event) => {
@@ -4790,10 +4820,16 @@ async function startVoiceCommand() {
     if (_voiceCmdActive) {
       _voiceCmdActive = false;
       const b = document.getElementById("voiceCmdFab");
-      if (b) b.classList.remove("ring-4", "ring-rose-400", "animate-pulse");
-      if ((document.getElementById("voiceCmdStatus")?.textContent || "").includes("កំពុង")) {
-        updateVoiceCmdStatus("Ready — tap mic & speak");
+      if (b) {
+        b.classList.remove(
+          "listening",
+          "ring-4",
+          "ring-rose-400",
+          "animate-pulse",
+        );
       }
+      updateVoiceCmdStatus("");
+      syncVoiceCmdFabVisibility();
     }
   };
   try {
