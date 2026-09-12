@@ -91,9 +91,10 @@ module.exports = async function handler(req, res) {
       let filename = "file.jpg";
       let method = "sendPhoto";
       if (action === "sendVoice") {
-        field = "voice";
-        filename = "voice.ogg";
-        method = "sendVoice";
+        // Browser MediaRecorder = webm; Telegram sendVoice wants ogg — use document
+        field = "document";
+        filename = "voice.webm";
+        method = "sendDocument";
       } else if (action === "sendVideo") {
         field = "video";
         filename = "video.mp4";

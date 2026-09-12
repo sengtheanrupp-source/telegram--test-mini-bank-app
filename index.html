@@ -1015,6 +1015,18 @@
 
             <!-- PANEL: MENUS & BILLS -->
             <div id="settingsPanel-menus" class="settings-panel hidden space-y-3">
+              <div class="bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800 space-y-1.5">
+                <p class="text-xs font-extrabold text-slate-800 dark:text-white">Voice command guide</p>
+                <p class="text-[10px] font-semibold text-slate-500 leading-relaxed">
+                  <b>Pay Bill:</b> បង់ប្រាក់លើវិក្កយបត្រ / ទូទាត់វិក្កយបត្រ → open Pay Bill<br/>
+                  then <b>បាទ / ចាស</b> → inquiry &amp; pay<br/><br/>
+                  <b>Deeplink:</b> បង់ប្រាក់ / ទូទាត់ → open / pay deeplink<br/>
+                  then <b>បាទ / ចាស</b> → Done + return URL<br/><br/>
+                  <b>QR:</b> បង់ប្រាក់តាម QR / ទូទាត់តាម QR → Scan QR<br/>
+                  then <b>បាទ / ចាស</b> → Confirm QR pay
+                </p>
+              </div>
+
               <label class="flex items-center justify-between gap-3 bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800">
                 <span class="space-y-0.5 pr-2">
                   <span class="text-xs font-bold text-slate-800 dark:text-slate-200 block">Show Deeplink menu</span>
@@ -1081,6 +1093,25 @@
                   id="voiceConfirmEnabled"
                   checked
                   onchange="toggleVoiceConfirmSetting()"
+                  class="w-4 h-4 accent-indigo-600 rounded cursor-pointer shrink-0"
+                />
+              </div>
+              <div
+                class="flex items-center justify-between bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800"
+              >
+                <div class="space-y-0.5 pr-2">
+                  <span class="text-xs font-bold text-slate-800 dark:text-slate-200 block"
+                    >Voice command (auto mic)</span
+                  >
+                  <span class="text-[10px] text-slate-400 block"
+                    >Default ON. Tap mic on Home and speak Khmer commands. Requests microphone automatically when Telegram allows it.</span
+                  >
+                </div>
+                <input
+                  type="checkbox"
+                  id="voiceCommandEnabled"
+                  checked
+                  onchange="toggleVoiceCommandSetting()"
                   class="w-4 h-4 accent-indigo-600 rounded cursor-pointer shrink-0"
                 />
               </div>
@@ -1337,6 +1368,18 @@
               </div>
               <span class="text-[10px] font-bold text-slate-700 dark:text-slate-200">Deeplink</span>
             </button>
+          </div>
+        </div>
+
+        <!-- Voice command (ACLEDA-style) -->
+        <div id="voiceCmdCard" class="bank-card p-4 flex items-center gap-3">
+          <button type="button" id="voiceCmdFab" onclick="toggleVoiceCommand()" class="w-14 h-14 rounded-full bg-gradient-to-br from-rose-500 to-pink-600 text-white flex items-center justify-center text-xl shadow-lg shadow-rose-500/30 active:scale-95 transition-transform shrink-0" title="Voice command">
+            <i class="fa-solid fa-microphone"></i>
+          </button>
+          <div class="min-w-0 flex-1">
+            <p class="text-xs font-extrabold text-slate-800 dark:text-white">Voice command</p>
+            <p id="voiceCmdStatus" class="text-[11px] font-semibold text-slate-400 truncate">Ready — tap mic &amp; speak Khmer</p>
+            <p class="text-[10px] text-slate-400 mt-0.5">ឧ. ទូទាត់វិក្កយបត្រ · ទូទាត់តាម QR · បាទ</p>
           </div>
         </div>
 

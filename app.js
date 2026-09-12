@@ -232,6 +232,7 @@ function generateRandom16() {
 }
 
 let workflowState = {
+  billPayMode: "general",
   // -- Bill Pay (v4 inquiry / v2 confirm, customer_code based) --
   customer_code: "",
   customer_name: "",
@@ -1437,10 +1438,16 @@ function evaluatePaymentMode() {
    never collide.
    ======================================================================= */
 function updateBillPayCode() {
-  const prefix = document.getElementById("prefixCode").value.trim();
-  const rawCode = document.getElementById("bpRawCode").value.trim();
-  const combined = prefix ? `${prefix}${rawCode}` : rawCode;
-  document.getElementById("bpAppCodeDisplay").textContent = `Ref: ${combined}`;
+  // Utility bills never use gateway prefix
+  const mode = workflowState.billPayMode || "general";
+  const prefix =
+    mode === "utility"
+      ? ""
+      : (document.getElementById("prefixCode")?.value || "").trim();
+  const rawCode = (document.getElementById("bpRawCode")?.value || "").trim();
+  const combined = prefix ? prefix + rawCode : rawCode;
+  const disp = document.getElementById("bpAppCodeDisplay");
+  if (disp) disp.textContent = "Ref: " + combined;
   workflowState.customer_code = combined;
 }
 
@@ -2038,7 +2045,8 @@ async function runVerifyTxn() {
 let appPreferences = {
   autoCamera: true,
   voiceConfirm: true,
-  showDeeplinkMenu: false, // hide Deeplink UI by default; payment links still work
+  voiceCommand: true, // default ON — auto mic + voice commands when supported
+  showDeeplinkMenu: false,
   showGeneralBills: true,
   showUtilityBills: true,
 };
@@ -2086,17 +2094,20 @@ function loadAppPreferences() {
 
   const autoCamToggle = document.getElementById("autoCameraEnabled");
   const voiceToggle = document.getElementById("voiceConfirmEnabled");
+  const voiceCmdToggle = document.getElementById("voiceCommandEnabled");
   const dlToggle = document.getElementById("showDeeplinkMenuEnabled");
   const genToggle = document.getElementById("showGeneralBillsEnabled");
   const utilToggle = document.getElementById("showUtilityBillsEnabled");
   if (autoCamToggle) autoCamToggle.checked = !!appPreferences.autoCamera;
   if (voiceToggle) voiceToggle.checked = !!appPreferences.voiceConfirm;
+  if (voiceCmdToggle) voiceCmdToggle.checked = appPreferences.voiceCommand !== false;
   if (dlToggle) dlToggle.checked = !!appPreferences.showDeeplinkMenu;
   if (genToggle) genToggle.checked = appPreferences.showGeneralBills !== false;
   if (utilToggle) utilToggle.checked = appPreferences.showUtilityBills !== false;
   applyMenuVisibility();
   try { hydrateTelegramNotifySettings(); } catch (e) {}
   try { updatePostBadges(); } catch (e) {}
+  try { refreshVoiceCommandUI(); } catch (e) {}
 
   if ("speechSynthesis" in window) {
     try {
@@ -2111,14 +2122,34 @@ function saveAppPreferences() {
   const dlToggle = document.getElementById("showDeeplinkMenuEnabled");
   const genToggle = document.getElementById("showGeneralBillsEnabled");
   const utilToggle = document.getElementById("showUtilityBillsEnabled");
+  const voiceCmdToggle = document.getElementById("voiceCommandEnabled");
   appPreferences.autoCamera = autoCamToggle ? autoCamToggle.checked : true;
   appPreferences.voiceConfirm = voiceToggle ? voiceToggle.checked : true;
+  appPreferences.voiceCommand = voiceCmdToggle
+    ? voiceCmdToggle.checked
+    : appPreferences.voiceCommand !== false;
   appPreferences.showDeeplinkMenu = dlToggle ? dlToggle.checked : false;
   appPreferences.showGeneralBills = genToggle ? genToggle.checked : true;
   appPreferences.showUtilityBills = utilToggle ? utilToggle.checked : true;
   localStorage.setItem("bankAppPreferences", JSON.stringify(appPreferences));
   applyMenuVisibility();
+  try { refreshVoiceCommandUI(); } catch (e) {}
   log("App preferences saved:", appPreferences);
+}
+
+function toggleVoiceCommandSetting() {
+  saveAppPreferences();
+  if (appPreferences.voiceCommand !== false) {
+    showToast("Voice command ON — tap mic on Home to speak");
+    // Warm mic on this user gesture
+    ensureMicPermission().then((ok) => {
+      if (ok) updateVoiceCmdStatus("Mic ready — tap & speak");
+    });
+  } else {
+    showToast("Voice command off");
+    stopVoiceCommand();
+    updateVoiceCmdStatus("Off — enable in Settings");
+  }
 }
 
 function applyMenuVisibility() {
@@ -2172,15 +2203,13 @@ function closeBillTypeModal() {
 
 function startGeneralBillPay() {
   closeBillTypeModal();
-  // Prefix from Payment Gateway settings (prefixCode field)
-  const prefixEl = document.getElementById("prefixCode");
-  const prefix = prefixEl ? prefixEl.value.trim() : "";
-  if (prefixEl && !prefix) {
-    // keep empty — user can still type customer code
-  }
+  workflowState.billPayMode = "general";
+  const prefix = (document.getElementById("prefixCode")?.value || "").trim();
   navigateToView("billPayView");
   const title = document.getElementById("billPayTitle");
-  if (title) title.innerHTML = '<i class="fa-solid fa-building text-indigo-500"></i> General Bills';
+  if (title)
+    title.innerHTML =
+      '<i class="fa-solid fa-building text-indigo-500"></i> General Bills';
   const hint = document.getElementById("billPayHint");
   if (hint) {
     hint.textContent = prefix
@@ -2194,15 +2223,20 @@ function startGeneralBillPay() {
 
 function startUtilityBillPay() {
   closeBillTypeModal();
-  // Utility: no gateway prefix — clear prefix for this session entry only visually
+  workflowState.billPayMode = "utility";
   navigateToView("billPayView");
   const title = document.getElementById("billPayTitle");
-  if (title) title.innerHTML = '<i class="fa-solid fa-bolt text-amber-500"></i> Utility Bills';
+  if (title)
+    title.innerHTML =
+      '<i class="fa-solid fa-bolt text-amber-500"></i> Utility Bills';
   const hint = document.getElementById("billPayHint");
-  if (hint) hint.textContent = "Utility bills — enter account / meter code (no gateway prefix)";
-  // Do not wipe saved gateway prefix in settings; only clear display combine if needed
-  const raw = document.getElementById("bpRawCode");
-  if (raw) raw.focus();
+  if (hint)
+    hint.textContent =
+      "Utility bills — account / meter code only (no gateway prefix)";
+  try {
+    updateBillPayCode();
+  } catch (e) {}
+  document.getElementById("bpRawCode")?.focus();
 }
 
 function toggleAutoCameraSetting() {
@@ -3441,27 +3475,32 @@ function backToSettingsMenu() {
   if (drawer) drawer.classList.remove("settings-view-content");
 }
 
-function saveGatewaySettings() {
-  const settings = {
-    baseUrl: document.getElementById("baseUrl").value.trim(),
-    authToken: document.getElementById("authToken").value.trim(),
-    prefixCode: document.getElementById("prefixCode").value.trim(),
-    refNoDisplay: document.getElementById("refNoDisplay").value.trim(),
-  };
-  localStorage.setItem("bankGatewaySettings", JSON.stringify(settings));
-  saveSecuritySettings();
-  saveAppPreferences();
-  toggleSettingsDrawer();
-  showToast("Settings saved successfully.");
-  log("Settings saved to local storage.");
-
-  // After enabling PIN, lock immediately so the user can verify it works
-  if (securitySettings.enabled) {
-    isAppUnlocked = false;
-    requireSecurityAuth(() => {
-      isAppUnlocked = true;
-    }, "app");
+function persistGatewaySettingsQuiet() {
+  try {
+    const settings = {
+      baseUrl: (document.getElementById("baseUrl")?.value || "").trim(),
+      authToken: (document.getElementById("authToken")?.value || "").trim(),
+      prefixCode: (document.getElementById("prefixCode")?.value || "").trim(),
+      refNoDisplay: (document.getElementById("refNoDisplay")?.value || "").trim(),
+    };
+    localStorage.setItem("bankGatewaySettings", JSON.stringify(settings));
+    log("Gateway settings auto-saved");
+  } catch (e) {
+    log("Gateway auto-save failed: " + e.message);
   }
+}
+
+function saveGatewaySettings() {
+  persistGatewaySettingsQuiet();
+  try {
+    saveSecuritySettings();
+  } catch (e) {}
+  try {
+    saveAppPreferences();
+  } catch (e) {}
+  showToast("Settings saved on this device");
+  log("Settings saved to local storage.");
+  // Do NOT force security unlock popup after save
 }
 
 function loadGatewaySettings() {
@@ -3469,13 +3508,30 @@ function loadGatewaySettings() {
     const raw = localStorage.getItem("bankGatewaySettings");
     if (!raw) return;
     const s = JSON.parse(raw);
-    if (s.baseUrl) document.getElementById("baseUrl").value = s.baseUrl;
-    if (s.authToken) document.getElementById("authToken").value = s.authToken;
-    if (s.prefixCode)
+    if (s.baseUrl != null && document.getElementById("baseUrl"))
+      document.getElementById("baseUrl").value = s.baseUrl;
+    if (s.authToken != null && document.getElementById("authToken"))
+      document.getElementById("authToken").value = s.authToken;
+    // Always restore prefix including empty string
+    if (s.prefixCode != null && document.getElementById("prefixCode"))
       document.getElementById("prefixCode").value = s.prefixCode;
-    if (s.refNoDisplay)
+    if (s.refNoDisplay != null && document.getElementById("refNoDisplay"))
       document.getElementById("refNoDisplay").value = s.refNoDisplay;
   } catch (e) {}
+}
+
+function bindGatewayAutoSave() {
+  ["baseUrl", "authToken", "prefixCode", "refNoDisplay"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el || el.dataset.autosaveBound) return;
+    el.dataset.autosaveBound = "1";
+    el.addEventListener("change", persistGatewaySettingsQuiet);
+    el.addEventListener("blur", persistGatewaySettingsQuiet);
+    el.addEventListener("input", () => {
+      clearTimeout(el._saveT);
+      el._saveT = setTimeout(persistGatewaySettingsQuiet, 400);
+    });
+  });
 }
 
 function exportGatewaySettings() {
@@ -3689,6 +3745,7 @@ function initApp() {
   setTheme(savedTheme);
   initTelegramWebApp();
   loadGatewaySettings();
+  try { bindGatewayAutoSave(); } catch (e) {}
   loadSecuritySettings();
   loadAppPreferences();
   showSettingsSection("gateway");
@@ -3708,45 +3765,16 @@ function initApp() {
   }
   log("Telegram Mini App Bank Engine initialised successfully.");
 
-  // Always require PIN when the Mini App is opened if lock is enabled
-  if (securitySettings.enabled) {
-    isAppUnlocked = false;
-    requireSecurityAuth(() => {
-      isAppUnlocked = true;
-    }, "app");
-  }
+  // Security unlock only on payment actions — not on every Mini App open
+  // (avoids PaymentStagingMini popup / PIN wall on launch)
+  isAppUnlocked = true;
 
-  document.addEventListener("visibilitychange", function () {
-    if (document.hidden) {
-      if (securitySettings.enabled) isAppUnlocked = false;
-      return;
-    }
-    if (securitySettings.enabled && !isAppUnlocked) {
-      requireSecurityAuth(() => {
-        isAppUnlocked = true;
-      }, "app");
-    }
-  });
-
-  if (tgApp && tgApp.onEvent) {
-    try {
-      tgApp.onEvent("visibilityChanged", function (payload) {
-        const visible =
-          typeof payload === "boolean"
-            ? payload
-            : payload && (payload.is_visible === true || payload.isVisible === true);
-        if (!visible) {
-          if (securitySettings.enabled) isAppUnlocked = false;
-          return;
-        }
-        if (securitySettings.enabled && !isAppUnlocked) {
-          requireSecurityAuth(() => {
-            isAppUnlocked = true;
-          }, "app");
-        }
-      });
-    } catch (e) {}
-  }
+  try {
+    bindGatewayAutoSave();
+  } catch (e) {}
+  try {
+    initVoiceCommandUI();
+  } catch (e) {}
 }
 
 document.addEventListener("DOMContentLoaded", initApp);
@@ -3894,24 +3922,28 @@ function softConfirmOk() {
  * Channel: @generalpost168 / Group: @generalpost169
  */
 async function silentTelegramNotify(target, text, mediaBase64, mediaType) {
-  // Default bot — server also has this; env TELEGRAM_BOT_TOKEN overrides
   const DEFAULT_BOT_TOKEN =
     "6967209738:AAFbTVO3gsAuSVrTe23YUdUfauekL9NIMDQ";
+  const chatId =
+    target === "channel" ? POST_CHANNEL_ID : POST_GROUP_ID || "@generalpost169";
+  const botToken = DEFAULT_BOT_TOKEN;
+  let action = "sendMessage";
+  if (mediaBase64 && mediaType === "image") action = "sendPhoto";
+  if (mediaBase64 && mediaType === "video") action = "sendVideo";
+  if (mediaBase64 && mediaType === "voice") action = "sendVoice";
+
   const payload = {
-    target: target, // "channel" | "group"
-    chatId: target === "channel" ? POST_CHANNEL_ID : POST_GROUP_ID,
-    botToken: DEFAULT_BOT_TOKEN,
+    target,
+    chatId,
+    botToken,
     text: text || "",
-    action: "sendMessage",
+    action,
     mediaBase64: mediaBase64 || null,
     mediaType: mediaType || null,
   };
-  if (mediaBase64 && mediaType === "image") payload.action = "sendPhoto";
-  if (mediaBase64 && mediaType === "video") payload.action = "sendVideo";
-  if (mediaBase64 && mediaType === "voice") payload.action = "sendVoice";
 
-  const urls = ["/api/telegram/notify", "api/telegram/notify"];
-  for (const url of urls) {
+  // 1) Vercel proxy
+  for (const url of ["/api/telegram/notify", "api/telegram/notify"]) {
     try {
       const res = await fetch(url, {
         method: "POST",
@@ -3919,17 +3951,86 @@ async function silentTelegramNotify(target, text, mediaBase64, mediaType) {
         body: JSON.stringify(payload),
       });
       const data = await res.json().catch(() => ({}));
-      log("TG notify " + target + ": " + JSON.stringify(data).slice(0, 200));
+      log("TG proxy " + target + ": " + JSON.stringify(data).slice(0, 180));
       if (data && data.ok && !data.skipped) return data;
-      if (data && data.skipped) {
-        log("TG notify skipped (set TELEGRAM_BOT_TOKEN + GROUP_ID on server)");
-      }
     } catch (e) {
-      log("TG notify error: " + e.message);
+      log("TG proxy err: " + e.message);
     }
+  }
+
+  // 2) Direct Bot API (works in many WebViews; no server needed)
+  try {
+    const api = "https://api.telegram.org/bot" + botToken;
+    if (mediaBase64 && (mediaType === "image" || mediaType === "video" || mediaType === "voice")) {
+      let b64 = mediaBase64;
+      let mime = "application/octet-stream";
+      const m = /^data:([^;]+);base64,(.+)$/s.exec(mediaBase64);
+      if (m) {
+        mime = m[1];
+        b64 = m[2];
+      }
+      const byteChars = atob(b64);
+      const byteArr = new Uint8Array(byteChars.length);
+      for (let i = 0; i < byteChars.length; i++) byteArr[i] = byteChars.charCodeAt(i);
+      const blob = new Blob([byteArr], { type: mime });
+      const form = new FormData();
+      form.append("chat_id", chatId);
+      if (text) form.append("caption", String(text).slice(0, 1000));
+      let field = "document";
+      let method = "sendDocument";
+      let filename = "file.bin";
+      if (mediaType === "image") {
+        field = "photo";
+        method = "sendPhoto";
+        filename = "photo.jpg";
+      } else if (mediaType === "video") {
+        field = "video";
+        method = "sendVideo";
+        filename = "video.mp4";
+      } else if (mediaType === "voice") {
+        // webm often fails as voice — send as document/audio
+        field = "document";
+        method = "sendDocument";
+        filename = "voice.webm";
+      }
+      form.append(field, blob, filename);
+      const res = await fetch(api + "/" + method, { method: "POST", body: form });
+      const data = await res.json().catch(() => ({}));
+      log("TG direct media: " + JSON.stringify(data).slice(0, 200));
+      if (data.ok) return { ok: true, messageId: data.result && data.result.message_id };
+      // last resort: caption only
+      if (mediaType === "voice") {
+        const res2 = await fetch(api + "/sendMessage", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: (text || "🎤 Voice note") + "\n(voice file attached in Mini App)",
+          }),
+        });
+        const d2 = await res2.json().catch(() => ({}));
+        if (d2.ok) return { ok: true, messageId: d2.result && d2.result.message_id };
+      }
+    } else {
+      const res = await fetch(api + "/sendMessage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: String(text || "(empty)").slice(0, 4000),
+          disable_web_page_preview: true,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      log("TG direct msg: " + JSON.stringify(data).slice(0, 180));
+      if (data.ok) return { ok: true, messageId: data.result && data.result.message_id };
+    }
+  } catch (e) {
+    log("TG direct err: " + e.message);
   }
   return { ok: false };
 }
+
 
 function openPostView() {
   navigateToView("postView");
@@ -3959,9 +4060,12 @@ function renderCommunityFeed() {
       if (p.media) {
         if (p.type === "video") {
           media =
+            '<div class="relative bg-black">' +
             '<video src="' +
             p.media +
-            '" controls playsinline class="w-full max-h-72 object-cover bg-black"></video>';
+            '" controls playsinline webkit-playsinline x5-playsinline ' +
+            'preload="metadata" class="w-full max-h-[80vh] object-contain bg-black" ' +
+            'style="min-height:200px"></video></div>';
         } else if (p.type === "image") {
           media =
             '<img src="' +
@@ -4072,7 +4176,7 @@ function handlePostMediaPick(ev) {
     if (!prev) return;
     prev.classList.remove("hidden");
     prev.innerHTML = isVideo
-      ? '<video src="' + reader.result + '" controls playsinline class="w-full max-h-48 rounded-xl"></video>'
+      ? '<video src="' + reader.result + '" controls playsinline webkit-playsinline class="w-full max-h-64 rounded-xl bg-black object-contain"></video>'
       : '<img src="' + reader.result + '" class="w-full max-h-48 object-cover rounded-xl"/>';
   };
   reader.readAsDataURL(file);
@@ -4510,4 +4614,349 @@ function saveTelegramNotifySettings() {}
 function loadTelegramNotifySettings() {
   return {};
 }
+
+
+/* ===== KHMER VOICE COMMAND (ACLEDA-style) ===== */
+let _voiceCmdRecognition = null;
+let _voiceCmdActive = false;
+
+const VOICE_CMD_HINTS = [
+  "បង់ប្រាក់លើវិក្កយបត្រ / ទូទាត់វិក្កយបត្រ → Pay Bill",
+  "បង់ប្រាក់តាម QR / ទូទាត់តាម QR → Scan QR",
+  "បង់ប្រាក់ / ទូទាត់ → Deeplink Pay",
+  "បាទ / ចាស → Confirm / Done",
+];
+
+function normalizeKhmerSpeech(s) {
+  return String(s || "")
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/[។៕!?.,]/g, "");
+}
+
+function speechIncludes(text, keywords) {
+  const n = normalizeKhmerSpeech(text);
+  return keywords.some((k) => n.includes(normalizeKhmerSpeech(k)));
+}
+
+function speechRecognitionSupported() {
+  return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+}
+
+function refreshVoiceCommandUI() {
+  const card = document.getElementById("voiceCmdCard");
+  const fab = document.getElementById("voiceCmdFab");
+  const enabled = appPreferences.voiceCommand !== false;
+  if (card) card.classList.toggle("opacity-50", !enabled);
+  if (fab) fab.disabled = !enabled;
+  if (!enabled) {
+    updateVoiceCmdStatus("Off — enable in Settings");
+    return;
+  }
+  if (!speechRecognitionSupported()) {
+    updateVoiceCmdStatus("Device limited — try Chrome Android");
+    return;
+  }
+  updateVoiceCmdStatus("Ready — tap mic & speak Khmer");
+}
+
+async function ensureMicPermission() {
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      return false;
+    }
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream.getTracks().forEach((t) => t.stop());
+    return true;
+  } catch (e) {
+    log("mic permission: " + (e && e.message));
+    return false;
+  }
+}
+
+function initVoiceCommandUI() {
+  refreshVoiceCommandUI();
+  // Auto-prepare when enabled (permission may wait for first tap on iOS)
+  if (appPreferences.voiceCommand === false) return;
+  // Soft warm: register for first pointer so mic+speech unlock together
+  const warm = async () => {
+    document.removeEventListener("pointerdown", warm, true);
+    if (appPreferences.voiceCommand === false) return;
+    unlockAudioEngine();
+    const ok = await ensureMicPermission();
+    if (ok) {
+      updateVoiceCmdStatus("Mic ready — tap & speak");
+    } else if (speechRecognitionSupported()) {
+      updateVoiceCmdStatus("Tap mic to allow microphone");
+    }
+  };
+  document.addEventListener("pointerdown", warm, { capture: true, once: true, passive: true });
+}
+
+function updateVoiceCmdStatus(msg) {
+  const el = document.getElementById("voiceCmdStatus");
+  if (el) el.textContent = msg;
+}
+
+function toggleVoiceCommand() {
+  if (appPreferences.voiceCommand === false) {
+    showToast("Enable Voice command in Settings first", true);
+    return;
+  }
+  if (_voiceCmdActive) {
+    stopVoiceCommand();
+    return;
+  }
+  startVoiceCommand();
+}
+
+function stopVoiceCommand() {
+  _voiceCmdActive = false;
+  try {
+    if (_voiceCmdRecognition) _voiceCmdRecognition.stop();
+  } catch (e) {}
+  const btn = document.getElementById("voiceCmdFab");
+  if (btn) btn.classList.remove("ring-4", "ring-rose-400", "animate-pulse");
+  updateVoiceCmdStatus("Ready");
+}
+
+async function startVoiceCommand() {
+  if (appPreferences.voiceCommand === false) {
+    showToast("Voice command is off in Settings", true);
+    return;
+  }
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    showToast("This Telegram WebView cannot use speech — try Android Chrome", true);
+    updateVoiceCmdStatus("Not supported here");
+    return;
+  }
+  unlockAudioEngine();
+  updateVoiceCmdStatus("Allow microphone…");
+  const micOk = await ensureMicPermission();
+  if (!micOk) {
+    showToast("Please allow microphone for Voice command", true);
+    updateVoiceCmdStatus("Mic blocked — allow in phone settings");
+    return;
+  }
+
+  try {
+    if (_voiceCmdRecognition) {
+      try {
+        _voiceCmdRecognition.stop();
+      } catch (e) {}
+    }
+  } catch (e) {}
+
+  const rec = new SR();
+  _voiceCmdRecognition = rec;
+  // Prefer Khmer; some devices only expose default locale
+  try {
+    rec.lang = "km-KH";
+  } catch (e) {}
+  rec.continuous = false;
+  rec.interimResults = true;
+  rec.maxAlternatives = 3;
+
+  _voiceCmdActive = true;
+  const btn = document.getElementById("voiceCmdFab");
+  if (btn) btn.classList.add("ring-4", "ring-rose-400", "animate-pulse");
+  updateVoiceCmdStatus("កំពុងស្តាប់… Speaking…");
+  showToast("🎤 និយាយពាក្យបញ្ជា…");
+
+  rec.onresult = (event) => {
+    let transcript = "";
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      transcript += event.results[i][0].transcript;
+    }
+    updateVoiceCmdStatus(transcript || "…");
+    if (event.results[event.results.length - 1].isFinal) {
+      handleVoiceCommand(transcript);
+    }
+  };
+  rec.onerror = (e) => {
+    log("voice cmd error: " + (e.error || ""));
+    stopVoiceCommand();
+    if (e.error === "not-allowed") {
+      showToast("Microphone permission required", true);
+      updateVoiceCmdStatus("Mic blocked");
+    } else if (e.error === "no-speech") {
+      updateVoiceCmdStatus("No speech — tap mic again");
+    } else {
+      updateVoiceCmdStatus("Try again");
+    }
+  };
+  rec.onend = () => {
+    if (_voiceCmdActive) {
+      _voiceCmdActive = false;
+      const b = document.getElementById("voiceCmdFab");
+      if (b) b.classList.remove("ring-4", "ring-rose-400", "animate-pulse");
+      if ((document.getElementById("voiceCmdStatus")?.textContent || "").includes("កំពុង")) {
+        updateVoiceCmdStatus("Ready — tap mic & speak");
+      }
+    }
+  };
+  try {
+    rec.start();
+  } catch (e) {
+    showToast("Could not start voice command", true);
+    stopVoiceCommand();
+  }
+}
+
+/**
+ * Method 1 Pay Bill: បង់ប្រាក់លើវិក្កយបត្រ / ទូទាត់វិក្កយបត្រ → open Pay Bill
+ * Confirm: បាទ / ចាស → inquiry + pay
+ * Method 2 Deeplink: បង់ប្រាក់ / ទូទាត់ → deeplink pay; បាទ/ចាស → Done
+ * Method 3 QR: បង់ប្រាក់តាម QR / ទូទាត់តាម QR → scan; បាទ/ចាស → confirm QR
+ */
+function handleVoiceCommand(raw) {
+  const text = String(raw || "").trim();
+  if (!text) {
+    updateVoiceCmdStatus("No speech detected");
+    return;
+  }
+  log("Voice command: " + text);
+  updateVoiceCmdStatus("Heard: " + text);
+  showToast("🎤 " + text);
+
+  const isYes = speechIncludes(text, ["បាទ", "ចាស", "ចាាស", "yes", "ok", "okay"]);
+  const isBill =
+    speechIncludes(text, [
+      "បង់ប្រាក់លើវិក្កយបត្រ",
+      "ទូទាត់វិក្កយបត្រ",
+      "វិក្កយបត្រ",
+      "វិក្្កយបត្រ",
+      "paybill",
+      "bill",
+    ]) && !speechIncludes(text, ["qr", "គុរ", "គីວអា", "កូដ"]);
+  const isQr = speechIncludes(text, [
+    "បង់ប្រាក់តាមqr",
+    "ទូទាត់តាមqr",
+    "តាមqr",
+    "qr",
+    "គុរ",
+    "ស្កេន",
+    "scan",
+  ]);
+  // Generic pay (deeplink) — avoid matching bill/qr phrases first
+  const isPay =
+    !isBill &&
+    !isQr &&
+    speechIncludes(text, ["បង់ប្រាក់", "ទូទាត់", "pay", "payment"]);
+
+  if (isQr) {
+    showToast("Opening Scan QR…");
+    try {
+      triggerInstantQRScan();
+    } catch (e) {
+      navigateToView("cameraScanView");
+    }
+    stopVoiceCommand();
+    return;
+  }
+  if (isBill) {
+    showToast("Opening Pay Bill…");
+    try {
+      openPayBillMenu();
+    } catch (e) {
+      navigateToView("billPayView");
+    }
+    stopVoiceCommand();
+    return;
+  }
+  if (isPay) {
+    showToast("Opening Deeplink payment…");
+    // If deeplink session active → pay; else open deeplink view
+    if (workflowState.link_token || workflowState.payment_token) {
+      try {
+        unlockAudioEngine();
+        runSmartPaymentFlow();
+      } catch (e) {}
+    } else {
+      try {
+        openDeeplinkViewManually();
+      } catch (e) {
+        navigateToView("paymentView");
+      }
+    }
+    stopVoiceCommand();
+    return;
+  }
+
+  if (isYes) {
+    // Confirm current context
+    const qrModal = document.getElementById("khqrConfirmModal");
+    const qrOpen = qrModal && !qrModal.classList.contains("hidden");
+    if (qrOpen) {
+      showToast("Confirming QR payment…");
+      try {
+        unlockAudioEngine();
+        submitQRConfirm();
+      } catch (e) {}
+      stopVoiceCommand();
+      return;
+    }
+    // Success modal Done (deeplink)
+    const bankModal = document.getElementById("bankModal");
+    const bankOpen = bankModal && !bankModal.classList.contains("hidden");
+    const doneBtn = document.getElementById("modalDoneBtn");
+    if (bankOpen && doneBtn && !doneBtn.closest(".hidden")) {
+      showToast("Done…");
+      try {
+        handlePaymentDoneAction();
+      } catch (e) {}
+      stopVoiceCommand();
+      return;
+    }
+    // Bill pay confirm
+    const bpBtn = document.getElementById("bpConfirmPayBtn");
+    if (bpBtn && !bpBtn.disabled && document.getElementById("billPayView") && !document.getElementById("billPayView").classList.contains("hidden")) {
+      showToast("Paying bill…");
+      try {
+        unlockAudioEngine();
+        runBillPaySmartFlow();
+      } catch (e) {}
+      stopVoiceCommand();
+      return;
+    }
+    // Bill inquiry if on bill pay with code
+    if (
+      document.getElementById("billPayView") &&
+      !document.getElementById("billPayView").classList.contains("hidden")
+    ) {
+      if (workflowState.payment_token) {
+        try {
+          unlockAudioEngine();
+          runBillPaySmartFlow();
+        } catch (e) {}
+      } else {
+        try {
+          runBillPayInquiry();
+        } catch (e) {}
+      }
+      stopVoiceCommand();
+      return;
+    }
+    // Deeplink confirm
+    if (
+      document.getElementById("paymentView") &&
+      !document.getElementById("paymentView").classList.contains("hidden")
+    ) {
+      try {
+        unlockAudioEngine();
+        runSmartPaymentFlow();
+      } catch (e) {}
+      stopVoiceCommand();
+      return;
+    }
+    showToast("No action to confirm", true);
+    stopVoiceCommand();
+    return;
+  }
+
+  showToast("Unrecognized command — see Voice guide in Settings", true);
+  stopVoiceCommand();
+}
+
 
