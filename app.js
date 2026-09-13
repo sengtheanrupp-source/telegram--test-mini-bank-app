@@ -4390,35 +4390,45 @@ function closeCommentSheet() {
 }
 
 function renderVoiceBubble(c) {
-  if (!c.voiceData) {
-    return (
-      '<p class="text-sm font-bold text-slate-900 dark:text-slate-100 mt-0.5">' +
-      escapeHtml(c.text || (c.voice ? "🎤 Voice" : "")) +
-      "</p>"
-    );
-  }
   const dur = c.voiceDuration || 0;
-  const id = c.id;
+  const id = String(c.id || "");
+  // Resolve audio from comment, reply, global map, or dedicated voice store
+  let audioSrc =
+    c.voiceData ||
+    (window._voiceMap && window._voiceMap[id]) ||
+    loadVoiceNoteFromStore(id) ||
+    "";
+  if (audioSrc) {
+    window._voiceMap = window._voiceMap || {};
+    window._voiceMap[id] = audioSrc;
+  }
+  const hasAudio = !!(audioSrc && String(audioSrc).length > 64);
   return (
     '<button type="button" onclick="playVoiceComment(\'' +
-    id +
-    '\')" class="mt-1.5 w-full flex items-center gap-2.5 rounded-2xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-100 dark:border-indigo-900/50 px-3 py-2.5 text-left" data-voice-id="' +
-    id +
-    '">' +
-    '<span class="w-9 h-9 rounded-full bg-indigo-600 text-white flex items-center justify-center shrink-0"><i class="fa-solid fa-play text-xs" id="voicePlayIcon_' +
+    id.replace(/'/g, "") +
+    '\')" class="mt-1.5 w-full flex items-center gap-2.5 rounded-2xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-100 dark:border-indigo-900/50 px-3 py-2.5 text-left active:scale-[0.99] transition-transform">' +
+    '<span class="w-9 h-9 rounded-full bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-sm">' +
+    '<i class="fa-solid fa-play text-xs" id="voicePlayIcon_' +
     id +
     '"></i></span>' +
     '<span class="flex-1 min-w-0">' +
     '<span class="flex items-center justify-between gap-2">' +
-    '<span class="text-[11px] font-extrabold text-indigo-700 dark:text-indigo-300">Voice message</span>' +
+    '<span class="text-[11px] font-extrabold text-indigo-700 dark:text-indigo-300">' +
+    (hasAudio ? "Voice message — tap to play" : "Voice message") +
+    "</span>" +
     '<span class="text-[11px] font-bold text-slate-500 tabular-nums" id="voiceTime_' +
     id +
     '">0:00 / ' +
     formatAudioTime(dur) +
     "</span></span>" +
-    '<span class="mt-1 h-1.5 rounded-full bg-indigo-200/80 overflow-hidden"><span id="voiceBar_' +
+    '<span class="mt-1 h-1.5 rounded-full bg-indigo-200/80 dark:bg-indigo-900 overflow-hidden">' +
+    '<span id="voiceBar_' +
     id +
-    '" class="block h-full w-0 bg-indigo-600 rounded-full"></span></span></span></button>' +
+    '" class="block h-full w-0 bg-indigo-600 rounded-full transition-[width] duration-100"></span></span>' +
+    (!hasAudio
+      ? '<span class="text-[10px] text-amber-600 font-semibold mt-1 block">Audio not on this device — record a new voice</span>'
+      : "") +
+    "</span></button>" +
     (c.text
       ? '<p class="text-[12px] font-bold text-slate-700 dark:text-slate-200 mt-1">' +
         escapeHtml(c.text) +
@@ -4426,6 +4436,35 @@ function renderVoiceBubble(c) {
       : "")
   );
 }
+
+function loadVoiceNoteFromStore(id) {
+  try {
+    const raw = localStorage.getItem("bankVoiceNotes_v1");
+    if (!raw) return "";
+    const map = JSON.parse(raw);
+    return (map && map[id]) || "";
+  } catch (e) {
+    return "";
+  }
+}
+
+function saveVoiceNoteToStore(id, dataUrl) {
+  if (!id || !dataUrl) return;
+  try {
+    const raw = localStorage.getItem("bankVoiceNotes_v1");
+    const map = raw ? JSON.parse(raw) : {};
+    map[id] = dataUrl;
+    // Keep last ~40 voice notes
+    const keys = Object.keys(map);
+    if (keys.length > 40) {
+      keys.slice(0, keys.length - 40).forEach((k) => delete map[k]);
+    }
+    localStorage.setItem("bankVoiceNotes_v1", JSON.stringify(map));
+  } catch (e) {
+    log("voice store: " + e.message);
+  }
+}
+
 
 function renderCommentList() {
   const list = document.getElementById("commentList");
@@ -4435,9 +4474,17 @@ function renderCommentList() {
   const comments = (p && p.comments) || [];
   window._voiceMap = window._voiceMap || {};
   comments.forEach((c) => {
-    if (c.voiceData) window._voiceMap[c.id] = c.voiceData;
+    const src = c.voiceData || loadVoiceNoteFromStore(c.id);
+    if (src) {
+      c.voiceData = src;
+      window._voiceMap[c.id] = src;
+    }
     (c.replies || []).forEach((r) => {
-      if (r.voiceData) window._voiceMap[r.id] = r.voiceData;
+      const rs = r.voiceData || loadVoiceNoteFromStore(r.id);
+      if (rs) {
+        r.voiceData = rs;
+        window._voiceMap[r.id] = rs;
+      }
     });
   });
   if (!comments.length) {
@@ -4490,24 +4537,30 @@ function renderCommentList() {
 
 function playVoiceComment(id) {
   window._voiceMap = window._voiceMap || {};
-  // Resolve audio from map or live posts cache
-  let src = window._voiceMap[id];
+  let src =
+    window._voiceMap[id] ||
+    loadVoiceNoteFromStore(id) ||
+    "";
   if (!src) {
     const posts = loadCommunityPosts();
     for (const p of posts) {
       for (const c of p.comments || []) {
-        if (c.id === id && c.voiceData) src = c.voiceData;
+        if (String(c.id) === String(id) && c.voiceData) src = c.voiceData;
         for (const r of c.replies || []) {
-          if (r.id === id && r.voiceData) src = r.voiceData;
+          if (String(r.id) === String(id) && r.voiceData) src = r.voiceData;
         }
       }
     }
-    if (src) window._voiceMap[id] = src;
   }
-  if (!src) {
-    showToast("Voice audio not available on this device", true);
+  if (src) {
+    window._voiceMap[id] = src;
+    saveVoiceNoteToStore(id, src);
+  }
+  if (!src || String(src).length < 64) {
+    showToast("No audio data — send a new voice comment", true);
     return;
   }
+
   try {
     if (_activeAudio) {
       try {
@@ -4517,8 +4570,8 @@ function playVoiceComment(id) {
     }
   } catch (e) {}
 
-  // PC-friendly: prefer blob URL from base64 for better codec support
   let playUrl = src;
+  let blobUrl = null;
   try {
     if (String(src).startsWith("data:")) {
       const m = /^data:([^;]+);base64,(.+)$/s.exec(src);
@@ -4527,8 +4580,16 @@ function playVoiceComment(id) {
         const bin = atob(m[2]);
         const arr = new Uint8Array(bin.length);
         for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-        const blob = new Blob([arr], { type: mime });
-        playUrl = URL.createObjectURL(blob);
+        // Try original mime, then audio/webm, then audio/ogg
+        const types = [mime, "audio/webm;codecs=opus", "audio/webm", "audio/ogg"];
+        for (const tp of types) {
+          try {
+            const blob = new Blob([arr], { type: tp });
+            blobUrl = URL.createObjectURL(blob);
+            playUrl = blobUrl;
+            break;
+          } catch (e) {}
+        }
       }
     }
   } catch (e) {
@@ -4537,6 +4598,7 @@ function playVoiceComment(id) {
 
   const audio = new Audio();
   audio.preload = "auto";
+  audio.crossOrigin = "anonymous";
   audio.src = playUrl;
   _activeAudio = audio;
   const icon = document.getElementById("voicePlayIcon_" + id);
@@ -4547,32 +4609,47 @@ function playVoiceComment(id) {
   audio.ontimeupdate = () => {
     const cur = audio.currentTime || 0;
     const dur = audio.duration && isFinite(audio.duration) ? audio.duration : 0;
-    if (timeEl)
+    if (timeEl) {
       timeEl.textContent =
         formatAudioTime(cur) + " / " + formatAudioTime(dur || 0);
+    }
     if (bar && dur) bar.style.width = Math.min(100, (cur / dur) * 100) + "%";
   };
   audio.onended = () => {
     if (icon) icon.className = "fa-solid fa-play text-xs";
     if (bar) bar.style.width = "0%";
     _activeAudio = null;
-    try {
-      if (playUrl && playUrl.startsWith("blob:")) URL.revokeObjectURL(playUrl);
-    } catch (e) {}
+    if (blobUrl) {
+      try {
+        URL.revokeObjectURL(blobUrl);
+      } catch (e) {}
+    }
   };
   audio.onerror = () => {
     if (icon) icon.className = "fa-solid fa-play text-xs";
-    showToast("Could not play this voice note on PC", true);
+    // Last resort: try data URL directly
+    if (playUrl !== src) {
+      try {
+        const a2 = new Audio(src);
+        _activeAudio = a2;
+        a2.play().catch(() => showToast("Browser cannot play this voice format", true));
+        return;
+      } catch (e) {}
+    }
+    showToast("Browser cannot play this voice format", true);
   };
   const run = audio.play();
   if (run && typeof run.catch === "function") {
-    run.catch((err) => {
-      log("voice play: " + (err && err.message));
-      showToast("Click again to play voice", true);
-      if (icon) icon.className = "fa-solid fa-play text-xs";
+    run.catch(() => {
+      // Autoplay policy — user already clicked, retry once
+      audio.play().catch(() => {
+        showToast("Could not play voice on this browser", true);
+        if (icon) icon.className = "fa-solid fa-play text-xs";
+      });
     });
   }
 }
+
 
 function startReply(commentId, author) {
   _replyToCommentId = commentId;
@@ -4609,6 +4686,11 @@ async function submitComment() {
     baseComment.voice = true;
     baseComment.voiceData = _pendingVoiceBase64;
     baseComment.voiceDuration = _pendingVoiceDuration || 0;
+    try {
+      saveVoiceNoteToStore(baseComment.id, _pendingVoiceBase64);
+      window._voiceMap = window._voiceMap || {};
+      window._voiceMap[baseComment.id] = _pendingVoiceBase64;
+    } catch (e) {}
   } else if (!text) {
     showToast("Write a comment first.", true);
     return;
@@ -4637,9 +4719,12 @@ async function submitComment() {
   showToast("Comment shared");
 
   const voicePayload =
-    baseComment.voiceData && String(baseComment.voiceData).length < 1200000
+    baseComment.voiceData && String(baseComment.voiceData).length < 2500000
       ? baseComment.voiceData
       : "";
+  if (baseComment.voiceData && !voicePayload) {
+    log("Voice too large for server sync; kept on this device only");
+  }
   await pushCommunityAction({
     action: "addComment",
     postId: p.id,
