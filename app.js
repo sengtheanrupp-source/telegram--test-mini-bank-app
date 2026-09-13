@@ -5150,6 +5150,10 @@ function closeVoiceSessionModal() {
   if (m) m.classList.add("hidden");
 }
 
+let _voiceLastTranscript = "";
+let _voiceRestarting = false;
+let _voiceMicPromptShown = false;
+
 function toggleVoiceCommand() {
   if (appPreferences.voiceCommand === false) {
     showToast("Enable Voice command in Settings first", true);
@@ -5157,24 +5161,32 @@ function toggleVoiceCommand() {
   }
   openVoiceSessionModal();
   if (_voiceCmdActive) {
-    stopVoiceSessionMic();
+    // Stop → process what was said → auto action → assistant may ask more
+    finishVoiceSessionWithAction();
     return;
   }
   startVoiceSessionMic();
 }
 
 function toggleVoiceSessionMic() {
-  if (_voiceCmdActive) stopVoiceSessionMic();
+  if (_voiceCmdActive) finishVoiceSessionWithAction();
   else startVoiceSessionMic();
 }
 
 function stopVoiceSession(closeModal) {
+  if (_voiceCmdActive) {
+    finishVoiceSessionWithAction().then(() => {
+      if (closeModal) closeVoiceSessionModal();
+    });
+    return;
+  }
   stopVoiceSessionMic();
   if (closeModal) closeVoiceSessionModal();
 }
 
 function stopVoiceSessionMic() {
   _voiceCmdActive = false;
+  _voiceRestarting = false;
   clearInterval(_voiceSessionTimerIv);
   _voiceSessionTimerIv = null;
   try {
@@ -5188,6 +5200,7 @@ function stopVoiceSessionMic() {
       try {
         _voiceCmdRecognition.onend = null;
         _voiceCmdRecognition.onerror = null;
+        _voiceCmdRecognition.onresult = null;
         _voiceCmdRecognition.stop();
       } catch (e) {}
     }
@@ -5225,16 +5238,12 @@ function startVoiceSessionTimer() {
     _voiceSessionSeconds++;
     setVoiceSessionUI({ seconds: _voiceSessionSeconds });
     if (_voiceSessionSeconds >= 60) {
-      stopVoiceSessionMic();
-      setVoiceSessionUI({
-        status: "1:00 — tap mic to continue",
-        listening: false,
-      });
+      finishVoiceSessionWithAction();
     }
   }, 1000);
 }
 
-/** Current screen → auto-pay action (no text needed) */
+/** Current screen → auto-pay action */
 function getVoiceAutoPayContext() {
   try {
     const qrModal = document.getElementById("khqrConfirmModal");
@@ -5300,27 +5309,75 @@ function getVoiceAutoPayContext() {
   return null;
 }
 
+/**
+ * On stop: run transcript command and/or context auto-pay, then ask next question.
+ */
+async function finishVoiceSessionWithAction() {
+  const said = String(_voiceLastTranscript || "").trim();
+  const ctx = getVoiceAutoPayContext();
+  stopVoiceSessionMic();
+
+  if (said) {
+    setVoiceSessionUI({
+      transcript: said,
+      status: "Processing…",
+      listening: false,
+    });
+    try {
+      await handleVoiceCommand(said);
+    } catch (e) {
+      log("finish voice cmd: " + (e && e.message));
+    }
+    return;
+  }
+
+  // No text (or iOS energy mode) but payment screen ready
+  if (ctx && (isIOSDevice() || _voiceSpoke)) {
+    setVoiceSessionUI({
+      status: "Paying…",
+      transcript: "Confirmed by voice",
+      listening: false,
+    });
+    try {
+      ctx.run();
+      showToast("✔ " + ctx.label);
+      await voiceSpeakAndListen(
+        "ការទូទាត់កំពុងដំណើរការ។ តើអ្នកត្រូវការអ្វីបន្ទាប់?",
+        null,
+      );
+    } catch (e) {
+      showToast("Pay failed", true);
+    }
+    return;
+  }
+
+  // Nothing said — ask user what they want
+  setVoiceSessionUI({
+    status: "Listening ended",
+    assistant: "តើអ្នកចង់ធ្វើអ្វី? ទូទាត់វិក្កយបត្រ / QR / បង់ប្រាក់",
+  });
+  try {
+    await voiceSpeakAndListen(
+      "សូមនិយាយម្តងទៀត៖ ទូទាត់វិក្កយបត្រ, ទូទាត់តាម QR, ឬ បង់ប្រាក់។",
+      null,
+    );
+  } catch (e) {}
+}
+
 let _voiceAudioCtx = null;
 let _voiceVadRaf = null;
 let _voiceSpoke = false;
 let _voiceSilenceMs = 0;
 
-/**
- * iPhone: no speech-to-text.
- * Listen for voice energy → when user speaks then pauses → auto-pay
- * based on the screen they are on (QR confirm / bill / deeplink).
- */
 async function startIOSVoiceAutoPay() {
   openVoiceSessionModal();
   unlockAudioEngine();
-
   const ctx = getVoiceAutoPayContext();
   if (!ctx) {
     setVoiceSessionUI({
       status: "Open a payment screen first",
-      transcript: "—",
       assistant:
-        "iPhone: open Deeplink / Bill / QR confirm, then tap mic and speak to auto-pay.",
+        "iPhone: open Deeplink / Bill / QR, then tap mic and speak to pay.",
       listening: false,
     });
     try {
@@ -5334,33 +5391,42 @@ async function startIOSVoiceAutoPay() {
   }
 
   setVoiceSessionUI({
-    status: "Allow mic once · then speak to pay",
-    assistant: "Action: " + ctx.label + " — speak any words, then pause",
+    status: "Speak to confirm pay",
+    assistant: ctx.label + " — speak, then pause or tap stop",
     transcript: "—",
-    listening: false,
   });
 
-  let stream;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true },
-    });
-  } catch (e) {
-    setVoiceSessionUI({
-      status: "Microphone blocked",
-      assistant: "Settings → Telegram → Microphone → On",
-      listening: false,
-    });
-    return;
+  // Reuse mic stream if still open (avoid second Allow popup)
+  let stream = _voiceMediaStream;
+  if (!stream || !stream.active) {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true },
+      });
+    } catch (e) {
+      setVoiceSessionUI({
+        status: "Microphone blocked",
+        assistant: "Settings → Telegram → Microphone → On",
+        listening: false,
+      });
+      return;
+    }
   }
-
   _voiceMediaStream = stream;
   _voiceCmdActive = true;
   _voiceSpoke = false;
   _voiceSilenceMs = 0;
+  window._iosVoicePendingAction = ctx;
   startVoiceSessionTimer();
 
   const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  try {
+    if (_voiceAudioCtx) {
+      try {
+        await _voiceAudioCtx.close();
+      } catch (e) {}
+    }
+  } catch (e) {}
   _voiceAudioCtx = new AudioCtx();
   try {
     if (_voiceAudioCtx.state === "suspended") await _voiceAudioCtx.resume();
@@ -5374,18 +5440,16 @@ async function startIOSVoiceAutoPay() {
 
   setVoiceSessionUI({
     listening: true,
-    status: "Speak to confirm · " + ctx.label,
-    assistant: "Say anything, then pause — payment runs automatically",
-    transcript: "Listening (no text)…",
+    status: "Speak to pay · " + ctx.label,
+    transcript: "Listening…",
   });
-
   try {
     if (typeof speakKhmerAudioFallback === "function") {
       speakKhmerAudioFallback("សូមនិយាយដើម្បីបញ្ជាក់ការទូទាត់។");
     }
   } catch (e) {}
 
-  const SPEECH_THRESHOLD = 18; // average level
+  const SPEECH_THRESHOLD = 18;
   const SILENCE_AFTER_SPEECH_MS = 900;
   let lastTs = performance.now();
 
@@ -5397,56 +5461,44 @@ async function startIOSVoiceAutoPay() {
     let sum = 0;
     for (let i = 0; i < data.length; i++) sum += data[i];
     const avg = sum / data.length;
-
     if (avg > SPEECH_THRESHOLD) {
       _voiceSpoke = true;
       _voiceSilenceMs = 0;
       setVoiceSessionUI({
         transcript: "Voice detected…",
-        status: "Listening · keep going or pause to pay",
+        status: "Pause or tap stop to pay",
         listening: true,
         seconds: _voiceSessionSeconds,
       });
     } else if (_voiceSpoke) {
       _voiceSilenceMs += dt;
       if (_voiceSilenceMs >= SILENCE_AFTER_SPEECH_MS) {
-        // User spoke then paused → auto pay
-        setVoiceSessionUI({
-          transcript: "Confirmed by voice",
-          status: "Paying…",
-          listening: false,
-        });
-        stopVoiceSessionMic();
-        try {
-          ctx.run();
-          showToast("✔ " + ctx.label);
-        } catch (e) {
-          showToast("Pay failed", true);
-        }
+        finishVoiceSessionWithAction();
         return;
       }
     }
     _voiceVadRaf = requestAnimationFrame(tick);
   };
   _voiceVadRaf = requestAnimationFrame(tick);
-
-  // Safety: if user stops mic button manually after speaking, also pay
-  window._iosVoicePendingAction = ctx;
 }
 
+/**
+ * Android: ONE SpeechRecognition start per user tap.
+ * continuous=false — no restart loop (that caused endless Allow popups).
+ */
 async function startVoiceSessionMic() {
   if (appPreferences.voiceCommand === false) return;
+  if (_voiceCmdActive) return; // already listening — no second start/popup
   openVoiceSessionModal();
   unlockAudioEngine();
+  _voiceLastTranscript = "";
+  _voiceSpoke = false;
 
-  // iPhone: voice energy → auto-pay (no speech-to-text)
   if (isIOSDevice()) {
     await startIOSVoiceAutoPay();
     return;
   }
 
-  // Android: free Web Speech → text → commands
-  _voiceUseRecordFallback = false;
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) {
     setVoiceSessionUI({
@@ -5457,12 +5509,16 @@ async function startVoiceSessionMic() {
     return;
   }
 
+  // Fully stop previous instance without starting a new permission cycle
   try {
     if (_voiceCmdRecognition) {
       try {
         _voiceCmdRecognition.onend = null;
+        _voiceCmdRecognition.onerror = null;
+        _voiceCmdRecognition.onresult = null;
         _voiceCmdRecognition.abort();
       } catch (e) {}
+      _voiceCmdRecognition = null;
     }
   } catch (e) {}
 
@@ -5471,7 +5527,8 @@ async function startVoiceSessionMic() {
   try {
     rec.lang = "km-KH";
   } catch (e) {}
-  rec.continuous = true;
+  // IMPORTANT: continuous restart caused repeated mic permission dialogs on Telegram Android
+  rec.continuous = false;
   rec.interimResults = true;
   rec.maxAlternatives = 5;
 
@@ -5479,10 +5536,9 @@ async function startVoiceSessionMic() {
   startVoiceSessionTimer();
   setVoiceSessionUI({
     listening: true,
-    status: "Listening… speak Khmer",
+    status: "Listening… speak now",
     transcript: "—",
   });
-  updateVoiceCmdStatus("កំពុងស្តាប់…");
   const fab = document.getElementById("voiceCmdFab");
   if (fab) {
     fab.classList.add("listening");
@@ -5497,72 +5553,84 @@ async function startVoiceSessionMic() {
       if (event.results[i].isFinal) finalChunk += piece;
       else interim += piece;
     }
-    const display = ((finalChunk || "") + " " + interim).trim();
+    if (finalChunk) {
+      _voiceLastTranscript = (_voiceLastTranscript + " " + finalChunk).trim();
+    }
+    const display = (_voiceLastTranscript + (interim ? " " + interim : "")).trim();
     if (display) {
       setVoiceSessionUI({
         transcript: display,
-        status: interim ? "Listening…" : "Got it…",
+        status: interim ? "Listening…" : "Heard — processing",
         listening: true,
         seconds: _voiceSessionSeconds,
       });
     }
-    if (finalChunk.trim()) handleVoiceCommand(finalChunk.trim());
+    if (finalChunk.trim()) {
+      // Process and ask follow-up (may restart listen once intentionally)
+      handleVoiceCommand(finalChunk.trim());
+    }
   };
 
   rec.onerror = (e) => {
     const err = (e && e.error) || "";
     log("voice: " + err);
-    if (err === "no-speech" || err === "aborted") return;
+    if (err === "aborted" || err === "no-speech") {
+      // no-speech: end of utterance — keep UI, user can tap stop or speak again
+      if (err === "no-speech" && _voiceLastTranscript) {
+        finishVoiceSessionWithAction();
+      }
+      return;
+    }
     if (err === "not-allowed" || err === "service-not-allowed") {
-      setVoiceSessionUI({
-        listening: false,
-        status: "Microphone blocked",
-        assistant: "Tap Allow once, then open voice again",
-      });
-      stopVoiceSessionMic();
+      // Show at most once per session
+      if (!_voiceMicPromptShown) {
+        _voiceMicPromptShown = true;
+        setVoiceSessionUI({
+          listening: false,
+          status: "Tap Allow on the system dialog",
+          assistant: "Only once — then voice works without asking again",
+        });
+      }
+      _voiceCmdActive = false;
       return;
     }
   };
 
   rec.onend = () => {
-    if (_voiceCmdActive && _voiceSessionSeconds < 60) {
-      try {
-        rec.start();
-      } catch (e) {
-        _voiceCmdActive = false;
-        setVoiceSessionUI({
-          listening: false,
-          status: "Tap mic to speak again",
-        });
-      }
+    // Do NOT auto-restart here — that re-triggered mic permission forever
+    if (!_voiceCmdActive) return;
+    _voiceCmdActive = false;
+    setVoiceSessionUI({
+      listening: false,
+      status: _voiceLastTranscript
+        ? "Tap stop to run · or mic to speak more"
+        : "Tap mic to speak again",
+    });
+    // If we already have text, auto-run after short pause
+    if (_voiceLastTranscript) {
+      setTimeout(() => {
+        if (!_voiceCmdActive && _voiceLastTranscript) {
+          finishVoiceSessionWithAction();
+        }
+      }, 600);
     }
   };
 
   try {
     rec.start();
   } catch (e) {
+    log("rec.start: " + (e && e.message));
     _voiceCmdActive = false;
+    // "already started" — ignore; don't request mic again
     setVoiceSessionUI({
       listening: false,
-      status: "Tap mic to try again",
+      status: "Tap mic once to start",
     });
   }
 }
 
 function stopVoiceCommand() {
-  // iOS: if user hit stop after speaking, still auto-pay
-  if (isIOSDevice() && _voiceSpoke && window._iosVoicePendingAction) {
-    const ctx = window._iosVoicePendingAction;
-    window._iosVoicePendingAction = null;
-    stopVoiceSessionMic();
-    try {
-      ctx.run();
-      showToast("✔ " + ctx.label);
-    } catch (e) {}
-    return;
-  }
-  window._iosVoicePendingAction = null;
-  stopVoiceSessionMic();
+  finishVoiceSessionWithAction();
 }
 function startVoiceCommand() {
   startVoiceSessionMic();
@@ -5575,6 +5643,57 @@ function openVoiceAssistModal() {
 }
 function closeVoiceAssistModal() {
   closeVoiceSessionModal();
+}
+
+async function voiceSpeakAndListen(questionKm, nextStep) {
+  _voiceDialog.step = nextStep || null;
+  openVoiceSessionModal();
+  setVoiceSessionUI({
+    assistant: questionKm,
+    status: "Assistant speaking…",
+    listening: false,
+  });
+  updateVoiceCmdStatus(questionKm);
+  try {
+    unlockAudioEngine();
+    if (typeof speakKhmerAudioFallback === "function") {
+      await speakKhmerAudioFallback(questionKm);
+    }
+  } catch (e) {}
+  // Listen again for answer (one clean start — user gesture chain may be gone;
+  // still try; Android often allows after prior Allow)
+  setTimeout(() => {
+    if (!_voiceCmdActive) startVoiceSessionMic();
+  }, 700);
+}
+
+async function voiceAssistAction(kind) {
+  openVoiceSessionModal();
+  if (kind === "listen") {
+    startVoiceSessionMic();
+    return;
+  }
+  if (kind === "general") {
+    await voiceActOpenGeneral();
+    await voiceSpeakAndListen(
+      "បានបើក General Bills។ បញ្ចូលលេខ រួចនិយាយ បាទ។",
+      "await_bill_inquiry",
+    );
+  } else if (kind === "utility") {
+    await voiceActOpenUtility();
+    await voiceSpeakAndListen(
+      "បានបើក Utility។ បញ្ចូលលេខ រួចនិយាយ បាទ។",
+      "await_bill_inquiry",
+    );
+  } else if (kind === "qr") {
+    try {
+      if (typeof triggerInstantQRScan === "function") triggerInstantQRScan();
+    } catch (e) {}
+    await voiceSpeakAndListen(
+      "បានបើក QR។ និយាយ បាទ ដើម្បីបញ្ជាក់។",
+      "await_qr_confirm",
+    );
+  }
 }
 
 async function voiceSpeakAndListen(questionKm, nextStep) {
