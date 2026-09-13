@@ -5156,6 +5156,10 @@ function toggleVoiceCommand() {
     return;
   }
   openVoiceSessionModal();
+  if (_voiceCmdActive) {
+    stopVoiceSessionMic();
+    return;
+  }
   startVoiceSessionMic();
 }
 
@@ -5174,24 +5178,31 @@ function stopVoiceSessionMic() {
   clearInterval(_voiceSessionTimerIv);
   _voiceSessionTimerIv = null;
   try {
+    if (_voiceVadRaf) {
+      cancelAnimationFrame(_voiceVadRaf);
+      _voiceVadRaf = null;
+    }
+  } catch (e) {}
+  try {
     if (_voiceCmdRecognition) {
       try {
         _voiceCmdRecognition.onend = null;
+        _voiceCmdRecognition.onerror = null;
         _voiceCmdRecognition.stop();
       } catch (e) {}
     }
   } catch (e) {}
   _voiceCmdRecognition = null;
-  // Finish media recorder if active
-  try {
-    if (_voiceMediaRecorder && _voiceMediaRecorder.state === "recording") {
-      _voiceMediaRecorder.stop();
-    }
-  } catch (e) {}
   try {
     if (_voiceMediaStream) {
       _voiceMediaStream.getTracks().forEach((tr) => tr.stop());
       _voiceMediaStream = null;
+    }
+  } catch (e) {}
+  try {
+    if (_voiceAudioCtx) {
+      _voiceAudioCtx.close();
+      _voiceAudioCtx = null;
     }
   } catch (e) {}
   const btn = document.getElementById("voiceCmdFab");
@@ -5200,7 +5211,7 @@ function stopVoiceSessionMic() {
     listening: false,
     status: _voiceSessionSeconds
       ? "Stopped · " + formatVoiceTimer(_voiceSessionSeconds)
-      : "Tap mic · speak Khmer",
+      : "Tap mic · speak",
   });
   updateVoiceCmdStatus("");
   syncVoiceCmdFabVisibility();
@@ -5216,407 +5227,341 @@ function startVoiceSessionTimer() {
     if (_voiceSessionSeconds >= 60) {
       stopVoiceSessionMic();
       setVoiceSessionUI({
-        status: "1:00 limit — tap mic to continue",
+        status: "1:00 — tap mic to continue",
         listening: false,
       });
     }
   }, 1000);
 }
 
-async function ensureMicForVoiceSession() {
+/** Current screen → auto-pay action (no text needed) */
+function getVoiceAutoPayContext() {
   try {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)
-      return false;
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-      },
-    });
-    stream.getTracks().forEach((tr) => tr.stop());
-    _voiceMicGranted = true;
-    return true;
-  } catch (e) {
-    _voiceMicGranted = false;
-    return false;
-  }
+    const qrModal = document.getElementById("khqrConfirmModal");
+    if (qrModal && !qrModal.classList.contains("hidden")) {
+      return {
+        id: "qr_confirm",
+        label: "Confirm QR payment",
+        run: () => {
+          unlockAudioEngine();
+          if (typeof submitQRConfirm === "function") submitQRConfirm();
+          else if (typeof confirmQRPayment === "function") confirmQRPayment();
+        },
+      };
+    }
+    const bankModal = document.getElementById("bankModal");
+    const doneBtn = document.getElementById("modalDoneBtn");
+    if (bankModal && !bankModal.classList.contains("hidden") && doneBtn) {
+      return {
+        id: "done",
+        label: "Done / return",
+        run: () => {
+          if (typeof handlePaymentDoneAction === "function")
+            handlePaymentDoneAction();
+        },
+      };
+    }
+    const billView = document.getElementById("billPayView");
+    if (billView && !billView.classList.contains("hidden")) {
+      if (workflowState.payment_token) {
+        return {
+          id: "bill_pay",
+          label: "Pay bill",
+          run: () => {
+            unlockAudioEngine();
+            if (typeof runBillPaySmartFlow === "function") runBillPaySmartFlow();
+          },
+        };
+      }
+      return {
+        id: "bill_inquiry",
+        label: "Inquiry bill",
+        run: () => {
+          if (typeof runBillPayInquiry === "function") runBillPayInquiry();
+        },
+      };
+    }
+    const payView = document.getElementById("paymentView");
+    if (
+      payView &&
+      !payView.classList.contains("hidden") &&
+      (workflowState.link_token || workflowState.payment_token)
+    ) {
+      return {
+        id: "deeplink_pay",
+        label: "Confirm deeplink pay",
+        run: () => {
+          unlockAudioEngine();
+          if (typeof runSmartPaymentFlow === "function") runSmartPaymentFlow();
+        },
+      };
+    }
+  } catch (e) {}
+  return null;
 }
 
-/** iPhone path: record audio → server Whisper STT */
-async function startVoiceRecordFallback() {
+let _voiceAudioCtx = null;
+let _voiceVadRaf = null;
+let _voiceSpoke = false;
+let _voiceSilenceMs = 0;
+
+/**
+ * iPhone: no speech-to-text.
+ * Listen for voice energy → when user speaks then pauses → auto-pay
+ * based on the screen they are on (QR confirm / bill / deeplink).
+ */
+async function startIOSVoiceAutoPay() {
+  openVoiceSessionModal();
+  unlockAudioEngine();
+
+  const ctx = getVoiceAutoPayContext();
+  if (!ctx) {
+    setVoiceSessionUI({
+      status: "Open a payment screen first",
+      transcript: "—",
+      assistant:
+        "iPhone: open Deeplink / Bill / QR confirm, then tap mic and speak to auto-pay.",
+      listening: false,
+    });
+    try {
+      if (typeof speakKhmerAudioFallback === "function") {
+        speakKhmerAudioFallback(
+          "សូមបើកទំព័រទូទាត់ រួចនិយាយដើម្បីបញ្ជាក់។",
+        );
+      }
+    } catch (e) {}
+    return;
+  }
+
+  setVoiceSessionUI({
+    status: "Allow mic once · then speak to pay",
+    assistant: "Action: " + ctx.label + " — speak any words, then pause",
+    transcript: "—",
+    listening: false,
+  });
+
+  let stream;
   try {
-    _voiceMediaStream = await navigator.mediaDevices.getUserMedia({
-      audio: true,
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true },
     });
   } catch (e) {
     setVoiceSessionUI({
       status: "Microphone blocked",
-      assistant: "iPhone Settings → Telegram → Microphone → On",
-    });
-    return;
-  }
-  _voiceMediaChunks = [];
-  let mime = "audio/webm";
-  if (typeof MediaRecorder !== "undefined") {
-    if (MediaRecorder.isTypeSupported("audio/mp4")) mime = "audio/mp4";
-    else if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus"))
-      mime = "audio/webm;codecs=opus";
-  } else {
-    setVoiceSessionUI({
-      status: "Recording not supported",
+      assistant: "Settings → Telegram → Microphone → On",
       listening: false,
     });
     return;
   }
-  try {
-    _voiceMediaRecorder = new MediaRecorder(_voiceMediaStream, {
-      mimeType: mime,
-    });
-  } catch (e) {
-    _voiceMediaRecorder = new MediaRecorder(_voiceMediaStream);
-  }
-  _voiceUseRecordFallback = true;
+
+  _voiceMediaStream = stream;
   _voiceCmdActive = true;
+  _voiceSpoke = false;
+  _voiceSilenceMs = 0;
   startVoiceSessionTimer();
+
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  _voiceAudioCtx = new AudioCtx();
+  try {
+    if (_voiceAudioCtx.state === "suspended") await _voiceAudioCtx.resume();
+  } catch (e) {}
+
+  const source = _voiceAudioCtx.createMediaStreamSource(stream);
+  const analyser = _voiceAudioCtx.createAnalyser();
+  analyser.fftSize = 512;
+  source.connect(analyser);
+  const data = new Uint8Array(analyser.frequencyBinCount);
+
   setVoiceSessionUI({
     listening: true,
-    status: "Recording… tap red button to stop",
-    transcript: "—",
+    status: "Speak to confirm · " + ctx.label,
+    assistant: "Say anything, then pause — payment runs automatically",
+    transcript: "Listening (no text)…",
   });
-  _voiceMediaRecorder.ondataavailable = (e) => {
-    if (e.data && e.data.size) _voiceMediaChunks.push(e.data);
-  };
-  _voiceMediaRecorder.onstop = async () => {
-    try {
-      if (_voiceMediaStream) {
-        _voiceMediaStream.getTracks().forEach((tr) => tr.stop());
-        _voiceMediaStream = null;
-      }
-    } catch (e) {}
-    const blob = new Blob(_voiceMediaChunks, {
-      type: _voiceMediaRecorder.mimeType || mime,
-    });
-    if (blob.size < 200) {
-      setVoiceSessionUI({
-        status: "Too short — hold and speak longer",
-        listening: false,
-      });
-      return;
-    }
-    setVoiceSessionUI({
-      status: "Transcribing (open-source AI)…",
-      listening: false,
-    });
-    const text = await transcribeAudioBlob(blob);
-    if (text) {
-      setVoiceSessionUI({ transcript: text, status: "Heard" });
-      await handleVoiceCommand(text);
-    } else {
-      setVoiceSessionUI({
-        status: "Could not understand — try again",
-        assistant:
-          "Speak clearly in Khmer, then tap stop. First use downloads open-source model (~75MB).",
-      });
-    }
-  };
-  _voiceMediaRecorder.start(200);
-  // Auto-stop & transcribe after 8s of speech window if user doesn't stop
-  // User taps stop (mic button) to finish early
-}
 
-/** Open-source Whisper in browser (Transformers.js) — no API key, works on iPhone */
-let _whisperPipeline = null;
-let _whisperLoading = null;
-
-async function loadOpenSourceWhisper(onProgress) {
-  if (_whisperPipeline) return _whisperPipeline;
-  if (_whisperLoading) return _whisperLoading;
-  _whisperLoading = (async () => {
-    try {
-      const mod = await import(
-        "https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2"
-      );
-      const { pipeline, env } = mod;
-      // Cache models in browser; allow remote models
-      env.allowLocalModels = false;
-      env.useBrowserCache = true;
-      if (onProgress) onProgress(0.05, "Loading open-source Whisper…");
-      const transcriber = await pipeline(
-        "automatic-speech-recognition",
-        "Xenova/whisper-tiny",
-        {
-          progress_callback: (prog) => {
-            if (!onProgress || !prog) return;
-            if (prog.status === "progress" && prog.progress != null) {
-              onProgress(
-                Math.min(0.95, (prog.progress || 0) / 100),
-                "Downloading model " + Math.round(prog.progress || 0) + "%",
-              );
-            } else if (prog.status === "ready") {
-              onProgress(1, "Model ready");
-            }
-          },
-        },
-      );
-      _whisperPipeline = transcriber;
-      return transcriber;
-    } catch (e) {
-      log("Whisper load failed: " + (e && e.message));
-      _whisperLoading = null;
-      throw e;
-    }
-  })();
-  return _whisperLoading;
-}
-
-/** Decode recorded blob → mono Float32Array @ 16 kHz for Whisper */
-async function audioBlobToFloat32(blob) {
-  const arrayBuffer = await blob.arrayBuffer();
-  const AudioCtx = window.AudioContext || window.webkitAudioContext;
-  const ctx = new AudioCtx();
-  let decoded;
   try {
-    decoded = await ctx.decodeAudioData(arrayBuffer.slice(0));
-  } catch (e) {
-    try {
-      await ctx.close();
-    } catch (e2) {}
-    throw e;
-  }
-  const targetRate = 16000;
-  const channel = decoded.getChannelData(0);
-  if (decoded.sampleRate === targetRate) {
-    try {
-      await ctx.close();
-    } catch (e) {}
-    return channel;
-  }
-  // Linear resample to 16kHz
-  const ratio = decoded.sampleRate / targetRate;
-  const newLen = Math.max(1, Math.round(channel.length / ratio));
-  const out = new Float32Array(newLen);
-  for (let i = 0; i < newLen; i++) {
-    const src = i * ratio;
-    const i0 = Math.floor(src);
-    const i1 = Math.min(i0 + 1, channel.length - 1);
-    const f = src - i0;
-    out[i] = channel[i0] * (1 - f) + channel[i1] * f;
-  }
-  try {
-    await ctx.close();
+    if (typeof speakKhmerAudioFallback === "function") {
+      speakKhmerAudioFallback("សូមនិយាយដើម្បីបញ្ជាក់ការទូទាត់។");
+    }
   } catch (e) {}
-  return out;
-}
 
-async function transcribeWithOpenSourceWhisper(blob) {
-  setVoiceSessionUI({
-    status: "Loading open-source AI (first time only)…",
-    listening: false,
-  });
-  const transcriber = await loadOpenSourceWhisper((p, msg) => {
-    setVoiceSessionUI({
-      status: msg || "Loading model…",
-      listening: false,
-    });
-  });
-  setVoiceSessionUI({ status: "Transcribing offline…", listening: false });
-  const audio = await audioBlobToFloat32(blob);
-  // Multilingual tiny Whisper — language km (Khmer)
-  const result = await transcriber(audio, {
-    language: "khmer",
-    task: "transcribe",
-    chunk_length_s: 30,
-    stride_length_s: 5,
-  });
-  let text = "";
-  if (typeof result === "string") text = result;
-  else if (result && result.text) text = result.text;
-  else if (Array.isArray(result) && result[0] && result[0].text)
-    text = result.map((r) => r.text).join(" ");
-  return String(text || "").trim();
-}
+  const SPEECH_THRESHOLD = 18; // average level
+  const SILENCE_AFTER_SPEECH_MS = 900;
+  let lastTs = performance.now();
 
-async function transcribeAudioBlob(blob) {
-  // 1) Open-source in-browser Whisper (works on iPhone, no API key)
-  try {
-    const local = await transcribeWithOpenSourceWhisper(blob);
-    if (local) {
-      log("Open-source Whisper: " + local);
-      return local;
-    }
-  } catch (e) {
-    log("Open-source STT failed: " + (e && e.message));
-  }
+  const tick = (now) => {
+    if (!_voiceCmdActive) return;
+    const dt = now - lastTs;
+    lastTs = now;
+    analyser.getByteFrequencyData(data);
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) sum += data[i];
+    const avg = sum / data.length;
 
-  // 2) Optional server Whisper if OPENAI/GROQ key set on Vercel
-  try {
-    const buf = await blob.arrayBuffer();
-    const bytes = new Uint8Array(buf);
-    let binary = "";
-    for (let i = 0; i < bytes.length; i++)
-      binary += String.fromCharCode(bytes[i]);
-    const b64 = btoa(binary);
-    const dataUrl =
-      "data:" + (blob.type || "audio/webm") + ";base64," + b64;
-    for (const url of ["/api/speech/transcribe", "api/speech/transcribe"]) {
-      try {
-        const res = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            audioBase64: dataUrl,
-            mime: blob.type || "audio/webm",
-          }),
+    if (avg > SPEECH_THRESHOLD) {
+      _voiceSpoke = true;
+      _voiceSilenceMs = 0;
+      setVoiceSessionUI({
+        transcript: "Voice detected…",
+        status: "Listening · keep going or pause to pay",
+        listening: true,
+        seconds: _voiceSessionSeconds,
+      });
+    } else if (_voiceSpoke) {
+      _voiceSilenceMs += dt;
+      if (_voiceSilenceMs >= SILENCE_AFTER_SPEECH_MS) {
+        // User spoke then paused → auto pay
+        setVoiceSessionUI({
+          transcript: "Confirmed by voice",
+          status: "Paying…",
+          listening: false,
         });
-        const data = await res.json().catch(() => ({}));
-        if (data && data.ok && data.text) return String(data.text).trim();
-      } catch (e) {
-        log("STT fetch: " + e.message);
+        stopVoiceSessionMic();
+        try {
+          ctx.run();
+          showToast("✔ " + ctx.label);
+        } catch (e) {
+          showToast("Pay failed", true);
+        }
+        return;
       }
     }
-  } catch (e) {
-    log("transcribe server: " + e.message);
-  }
-  return "";
+    _voiceVadRaf = requestAnimationFrame(tick);
+  };
+  _voiceVadRaf = requestAnimationFrame(tick);
+
+  // Safety: if user stops mic button manually after speaking, also pay
+  window._iosVoicePendingAction = ctx;
 }
 
 async function startVoiceSessionMic() {
   if (appPreferences.voiceCommand === false) return;
   openVoiceSessionModal();
   unlockAudioEngine();
-  _voiceUseRecordFallback = false;
 
-  setVoiceSessionUI({ status: "Checking mic…", listening: false });
-  const micOk = await ensureMicForVoiceSession();
-  if (!micOk) {
+  // iPhone: voice energy → auto-pay (no speech-to-text)
+  if (isIOSDevice()) {
+    await startIOSVoiceAutoPay();
+    return;
+  }
+
+  // Android: free Web Speech → text → commands
+  _voiceUseRecordFallback = false;
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
     setVoiceSessionUI({
-      status: "Allow microphone",
-      assistant: "Settings → Telegram → Microphone → On",
+      status: "Speech not supported",
+      assistant: "Use on-screen Pay buttons",
+      listening: false,
     });
     return;
   }
 
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  // Prefer Web Speech when available; on iOS Telegram it often fails → record path
-  if (SR) {
-    const ok = await tryWebSpeechListen();
-    if (ok) return;
-  }
-  // Fallback: MediaRecorder + server STT (works on iPhone when key configured)
-  setVoiceSessionUI({
-    status: "Using record mode (iOS)",
-    assistant: "Speak, then tap the red button to stop",
-  });
-  await startVoiceRecordFallback();
-}
-
-async function tryWebSpeechListen() {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) return false;
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (ok) => {
-      if (settled) return;
-      settled = true;
-      resolve(ok);
-    };
-    try {
-      if (_voiceCmdRecognition) {
-        try {
-          _voiceCmdRecognition.abort();
-        } catch (e) {}
-      }
-    } catch (e) {}
-    const lang = VOICE_LANGS[_voiceListenRetries % VOICE_LANGS.length];
-    const rec = new SR();
-    _voiceCmdRecognition = rec;
-    try {
-      rec.lang = lang;
-    } catch (e) {}
-    rec.continuous = true;
-    rec.interimResults = true;
-    rec.maxAlternatives = 5;
-
-    const failTimer = setTimeout(() => {
-      // If nothing useful in 2.5s and no result, fall back
+  try {
+    if (_voiceCmdRecognition) {
       try {
-        rec.abort();
+        _voiceCmdRecognition.onend = null;
+        _voiceCmdRecognition.abort();
       } catch (e) {}
-      finish(false);
-    }, 2500);
-
-    rec.onstart = () => {
-      clearTimeout(failTimer);
-      _voiceCmdActive = true;
-      startVoiceSessionTimer();
-      setVoiceSessionUI({
-        listening: true,
-        status: "Listening…",
-        transcript: "—",
-      });
-      finish(true);
-    };
-
-    rec.onresult = (event) => {
-      let interim = "";
-      let finalChunk = "";
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const piece = event.results[i][0].transcript || "";
-        if (event.results[i].isFinal) finalChunk += piece;
-        else interim += piece;
-      }
-      const display = ((finalChunk || "") + " " + interim).trim();
-      if (display)
-        setVoiceSessionUI({
-          transcript: display,
-          status: interim ? "Listening…" : "Processing…",
-          listening: true,
-          seconds: _voiceSessionSeconds,
-        });
-      if (finalChunk.trim()) handleVoiceCommand(finalChunk.trim());
-    };
-
-    rec.onerror = (e) => {
-      clearTimeout(failTimer);
-      const err = (e && e.error) || "";
-      log("webspeech: " + err);
-      if (err === "not-allowed" || err === "service-not-allowed") {
-        finish(false); // trigger record fallback
-        return;
-      }
-      if (err === "no-speech") return;
-      if (err === "aborted") return;
-      finish(false);
-    };
-
-    rec.onend = () => {
-      if (_voiceCmdActive && !_voiceUseRecordFallback && _voiceSessionSeconds < 60) {
-        try {
-          rec.start();
-        } catch (e) {}
-      }
-    };
-
-    try {
-      rec.start();
-    } catch (e) {
-      clearTimeout(failTimer);
-      finish(false);
     }
+  } catch (e) {}
+
+  const rec = new SR();
+  _voiceCmdRecognition = rec;
+  try {
+    rec.lang = "km-KH";
+  } catch (e) {}
+  rec.continuous = true;
+  rec.interimResults = true;
+  rec.maxAlternatives = 5;
+
+  _voiceCmdActive = true;
+  startVoiceSessionTimer();
+  setVoiceSessionUI({
+    listening: true,
+    status: "Listening… speak Khmer",
+    transcript: "—",
   });
+  updateVoiceCmdStatus("កំពុងស្តាប់…");
+  const fab = document.getElementById("voiceCmdFab");
+  if (fab) {
+    fab.classList.add("listening");
+    fab.classList.remove("vc-hidden");
+  }
+
+  rec.onresult = (event) => {
+    let interim = "";
+    let finalChunk = "";
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const piece = event.results[i][0].transcript || "";
+      if (event.results[i].isFinal) finalChunk += piece;
+      else interim += piece;
+    }
+    const display = ((finalChunk || "") + " " + interim).trim();
+    if (display) {
+      setVoiceSessionUI({
+        transcript: display,
+        status: interim ? "Listening…" : "Got it…",
+        listening: true,
+        seconds: _voiceSessionSeconds,
+      });
+    }
+    if (finalChunk.trim()) handleVoiceCommand(finalChunk.trim());
+  };
+
+  rec.onerror = (e) => {
+    const err = (e && e.error) || "";
+    log("voice: " + err);
+    if (err === "no-speech" || err === "aborted") return;
+    if (err === "not-allowed" || err === "service-not-allowed") {
+      setVoiceSessionUI({
+        listening: false,
+        status: "Microphone blocked",
+        assistant: "Tap Allow once, then open voice again",
+      });
+      stopVoiceSessionMic();
+      return;
+    }
+  };
+
+  rec.onend = () => {
+    if (_voiceCmdActive && _voiceSessionSeconds < 60) {
+      try {
+        rec.start();
+      } catch (e) {
+        _voiceCmdActive = false;
+        setVoiceSessionUI({
+          listening: false,
+          status: "Tap mic to speak again",
+        });
+      }
+    }
+  };
+
+  try {
+    rec.start();
+  } catch (e) {
+    _voiceCmdActive = false;
+    setVoiceSessionUI({
+      listening: false,
+      status: "Tap mic to try again",
+    });
+  }
 }
 
 function stopVoiceCommand() {
-  // If recording, stop triggers transcribe
-  if (_voiceUseRecordFallback && _voiceMediaRecorder && _voiceMediaRecorder.state === "recording") {
+  // iOS: if user hit stop after speaking, still auto-pay
+  if (isIOSDevice() && _voiceSpoke && window._iosVoicePendingAction) {
+    const ctx = window._iosVoicePendingAction;
+    window._iosVoicePendingAction = null;
+    stopVoiceSessionMic();
     try {
-      _voiceMediaRecorder.stop();
+      ctx.run();
+      showToast("✔ " + ctx.label);
     } catch (e) {}
-    _voiceCmdActive = false;
-    clearInterval(_voiceSessionTimerIv);
-    setVoiceSessionUI({ listening: false, status: "Processing…" });
     return;
   }
+  window._iosVoicePendingAction = null;
   stopVoiceSessionMic();
 }
 function startVoiceCommand() {
@@ -5630,6 +5575,121 @@ function openVoiceAssistModal() {
 }
 function closeVoiceAssistModal() {
   closeVoiceSessionModal();
+}
+
+async function voiceSpeakAndListen(questionKm, nextStep) {
+  if (isIOSDevice()) {
+    // iOS has no STT — just speak and wait for energy confirm on pay screens
+    setVoiceSessionUI({ assistant: questionKm });
+    try {
+      if (typeof speakKhmerAudioFallback === "function") {
+        await speakKhmerAudioFallback(questionKm);
+      }
+    } catch (e) {}
+    return;
+  }
+  _voiceDialog.step = nextStep || null;
+  setVoiceSessionUI({ assistant: questionKm, status: "Assistant…" });
+  updateVoiceCmdStatus(questionKm);
+  try {
+    unlockAudioEngine();
+    if (typeof speakKhmerAudioFallback === "function") {
+      await speakKhmerAudioFallback(questionKm);
+    }
+  } catch (e) {}
+  setTimeout(() => {
+    if (!_voiceCmdActive) startVoiceSessionMic();
+    else setVoiceSessionUI({ status: "Your turn — speak", listening: true });
+  }, 500);
+}
+
+async function voiceAssistAction(kind) {
+  openVoiceSessionModal();
+  if (kind === "listen") {
+    startVoiceSessionMic();
+    return;
+  }
+  if (isIOSDevice()) {
+    // Navigate to context then user speaks to pay
+    if (kind === "general") await voiceActOpenGeneral();
+    else if (kind === "utility") await voiceActOpenUtility();
+    else if (kind === "qr") {
+      try {
+        if (typeof triggerInstantQRScan === "function") triggerInstantQRScan();
+      } catch (e) {}
+    }
+    setTimeout(() => startIOSVoiceAutoPay(), 400);
+    return;
+  }
+  if (kind === "general") {
+    await voiceActOpenGeneral();
+    await voiceSpeakAndListen(
+      "បានបើក General Bills។ បញ្ចូលលេខ រួចនិយាយ បាទ។",
+      "await_bill_inquiry",
+    );
+  } else if (kind === "utility") {
+    await voiceActOpenUtility();
+    await voiceSpeakAndListen(
+      "បានបើក Utility។ បញ្ចូលលេខ រួចនិយាយ បាទ។",
+      "await_bill_inquiry",
+    );
+  } else if (kind === "qr") {
+    try {
+      if (typeof triggerInstantQRScan === "function") triggerInstantQRScan();
+    } catch (e) {}
+    await voiceSpeakAndListen(
+      "បានបើក QR។ និយាយ បាទ ដើម្បីបញ្ជាក់។",
+      "await_qr_confirm",
+    );
+  }
+}
+
+async function voiceSpeakAndListen(questionKm, nextStep) {
+  if (isIOSDevice()) return;
+  _voiceDialog.step = nextStep || null;
+  setVoiceSessionUI({ assistant: questionKm, status: "Assistant…" });
+  updateVoiceCmdStatus(questionKm);
+  try {
+    unlockAudioEngine();
+    if (typeof speakKhmerAudioFallback === "function") {
+      await speakKhmerAudioFallback(questionKm);
+    }
+  } catch (e) {}
+  setTimeout(() => {
+    if (!_voiceCmdActive) startVoiceSessionMic();
+    else setVoiceSessionUI({ status: "Your turn — speak", listening: true });
+  }, 500);
+}
+
+async function voiceAssistAction(kind) {
+  if (isIOSDevice()) {
+    showToast("Voice: Android only");
+    return;
+  }
+  openVoiceSessionModal();
+  if (kind === "general") {
+    await voiceActOpenGeneral();
+    await voiceSpeakAndListen(
+      "បានបើក General Bills។ បញ្ចូលលេខ រួចនិយាយ បាទ។",
+      "await_bill_inquiry",
+    );
+  } else if (kind === "utility") {
+    await voiceActOpenUtility();
+    await voiceSpeakAndListen(
+      "បានបើក Utility។ បញ្ចូលលេខ រួចនិយាយ បាទ។",
+      "await_bill_inquiry",
+    );
+  } else if (kind === "qr") {
+    try {
+      if (typeof triggerInstantQRScan === "function") triggerInstantQRScan();
+    } catch (e) {}
+    await voiceSpeakAndListen(
+      "បានបើក QR។ និយាយ បាទ ដើម្បីបញ្ជាក់។",
+      "await_qr_confirm",
+    );
+  } else if (kind === "listen") {
+    startVoiceSessionMic();
+  }
 }
 
 async function voiceSpeakAndListen(questionKm, nextStep) {
