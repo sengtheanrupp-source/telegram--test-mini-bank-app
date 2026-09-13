@@ -2140,16 +2140,12 @@ function saveAppPreferences() {
 function toggleVoiceCommandSetting() {
   saveAppPreferences();
   if (appPreferences.voiceCommand !== false) {
-    showToast("Voice command ON — tap mic on Home to speak");
-    // Warm mic on this user gesture
-    ensureMicPermission().then((ok) => {
-      if (ok) updateVoiceCmdStatus("Mic ready — tap & speak");
-    });
+    showToast("Voice command ON — tap mic to speak");
   } else {
     showToast("Voice command off");
-    stopVoiceCommand();
-    updateVoiceCmdStatus("Off — enable in Settings");
+    try { stopVoiceCommand(); } catch (e) {}
   }
+  try { refreshVoiceCommandUI(); } catch (e) {}
 }
 
 function applyMenuVisibility() {
@@ -3795,6 +3791,14 @@ const POST_GROUP_ID = "@generalpost169";
 const POSTS_STORAGE_KEY = "bankCommunityPosts_v5";
 const POSTS_SEEN_KEY = "bankCommunityPostsSeenAt";
 const MAX_MEDIA_BYTES = 20 * 1024 * 1024;
+const THREE_MONTHS_MS = 90 * 24 * 60 * 60 * 1000;
+
+function prunePostsThreeMonths(posts) {
+  const cut = Date.now() - THREE_MONTHS_MS;
+  return (posts || [])
+    .filter((p) => !p.ts || p.ts >= cut)
+    .slice(-200);
+}
 
 let _activeCommentPostId = null;
 let _replyToCommentId = null;
@@ -3839,20 +3843,21 @@ function loadLocalPosts() {
   try {
     const raw = localStorage.getItem(POSTS_STORAGE_KEY);
     const arr = raw ? JSON.parse(raw) : [];
-    return Array.isArray(arr) ? arr : [];
+    return prunePostsThreeMonths(Array.isArray(arr) ? arr : []);
   } catch (e) {
     return [];
   }
 }
 
 function saveLocalPosts(posts) {
+  const cleaned = prunePostsThreeMonths(posts);
   try {
-    localStorage.setItem(POSTS_STORAGE_KEY, JSON.stringify(posts.slice(-60)));
+    localStorage.setItem(POSTS_STORAGE_KEY, JSON.stringify(cleaned.slice(-120)));
   } catch (e) {
     try {
-      const slim = posts.slice(-20).map((p) => ({
+      const slim = cleaned.slice(-30).map((p) => ({
         ...p,
-        media: p.media && String(p.media).length > 100000 ? "" : p.media,
+        media: p.media && String(p.media).length > 80000 ? "" : p.media,
       }));
       localStorage.setItem(POSTS_STORAGE_KEY, JSON.stringify(slim));
     } catch (e2) {}
@@ -3950,20 +3955,46 @@ function updatePostBadges() {
 
 async function syncCommunityFeedFromServer() {
   const urls = ["/api/community/feed", "api/community/feed"];
+  const local = loadLocalPosts();
+  // Rehydrate server after deploy so old posts (up to 3 months) survive releases
+  if (local.length) {
+    try {
+      await fetch(urls[0], {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "rehydrate",
+          posts: local.map((p) => ({
+            ...p,
+            media: p.media && String(p.media).length < 40000 ? p.media : "",
+          })),
+        }),
+      });
+    } catch (e) {
+      try {
+        await fetch(urls[1], {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "rehydrate", posts: local }),
+        });
+      } catch (e2) {}
+    }
+  }
   for (const url of urls) {
     try {
       const res = await fetch(url + "?t=" + Date.now(), { method: "GET" });
       const data = await res.json().catch(() => ({}));
       if (data && data.ok && Array.isArray(data.posts)) {
-        _sharedPostsCache = mergePosts(data.posts, _sharedPostsCache);
-        saveLocalPosts(mergePosts(_sharedPostsCache, loadLocalPosts()));
+        _sharedPostsCache = mergePosts(data.posts, mergePosts(_sharedPostsCache, local));
+        saveLocalPosts(_sharedPostsCache);
         updatePostBadges();
-        return data.posts;
+        return _sharedPostsCache;
       }
     } catch (e) {
       log("feed sync: " + e.message);
     }
   }
+  _sharedPostsCache = mergePosts(_sharedPostsCache, local);
   return _sharedPostsCache;
 }
 
@@ -4282,13 +4313,21 @@ async function publishCommunityPost() {
   showToast("Posted — sharing to all users…");
 
   // Shared server + Telegram so other devices see it
-  await pushCommunityAction({ action: "upsertPost", post: { ...post, media: media && media.length < 80000 ? media : "" }, mirror: true });
-  await silentTelegramNotify(
-    "channel",
-    "📢 " + post.author + (caption ? "\n\n" + caption : ""),
-    media || null,
-    media ? post.type : null,
-  );
+  // Shared feed for all devices (server also sends clean human text to Telegram once)
+  await pushCommunityAction({
+    action: "upsertPost",
+    post: { ...post, media: media && media.length < 80000 ? media : "" },
+    mirror: true,
+  });
+  // Extra media-only if image/video (server sendMessage is text-only)
+  if (media) {
+    await silentTelegramNotify(
+      "channel",
+      "📢 " + post.author + (caption ? "\n\n" + caption : ""),
+      media,
+      post.type,
+    );
+  }
   await syncCommunityFeedFromServer();
   renderCommunityFeed();
 }
@@ -4800,13 +4839,8 @@ async function startVoiceCommand() {
     return;
   }
   unlockAudioEngine();
-  updateVoiceCmdStatus("Allow microphone…");
-  const micOk = await ensureMicPermission();
-  if (!micOk) {
-    showToast("Please allow microphone for Voice command", true);
-    updateVoiceCmdStatus("Mic blocked — allow in phone settings");
-    return;
-  }
+  // Do NOT call getUserMedia first — SpeechRecognition requests mic once.
+  // Calling both caused the Allow dialog twice.
 
   try {
     if (_voiceCmdRecognition) {
@@ -4818,7 +4852,6 @@ async function startVoiceCommand() {
 
   const rec = new SR();
   _voiceCmdRecognition = rec;
-  // Prefer Khmer; some devices only expose default locale
   try {
     rec.lang = "km-KH";
   } catch (e) {}
@@ -4897,143 +4930,181 @@ function handleVoiceCommand(raw) {
   updateVoiceCmdStatus("Heard: " + text);
   showToast("🎤 " + text);
 
-  const isYes = speechIncludes(text, ["បាទ", "ចាស", "ចាាស", "yes", "ok", "okay"]);
-  const isBill =
-    speechIncludes(text, [
-      "បង់ប្រាក់លើវិក្កយបត្រ",
+  const n = normalizeKhmerSpeech(text);
+  const isYes = speechIncludes(text, ["បាទ", "ចាស", "ចាាស", "yes", "ok", "okay", "confirm"]);
+
+  const isUtility =
+    speechIncludes(text, ["utility", "យូទីលីត", "អគ្គិសនី", "ទឹក", "ភ្លើង"]) ||
+    (speechIncludes(text, ["វិក្កយបត្រ", "ទូទាត់វិក្កយបត្រ", "បង់ប្រាក់លើវិក្កយបត្រ"]) &&
+      speechIncludes(text, ["utility", "យូទីលីត", "utilitybills"]));
+
+  const isGeneralBill =
+    !isUtility &&
+    (speechIncludes(text, [
+      "ទូទាត់វិក្កយបត្រgeneral",
+      "វិក្កយបត្រgeneral",
+      "generalbills",
+      "general",
       "ទូទាត់វិក្កយបត្រ",
+      "បង់ប្រាក់លើវិក្កយបត្រ",
       "វិក្កយបត្រ",
-      "វិក្្កយបត្រ",
       "paybill",
       "bill",
-    ]) && !speechIncludes(text, ["qr", "គុរ", "គីວអា", "កូដ"]);
-  const isQr = speechIncludes(text, [
-    "បង់ប្រាក់តាមqr",
-    "ទូទាត់តាមqr",
-    "តាមqr",
-    "qr",
-    "គុរ",
-    "ស្កេន",
-    "scan",
-  ]);
-  // Generic pay (deeplink) — avoid matching bill/qr phrases first
-  const isPay =
-    !isBill &&
-    !isQr &&
-    speechIncludes(text, ["បង់ប្រាក់", "ទូទាត់", "pay", "payment"]);
+    ]) ||
+      (n.includes("វិក្កយបត្រ") && !n.includes("qr") && !n.includes("គុរ")));
 
-  if (isQr) {
+  const isQr =
+    speechIncludes(text, [
+      "បង់ប្រាក់តាមqr",
+      "ទូទាត់តាមqr",
+      "តាមqr",
+      "qr",
+      "khqr",
+      "គុរ",
+      "ស្កេន",
+      "scan",
+      "ស្កេនqr",
+    ]) || n.includes("qr");
+
+  const isPayDeeplink =
+    !isGeneralBill &&
+    !isUtility &&
+    !isQr &&
+    speechIncludes(text, ["បង់ប្រាក់", "ទូទាត់", "pay", "payment", "deeplink"]);
+
+  // --- QR ---
+  if (isQr && !isYes) {
     showToast("Opening Scan QR…");
-    try {
-      triggerInstantQRScan();
-    } catch (e) {
-      navigateToView("cameraScanView");
-    }
     stopVoiceCommand();
+    try {
+      if (typeof triggerInstantQRScan === "function") triggerInstantQRScan();
+      else if (typeof openCameraScanView === "function") openCameraScanView();
+      else navigateToView("cameraScanView");
+    } catch (e) {
+      try {
+        navigateToView("cameraScanView");
+      } catch (e2) {}
+    }
     return;
   }
-  if (isBill) {
-    showToast("Opening Pay Bill…");
-    try {
-      openPayBillMenu();
-    } catch (e) {
-      navigateToView("billPayView");
-    }
+
+  // --- Utility bills ---
+  if (isUtility && !isYes) {
+    showToast("Opening Utility Bills…");
     stopVoiceCommand();
+    try {
+      if (typeof startUtilityBillPay === "function") startUtilityBillPay();
+      else {
+        workflowState.billPayMode = "utility";
+        navigateToView("billPayView");
+      }
+    } catch (e) {}
+    // Auto inquiry if customer code already filled
+    setTimeout(() => {
+      try {
+        const raw = (document.getElementById("bpRawCode")?.value || "").trim();
+        if (raw && typeof runBillPayInquiry === "function") runBillPayInquiry();
+      } catch (e) {}
+    }, 400);
     return;
   }
-  if (isPay) {
-    showToast("Opening Deeplink payment…");
-    // If deeplink session active → pay; else open deeplink view
+
+  // --- General bills ---
+  if (isGeneralBill && !isYes) {
+    showToast("Opening General Bills…");
+    stopVoiceCommand();
+    try {
+      if (typeof startGeneralBillPay === "function") startGeneralBillPay();
+      else {
+        workflowState.billPayMode = "general";
+        navigateToView("billPayView");
+      }
+    } catch (e) {}
+    setTimeout(() => {
+      try {
+        const raw = (document.getElementById("bpRawCode")?.value || "").trim();
+        if (raw && typeof runBillPayInquiry === "function") runBillPayInquiry();
+      } catch (e) {}
+    }, 400);
+    return;
+  }
+
+  // --- Deeplink pay (when payment URL / link_token active) ---
+  if (isPayDeeplink && !isYes) {
+    showToast("Deeplink payment…");
+    stopVoiceCommand();
     if (workflowState.link_token || workflowState.payment_token) {
       try {
         unlockAudioEngine();
-        runSmartPaymentFlow();
+        if (typeof runSmartPaymentFlow === "function") runSmartPaymentFlow();
       } catch (e) {}
     } else {
       try {
-        openDeeplinkViewManually();
-      } catch (e) {
-        navigateToView("paymentView");
-      }
+        if (typeof openDeeplinkViewManually === "function") openDeeplinkViewManually();
+        else navigateToView("paymentView");
+      } catch (e) {}
     }
-    stopVoiceCommand();
     return;
   }
 
+  // --- Confirm / Yes ---
   if (isYes) {
-    // Confirm current context
+    stopVoiceCommand();
+    // QR confirm
     const qrModal = document.getElementById("khqrConfirmModal");
-    const qrOpen = qrModal && !qrModal.classList.contains("hidden");
-    if (qrOpen) {
-      showToast("Confirming QR payment…");
+    if (qrModal && !qrModal.classList.contains("hidden")) {
+      showToast("Confirming QR…");
       try {
         unlockAudioEngine();
-        submitQRConfirm();
+        if (typeof submitQRConfirm === "function") submitQRConfirm();
+        else if (typeof confirmQRPayment === "function") confirmQRPayment();
       } catch (e) {}
-      stopVoiceCommand();
       return;
     }
-    // Success modal Done (deeplink)
+    // Success Done (deeplink return url)
     const bankModal = document.getElementById("bankModal");
-    const bankOpen = bankModal && !bankModal.classList.contains("hidden");
     const doneBtn = document.getElementById("modalDoneBtn");
-    if (bankOpen && doneBtn && !doneBtn.closest(".hidden")) {
+    if (bankModal && !bankModal.classList.contains("hidden") && doneBtn) {
       showToast("Done…");
       try {
-        handlePaymentDoneAction();
+        if (typeof handlePaymentDoneAction === "function") handlePaymentDoneAction();
       } catch (e) {}
-      stopVoiceCommand();
       return;
     }
-    // Bill pay confirm
-    const bpBtn = document.getElementById("bpConfirmPayBtn");
-    if (bpBtn && !bpBtn.disabled && document.getElementById("billPayView") && !document.getElementById("billPayView").classList.contains("hidden")) {
-      showToast("Paying bill…");
-      try {
-        unlockAudioEngine();
-        runBillPaySmartFlow();
-      } catch (e) {}
-      stopVoiceCommand();
-      return;
-    }
-    // Bill inquiry if on bill pay with code
-    if (
-      document.getElementById("billPayView") &&
-      !document.getElementById("billPayView").classList.contains("hidden")
-    ) {
+    // Bill pay view
+    const billView = document.getElementById("billPayView");
+    if (billView && !billView.classList.contains("hidden")) {
       if (workflowState.payment_token) {
+        showToast("Paying bill…");
         try {
           unlockAudioEngine();
-          runBillPaySmartFlow();
+          if (typeof runBillPaySmartFlow === "function") runBillPaySmartFlow();
         } catch (e) {}
       } else {
+        showToast("Inquiry…");
         try {
-          runBillPayInquiry();
+          if (typeof runBillPayInquiry === "function") runBillPayInquiry();
         } catch (e) {}
       }
-      stopVoiceCommand();
       return;
     }
-    // Deeplink confirm
-    if (
-      document.getElementById("paymentView") &&
-      !document.getElementById("paymentView").classList.contains("hidden")
-    ) {
+    // Deeplink payment view
+    const payView = document.getElementById("paymentView");
+    if (payView && !payView.classList.contains("hidden")) {
+      showToast("Confirming payment…");
       try {
         unlockAudioEngine();
-        runSmartPaymentFlow();
+        if (typeof runSmartPaymentFlow === "function") runSmartPaymentFlow();
       } catch (e) {}
-      stopVoiceCommand();
       return;
     }
     showToast("No action to confirm", true);
-    stopVoiceCommand();
     return;
   }
 
-  showToast("Unrecognized command — see Voice guide in Settings", true);
+  showToast("Unrecognized — try: ទូទាត់វិក្កយបត្រ / Utility / QR / បាទ", true);
   stopVoiceCommand();
 }
+
 
 
