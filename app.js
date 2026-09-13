@@ -3943,14 +3943,56 @@ function markPostsSeen() {
   updatePostBadges();
 }
 
+/** Parse time string to ms if ts missing */
+function activityTs(item) {
+  if (!item) return 0;
+  if (item.ts && Number(item.ts) > 0) return Number(item.ts);
+  if (item.time) {
+    const d = Date.parse(item.time);
+    if (!isNaN(d)) return d;
+  }
+  return 0;
+}
+
+/**
+ * Unread badge = new posts + comments + replies (like social apps).
+ * Own activity is excluded. Clears when user opens Post menu.
+ */
+function countUnreadSocialActivity(posts, seenAt, myId) {
+  let unread = 0;
+  (posts || []).forEach((p) => {
+    const postTs = activityTs(p);
+    const isMyPost = myId && p.authorId && String(p.authorId) === String(myId);
+    if (postTs > seenAt && !isMyPost) unread++;
+
+    (p.comments || []).forEach((c) => {
+      const cTs = activityTs(c);
+      const isMyComment =
+        myId && c.authorId && String(c.authorId) === String(myId);
+      if (cTs > seenAt && !isMyComment) unread++;
+
+      (c.replies || []).forEach((r) => {
+        const rTs = activityTs(r);
+        const isMyReply =
+          myId && r.authorId && String(r.authorId) === String(myId);
+        if (rTs > seenAt && !isMyReply) unread++;
+      });
+    });
+  });
+  return unread;
+}
+
 function updatePostBadges() {
   const posts = loadCommunityPosts();
   const seenAt = getPostsSeenAt();
-  let unread = 0;
-  posts.forEach((p) => {
-    if ((p.ts || 0) > seenAt) unread++;
-  });
-  if (!seenAt && posts.length && unread === 0) unread = posts.length;
+  const myId = getTelegramUserId();
+  let unread = countUnreadSocialActivity(posts, seenAt, myId);
+
+  // First launch with existing feed: show total activity once
+  if (!seenAt && unread === 0 && posts.length) {
+    unread = countUnreadSocialActivity(posts, 0, myId);
+  }
+
   const label = unread > 99 ? "99+" : String(unread);
   ["postNavBadge", "postHomeBadge"].forEach((id) => {
     const el = document.getElementById(id);
@@ -3964,7 +4006,21 @@ function updatePostBadges() {
     }
   });
   const hdr = document.getElementById("postCountBadge");
-  if (hdr) hdr.textContent = posts.length + (posts.length === 1 ? " post" : " posts");
+  if (hdr) {
+    const totalComments = posts.reduce(
+      (n, p) =>
+        n +
+        (p.comments || []).reduce(
+          (m, c) => m + 1 + ((c.replies || []).length || 0),
+          0,
+        ),
+      0,
+    );
+    hdr.textContent =
+      posts.length +
+      (posts.length === 1 ? " post" : " posts") +
+      (totalComments ? " · " + totalComments + " comments" : "");
+  }
 }
 
 async function syncCommunityFeedFromServer() {
@@ -4701,7 +4757,11 @@ async function submitComment() {
     const parent = p.comments.find((c) => c.id === _replyToCommentId);
     if (parent) {
       if (!parent.replies) parent.replies = [];
-      parent.replies.push({ ...baseComment, id: "r_" + Date.now() });
+      parent.replies.push({
+        ...baseComment,
+        id: "r_" + Date.now(),
+        ts: Date.now(),
+      });
     }
     _replyToCommentId = null;
     document.getElementById("replyHint")?.classList.add("hidden");
