@@ -2627,39 +2627,33 @@ System ready...</pre
 
 
     <!-- Voice Assistant fallback (when mic speech recognition fails) -->
-    <div id="voiceAssistModal" class="hidden fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-slate-950/55 backdrop-blur-sm p-0 sm:p-4">
-      <div class="w-full max-w-md bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-3xl p-5 space-y-3 shadow-2xl">
+    
+    <!-- Voice session: mic + timer + live text (no command list) -->
+    <div id="voiceSessionModal" class="hidden fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-slate-950/50 backdrop-blur-sm p-4">
+      <div class="w-full max-w-sm bg-white dark:bg-slate-900 rounded-3xl p-5 shadow-2xl space-y-4">
         <div class="flex items-center justify-between">
-          <h3 class="text-sm font-extrabold text-slate-900 dark:text-white">
-            <i class="fa-solid fa-microphone text-rose-500 mr-1"></i> Voice Assistant
-          </h3>
-          <button type="button" onclick="closeVoiceAssistModal()" class="text-slate-400 text-lg px-2">&times;</button>
+          <p class="text-xs font-extrabold text-slate-800 dark:text-white">Voice command</p>
+          <button type="button" onclick="stopVoiceSession(true)" class="text-slate-400 text-lg px-2">&times;</button>
         </div>
-        <p id="voiceAssistHint" class="text-[11px] font-semibold text-slate-500">
-          Tap a command (or speak if mic works). App will confirm by voice.
-        </p>
-        <button type="button" onclick="voiceAssistAction('general')" class="w-full bank-card p-3.5 text-left flex items-center gap-3 active:scale-[0.98]">
-          <span class="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center"><i class="fa-solid fa-building"></i></span>
-          <span><span class="text-xs font-extrabold block">ទូទាត់វិក្កយបត្រ General</span><span class="text-[10px] text-slate-400">General Bills</span></span>
+        <div class="flex flex-col items-center gap-2 py-2">
+          <button type="button" id="voiceSessionMicBtn" onclick="toggleVoiceSessionMic()" class="w-20 h-20 rounded-full bg-gradient-to-br from-rose-500 to-pink-600 text-white text-3xl shadow-lg shadow-rose-500/40 flex items-center justify-center active:scale-95 transition-transform">
+            <i class="fa-solid fa-microphone" id="voiceSessionMicIcon"></i>
+          </button>
+          <p id="voiceSessionTimer" class="text-2xl font-extrabold font-num text-slate-900 dark:text-white tabular-nums">0:00</p>
+          <p id="voiceSessionStatus" class="text-[11px] font-bold text-slate-500 text-center">Tap mic to speak</p>
+        </div>
+        <div class="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-3 min-h-[72px]">
+          <p class="text-[10px] font-bold uppercase text-slate-400 mb-1">You said</p>
+          <p id="voiceSessionTranscript" class="text-sm font-bold text-slate-800 dark:text-slate-100 whitespace-pre-wrap break-words leading-relaxed">—</p>
+        </div>
+        <div class="rounded-2xl border border-indigo-100 dark:border-indigo-900 bg-indigo-50/80 dark:bg-indigo-950/40 px-3 py-3 min-h-[56px]">
+          <p class="text-[10px] font-bold uppercase text-indigo-400 mb-1">Assistant</p>
+          <p id="voiceSessionAssistant" class="text-sm font-bold text-indigo-800 dark:text-indigo-200 whitespace-pre-wrap leading-relaxed">—</p>
+        </div>
+        <button type="button" id="voiceSessionStopBtn" onclick="stopVoiceSessionMic()" class="bank-btn-secondary w-full py-3 text-xs font-bold">
+          Stop listening
         </button>
-        <button type="button" onclick="voiceAssistAction('utility')" class="w-full bank-card p-3.5 text-left flex items-center gap-3 active:scale-[0.98]">
-          <span class="w-10 h-10 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center"><i class="fa-solid fa-bolt"></i></span>
-          <span><span class="text-xs font-extrabold block">ទូទាត់វិក្កយបត្រ Utility</span><span class="text-[10px] text-slate-400">Utility Bills</span></span>
-        </button>
-        <button type="button" onclick="voiceAssistAction('qr')" class="w-full bank-card p-3.5 text-left flex items-center gap-3 active:scale-[0.98]">
-          <span class="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center"><i class="fa-solid fa-qrcode"></i></span>
-          <span><span class="text-xs font-extrabold block">ទូទាត់តាម QR</span><span class="text-[10px] text-slate-400">Scan KHQR</span></span>
-        </button>
-        <button type="button" onclick="voiceAssistAction('pay')" class="w-full bank-card p-3.5 text-left flex items-center gap-3 active:scale-[0.98]">
-          <span class="w-10 h-10 rounded-xl bg-violet-100 text-violet-600 flex items-center justify-center"><i class="fa-solid fa-link"></i></span>
-          <span><span class="text-xs font-extrabold block">បង់ប្រាក់ / Deeplink</span><span class="text-[10px] text-slate-400">Confirm payment link</span></span>
-        </button>
-        <button type="button" onclick="voiceAssistAction('listen')" class="bank-btn-primary w-full py-3 text-sm font-bold">
-          <i class="fa-solid fa-microphone mr-1"></i> Try listen again
-        </button>
-        <button type="button" onclick="closeVoiceAssistModal()" class="bank-btn-secondary w-full py-2.5 text-xs">Close</button>
       </div>
     </div>
-
 </body>
 </html>

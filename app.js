@@ -5078,46 +5078,336 @@ function updateVoiceCmdStatus(msg) {
   }
 }
 
+let _voiceDialog = { step: null, intent: null };
+let _voiceListenRetries = 0;
+let _voiceSessionSeconds = 0;
+let _voiceSessionTimerIv = null;
+let _voiceMicGranted = false;
+const VOICE_LANGS = ["km-KH", "km", "en-US"];
+
+function formatVoiceTimer(sec) {
+  sec = Math.max(0, Math.floor(sec || 0));
+  if (sec < 60) return "0:" + (sec < 10 ? "0" : "") + sec;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  if (m === 1 && s === 0) return "1 minute";
+  if (m >= 1) {
+    return m + " minute" + (m > 1 ? "s" : "") + " " + s + " sec";
+  }
+  return m + ":" + (s < 10 ? "0" : "") + s;
+}
+
+function setVoiceSessionUI(opts) {
+  opts = opts || {};
+  const timer = document.getElementById("voiceSessionTimer");
+  const status = document.getElementById("voiceSessionStatus");
+  const transcript = document.getElementById("voiceSessionTranscript");
+  const assistant = document.getElementById("voiceSessionAssistant");
+  const icon = document.getElementById("voiceSessionMicIcon");
+  const micBtn = document.getElementById("voiceSessionMicBtn");
+  if (timer && opts.seconds != null) timer.textContent = formatVoiceTimer(opts.seconds);
+  if (status && opts.status != null) status.textContent = opts.status;
+  if (transcript && opts.transcript != null) transcript.textContent = opts.transcript || "—";
+  if (assistant && opts.assistant != null) assistant.textContent = opts.assistant || "—";
+  if (icon && opts.listening != null) {
+    icon.className = opts.listening
+      ? "fa-solid fa-stop"
+      : "fa-solid fa-microphone";
+  }
+  if (micBtn) {
+    micBtn.classList.toggle("ring-4", !!opts.listening);
+    micBtn.classList.toggle("ring-rose-300", !!opts.listening);
+    micBtn.classList.toggle("animate-pulse", !!opts.listening);
+  }
+}
+
+function openVoiceSessionModal() {
+  const m = document.getElementById("voiceSessionModal");
+  if (m) m.classList.remove("hidden");
+  setVoiceSessionUI({
+    seconds: 0,
+    status: "Tap mic to speak",
+    transcript: "—",
+    assistant: "—",
+    listening: false,
+  });
+}
+
+function closeVoiceSessionModal() {
+  const m = document.getElementById("voiceSessionModal");
+  if (m) m.classList.add("hidden");
+}
+
 function toggleVoiceCommand() {
   if (appPreferences.voiceCommand === false) {
     showToast("Enable Voice command in Settings first", true);
     return;
   }
-  if (_voiceCmdActive) {
-    stopVoiceCommand();
-    return;
-  }
-  // Always open assistant + try mic (iOS Telegram often cannot hear speech)
-  openVoiceAssistModal();
-  startVoiceCommand();
+  openVoiceSessionModal();
+  // Auto-start listening on open
+  startVoiceSessionMic();
 }
 
-function stopVoiceCommand() {
+function toggleVoiceSessionMic() {
+  if (_voiceCmdActive) stopVoiceSessionMic();
+  else startVoiceSessionMic();
+}
+
+function stopVoiceSession(closeModal) {
+  stopVoiceSessionMic();
+  if (closeModal) closeVoiceSessionModal();
+}
+
+function stopVoiceSessionMic() {
   _voiceCmdActive = false;
-  _voiceListenRetries = 0;
+  clearInterval(_voiceSessionTimerIv);
+  _voiceSessionTimerIv = null;
   try {
-    if (_voiceCmdRecognition) _voiceCmdRecognition.stop();
+    if (_voiceCmdRecognition) {
+      try {
+        _voiceCmdRecognition.stop();
+      } catch (e) {
+        try {
+          _voiceCmdRecognition.abort();
+        } catch (e2) {}
+      }
+    }
   } catch (e) {}
   _voiceCmdRecognition = null;
   const btn = document.getElementById("voiceCmdFab");
-  if (btn) {
-    btn.classList.remove(
-      "listening",
-      "ring-4",
-      "ring-rose-400",
-      "animate-pulse",
-    );
-  }
+  if (btn) btn.classList.remove("listening", "ring-4", "ring-rose-400", "animate-pulse");
+  setVoiceSessionUI({
+    listening: false,
+    status: _voiceSessionSeconds
+      ? "Stopped · " + formatVoiceTimer(_voiceSessionSeconds)
+      : "Tap mic to speak",
+  });
   updateVoiceCmdStatus("");
   syncVoiceCmdFabVisibility();
 }
 
-let _voiceDialog = { step: null, intent: null };
-let _voiceListenRetries = 0;
-const VOICE_LANGS = ["km-KH", "km", "en-US", "en-GB"];
+function startVoiceSessionTimer() {
+  _voiceSessionSeconds = 0;
+  clearInterval(_voiceSessionTimerIv);
+  setVoiceSessionUI({ seconds: 0 });
+  _voiceSessionTimerIv = setInterval(() => {
+    _voiceSessionSeconds++;
+    setVoiceSessionUI({ seconds: _voiceSessionSeconds });
+    // Auto-stop after 60s
+    if (_voiceSessionSeconds >= 60) {
+      stopVoiceSessionMic();
+      setVoiceSessionUI({
+        status: "Time limit 1 minute — tap mic to continue",
+        listening: false,
+      });
+    }
+  }, 1000);
+}
+
+async function ensureMicForVoiceSession() {
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      return false;
+    }
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream.getTracks().forEach((tr) => tr.stop());
+    _voiceMicGranted = true;
+    return true;
+  } catch (e) {
+    _voiceMicGranted = false;
+    log("mic session: " + (e && e.message));
+    return false;
+  }
+}
+
+async function startVoiceSessionMic() {
+  if (appPreferences.voiceCommand === false) return;
+  openVoiceSessionModal();
+  unlockAudioEngine();
+
+  // Prove mic access first (iOS Settings allow ≠ SpeechRecognition allow)
+  setVoiceSessionUI({ status: "Checking microphone…", listening: false });
+  const micOk = await ensureMicForVoiceSession();
+  if (!micOk) {
+    setVoiceSessionUI({
+      status: "Microphone blocked — allow for Telegram in iPhone Settings",
+      assistant: "Settings → Telegram → Microphone → On",
+    });
+    return;
+  }
+
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    setVoiceSessionUI({
+      status: "Speech-to-text not available in this Telegram",
+      assistant:
+        "Microphone works, but iPhone Telegram cannot convert speech to text. Try Android Telegram, or Safari.",
+    });
+    try {
+      if (typeof speakKhmerAudioFallback === "function") {
+        await speakKhmerAudioFallback(
+          "សូមអភ័យទោស ប្រព័ន្ធស្គាល់សំឡេងមិនដំណើរការនៅលើ Telegram iPhone។",
+        );
+      }
+    } catch (e) {}
+    return;
+  }
+
+  try {
+    if (_voiceCmdRecognition) {
+      try {
+        _voiceCmdRecognition.abort();
+      } catch (e) {}
+    }
+  } catch (e) {}
+
+  const lang = VOICE_LANGS[_voiceListenRetries % VOICE_LANGS.length] || "km-KH";
+  const rec = new SR();
+  _voiceCmdRecognition = rec;
+  try {
+    rec.lang = lang;
+  } catch (e) {}
+  rec.continuous = true; // keep listening while user speaks
+  rec.interimResults = true;
+  rec.maxAlternatives = 5;
+
+  _voiceCmdActive = true;
+  startVoiceSessionTimer();
+  setVoiceSessionUI({
+    listening: true,
+    status: "Listening… speak now (" + lang + ")",
+    transcript: "—",
+  });
+  updateVoiceCmdStatus("កំពុងស្តាប់…");
+
+  const fab = document.getElementById("voiceCmdFab");
+  if (fab) {
+    fab.classList.add("listening");
+    fab.classList.remove("vc-hidden");
+  }
+
+  let finalText = "";
+
+  rec.onresult = (event) => {
+    let interim = "";
+    let finalChunk = "";
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const piece = event.results[i][0].transcript || "";
+      if (event.results[i].isFinal) finalChunk += piece;
+      else interim += piece;
+    }
+    if (finalChunk) finalText = (finalText + " " + finalChunk).trim();
+    const display = (finalText + (interim ? " " + interim : "")).trim();
+    setVoiceSessionUI({
+      transcript: display || "—",
+      status: interim ? "Listening…" : "Processing…",
+      listening: true,
+      seconds: _voiceSessionSeconds,
+    });
+    if (finalChunk.trim()) {
+      // Process each final phrase; keep session open for follow-up
+      handleVoiceCommand(finalChunk.trim());
+    }
+  };
+
+  rec.onerror = (e) => {
+    const err = (e && e.error) || "";
+    log("voice error: " + err + " micGranted=" + _voiceMicGranted);
+    // iOS often reports not-allowed for SpeechRecognition even when mic works
+    if (err === "not-allowed" || err === "service-not-allowed") {
+      stopVoiceSessionMic();
+      if (_voiceMicGranted) {
+        setVoiceSessionUI({
+          status: "Mic is allowed — speech-to-text blocked by Telegram iOS",
+          assistant:
+            "iPhone Telegram cannot convert voice to text. Use Android, or type actions manually.",
+          listening: false,
+        });
+        try {
+          speakKhmerAudioFallback(
+            "សូមអភ័យទោស ការបំប្លែងសំឡេងមិនដំណើរការនៅក្នុង Telegram លើ iPhone។",
+          );
+        } catch (e2) {}
+      } else {
+        setVoiceSessionUI({
+          status: "Allow microphone for Telegram",
+          assistant: "iPhone Settings → Telegram → Microphone",
+          listening: false,
+        });
+      }
+      return;
+    }
+    if (err === "no-speech") {
+      // continuous mode — ignore brief silence
+      setVoiceSessionUI({
+        status: "Listening… (waiting for speech)",
+        listening: true,
+        seconds: _voiceSessionSeconds,
+      });
+      return;
+    }
+    if (err === "network" || err === "language-not-supported") {
+      _voiceListenRetries++;
+      stopVoiceSessionMic();
+      setTimeout(() => startVoiceSessionMic(), 400);
+      return;
+    }
+    if (err === "aborted") return;
+    setVoiceSessionUI({
+      status: "Error: " + err + " — tap mic to retry",
+      listening: false,
+    });
+    stopVoiceSessionMic();
+  };
+
+  rec.onend = () => {
+    // continuous session ended — if still active, restart
+    if (_voiceCmdActive && _voiceSessionSeconds < 60) {
+      try {
+        rec.start();
+      } catch (e) {
+        _voiceCmdActive = false;
+        stopVoiceSessionMic();
+        setVoiceSessionUI({
+          status: "Tap mic to speak again",
+          listening: false,
+        });
+      }
+    }
+  };
+
+  try {
+    rec.start();
+  } catch (e) {
+    log("rec.start: " + (e && e.message));
+    stopVoiceSessionMic();
+    setVoiceSessionUI({
+      status: "Could not start — tap mic again",
+      listening: false,
+    });
+  }
+}
+
+// Legacy aliases
+function stopVoiceCommand() {
+  stopVoiceSessionMic();
+}
+function startVoiceCommand() {
+  startVoiceSessionMic();
+}
+function startVoiceCommandListenOnly() {
+  startVoiceSessionMic();
+}
+function openVoiceAssistModal() {
+  openVoiceSessionModal();
+}
+function closeVoiceAssistModal() {
+  closeVoiceSessionModal();
+}
 
 async function voiceSpeakAndListen(questionKm, nextStep) {
   _voiceDialog.step = nextStep || null;
+  setVoiceSessionUI({ assistant: questionKm, status: "Assistant speaking…" });
   updateVoiceCmdStatus(questionKm);
   showToast("🔊 " + questionKm);
   try {
@@ -5125,235 +5415,50 @@ async function voiceSpeakAndListen(questionKm, nextStep) {
     if (typeof speakKhmerAudioFallback === "function") {
       await speakKhmerAudioFallback(questionKm);
     }
-  } catch (e) {
-    log("voiceSpeak: " + (e && e.message));
-  }
+  } catch (e) {}
+  // Continue listening for reply without closing session
   setTimeout(() => {
-    if (appPreferences.voiceCommand === false) return;
-    startVoiceCommandListenOnly();
-  }, 500);
-}
-
-function openVoiceAssistModal() {
-  const m = document.getElementById("voiceAssistModal");
-  if (m) m.classList.remove("hidden");
-  const hint = document.getElementById("voiceAssistHint");
-  if (hint) {
-    const ok = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
-    hint.textContent = ok
-      ? "Speak Khmer, or tap a button below. Listening…"
-      : "This device cannot hear speech in Telegram. Tap a button — app still speaks back.";
-  }
-}
-
-function closeVoiceAssistModal() {
-  const m = document.getElementById("voiceAssistModal");
-  if (m) m.classList.add("hidden");
-  stopVoiceCommand();
+    if (!_voiceCmdActive) startVoiceSessionMic();
+    else setVoiceSessionUI({ status: "Your turn — speak now", listening: true });
+  }, 600);
 }
 
 async function voiceAssistAction(kind) {
-  closeVoiceAssistModal();
-  stopVoiceCommand();
-  unlockAudioEngine();
-  if (kind === "listen") {
-    openVoiceAssistModal();
-    _voiceListenRetries = 0;
-    startVoiceCommandListenOnly();
-    return;
-  }
+  // kept for compatibility — map to same intents
+  openVoiceSessionModal();
   if (kind === "general") {
     await voiceActOpenGeneral();
     await voiceSpeakAndListen(
-      "បានបើក General Bills។ បញ្ចូលលេខគណនី រួចនិយាយ បាទ។",
+      "បានបើក General Bills។ បញ្ចូលលេខ រួចនិយាយ បាទ។",
       "await_bill_inquiry",
     );
-    return;
-  }
-  if (kind === "utility") {
+  } else if (kind === "utility") {
     await voiceActOpenUtility();
     await voiceSpeakAndListen(
-      "បានបើក Utility Bills។ បញ្ចូលលេខ រួចនិយាយ បាទ។",
+      "បានបើក Utility។ បញ្ចូលលេខ រួចនិយាយ បាទ។",
       "await_bill_inquiry",
     );
-    return;
-  }
-  if (kind === "qr") {
+  } else if (kind === "qr") {
     try {
       if (typeof triggerInstantQRScan === "function") triggerInstantQRScan();
-      else navigateToView("cameraScanView");
     } catch (e) {}
-    await voiceSpeakAndListen(
-      "បានបើកស្កេន QR។ បន្ទាប់ពីស្កេន និយាយ បាទ។",
-      "await_qr_confirm",
-    );
-    return;
-  }
-  if (kind === "pay") {
-    if (workflowState.link_token || workflowState.payment_token) {
-      await voiceSpeakAndListen(
-        "មានការទូទាត់។ និយាយ បាទ ដើម្បីបញ្ជាក់។",
-        "await_deeplink_confirm",
-      );
-    } else {
-      try {
-        if (typeof openDeeplinkViewManually === "function") openDeeplinkViewManually();
-        else navigateToView("paymentView");
-      } catch (e) {}
-      showToast("Open a payment link first");
-    }
-  }
-}
-
-function startVoiceCommand() {
-  _voiceDialog = { step: null, intent: null };
-  _voiceListenRetries = 0;
-  startVoiceCommandListenOnly();
-}
-
-function startVoiceCommandListenOnly() {
-  if (appPreferences.voiceCommand === false) return;
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) {
-    updateVoiceCmdStatus("Mic speech not supported — use buttons");
-    openVoiceAssistModal();
-    // Still try to speak prompt
-    try {
-      unlockAudioEngine();
-      if (typeof speakKhmerAudioFallback === "function") {
-        speakKhmerAudioFallback("សូមជ្រើសរើសពាក្យបញ្ជានៅលើអេក្រង់។");
-      }
-    } catch (e) {}
-    return;
-  }
-
-  unlockAudioEngine();
-  try {
-    if (_voiceCmdRecognition) {
-      try {
-        _voiceCmdRecognition.abort();
-      } catch (e) {
-        try {
-          _voiceCmdRecognition.stop();
-        } catch (e2) {}
-      }
-    }
-  } catch (e) {}
-
-  const lang =
-    VOICE_LANGS[Math.min(_voiceListenRetries, VOICE_LANGS.length - 1)] || "km-KH";
-  const rec = new SR();
-  _voiceCmdRecognition = rec;
-  try {
-    rec.lang = lang;
-  } catch (e) {}
-  rec.continuous = false;
-  rec.interimResults = true;
-  rec.maxAlternatives = 5;
-
-  _voiceCmdActive = true;
-  const btn = document.getElementById("voiceCmdFab");
-  if (btn) {
-    btn.classList.add("listening");
-    btn.classList.remove("vc-hidden");
-  }
-  updateVoiceCmdStatus("កំពុងស្តាប់… (" + lang + ")");
-  showToast("🎤 និយាយឥឡូវ…");
-
-  let gotFinal = false;
-
-  rec.onresult = (event) => {
-    let transcript = "";
-    let isFinal = false;
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      transcript += event.results[i][0].transcript;
-      if (event.results[i].isFinal) isFinal = true;
-    }
-    updateVoiceCmdStatus(transcript || "…");
-    if (isFinal && transcript.trim()) {
-      gotFinal = true;
-      _voiceListenRetries = 0;
-      handleVoiceCommand(transcript);
-    }
-  };
-
-  rec.onerror = (e) => {
-    const err = (e && e.error) || "";
-    log("voice cmd error: " + err + " lang=" + lang);
-    if (err === "not-allowed" || err === "service-not-allowed") {
-      stopVoiceCommand();
-      showToast("Allow microphone in phone settings", true);
-      openVoiceAssistModal();
-      updateVoiceCmdStatus("Mic blocked — use buttons");
-      return;
-    }
-    if (err === "no-speech" || err === "aborted") {
-      // Auto-retry up to 3 times (user needs time to speak)
-      if (_voiceListenRetries < 3) {
-        _voiceListenRetries++;
-        updateVoiceCmdStatus("មិនឮ… ស្តាប់ម្តងទៀត (" + _voiceListenRetries + "/3)");
-        setTimeout(() => startVoiceCommandListenOnly(), 350);
-        return;
-      }
-      stopVoiceCommand();
-      updateVoiceCmdStatus("Use buttons below");
-      openVoiceAssistModal();
-      try {
-        if (typeof speakKhmerAudioFallback === "function") {
-          speakKhmerAudioFallback("សូមជ្រើសរើសពាក្យបញ្ជានៅលើអេក្រង់។");
-        }
-      } catch (e2) {}
-      return;
-    }
-    if (err === "network" || err === "language-not-supported") {
-      if (_voiceListenRetries < VOICE_LANGS.length - 1) {
-        _voiceListenRetries++;
-        setTimeout(() => startVoiceCommandListenOnly(), 300);
-        return;
-      }
-      stopVoiceCommand();
-      openVoiceAssistModal();
-      showToast("Speech not available — use Voice Assistant buttons", true);
-      return;
-    }
-    stopVoiceCommand();
-    openVoiceAssistModal();
-    updateVoiceCmdStatus("Try button commands");
-  };
-
-  rec.onend = () => {
-    _voiceCmdActive = false;
-    const b = document.getElementById("voiceCmdFab");
-    if (b) b.classList.remove("listening", "ring-4", "ring-rose-400", "animate-pulse");
-    // If ended with no result and retries left, retry
-    if (!gotFinal && _voiceListenRetries < 3 && _voiceCmdRecognition === rec) {
-      // onerror may already schedule retry; avoid double if no-speech fired
-    }
-  };
-
-  try {
-    rec.start();
-  } catch (e) {
-    log("rec.start fail: " + (e && e.message));
-    // Retry once after short delay
-    if (_voiceListenRetries < 2) {
-      _voiceListenRetries++;
-      setTimeout(() => startVoiceCommandListenOnly(), 400);
-      return;
-    }
-    showToast("Could not start mic — use buttons", true);
-    openVoiceAssistModal();
-    stopVoiceCommand();
+    await voiceSpeakAndListen("បានបើក QR។ និយាយ បាទ ដើម្បីបញ្ជាក់។", "await_qr_confirm");
+  } else if (kind === "listen") {
+    startVoiceSessionMic();
   }
 }
 
 async function handleVoiceCommand(raw) {
   const text = String(raw || "").trim();
   if (!text) {
-    updateVoiceCmdStatus("មិនឮ — ចុចមីកម្តងទៀត");
+    setVoiceSessionUI({ status: "Did not catch speech — keep talking" });
     return;
   }
   log("Voice command: " + text + " step=" + (_voiceDialog && _voiceDialog.step));
+  setVoiceSessionUI({
+    transcript: text,
+    status: "Heard — processing…",
+  });
   updateVoiceCmdStatus("Heard: " + text);
   showToast("🎤 " + text);
 
