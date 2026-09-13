@@ -4993,15 +4993,64 @@ const VOICE_CMD_HINTS = [
 ];
 
 function normalizeKhmerSpeech(s) {
-  return String(s || "")
+  let n = String(s || "")
     .toLowerCase()
     .replace(/\s+/g, "")
-    .replace(/[។៕!?.,]/g, "");
+    .replace(/[។៕!?.,·]/g, "")
+    .replace(/-/g, "");
+  // ACLEDA-style: map common Android STT mis-hearings → canonical tokens
+  const pairs = [
+    // QR phonetics: ទាត់ព្យូអរ, ព្យូអរ, គុរ…
+    ["ទាត់ព្យូអរ", "ទូទាត់តាមqr"],
+    ["ទូទាត់ព្យូអរ", "ទូទាត់តាមqr"],
+    ["ទាត់តាមព្យូអរ", "ទូទាត់តាមqr"],
+    ["ទូទាត់តាមព្យូអរ", "ទូទាត់តាមqr"],
+    ["បង់ប្រាក់តាមព្យូអរ", "បង់ប្រាក់តាមqr"],
+    ["ព្យូអរ", "qr"],
+    ["ព្យូរ", "qr"],
+    ["ពីអរ", "qr"],
+    ["គីវអា", "qr"],
+    ["គីអរ", "qr"],
+    ["ឃ្យូអរ", "qr"],
+    ["ខេឃ្យូអរ", "khqr"],
+    ["ឃេឃ្យូអរ", "khqr"],
+    ["ស្គែន", "ស្កេន"],
+    ["ស្កែន", "ស្កេន"],
+    // Pay / bill
+    ["ទូទាត់វិគយបត្រ", "ទូទាត់វិក្កយបត្រ"],
+    ["វិគយបត្រ", "វិក្កយបត្រ"],
+    ["វិកយបត្រ", "វិក្កយបត្រ"],
+    ["យូទីលីធី", "utility"],
+    ["យូទីលីត", "utility"],
+    // Yes
+    ["បាត", "បាទ"],
+    ["ចាះ", "ចាស"],
+    ["ចាាស", "ចាស"],
+  ];
+  for (const [a, b] of pairs) {
+    if (n.includes(a)) n = n.split(a).join(b);
+  }
+  return n;
 }
 
 function speechIncludes(text, keywords) {
   const n = normalizeKhmerSpeech(text);
   return keywords.some((k) => n.includes(normalizeKhmerSpeech(k)));
+}
+
+/** Fuzzy: QR intent from messy STT */
+function speechIsQrIntent(text) {
+  const n = normalizeKhmerSpeech(text);
+  if (/qr|khqr|ស្កេន|scan|គុរ/.test(n)) return true;
+  if (n.includes("ទូទាត់តាមqr") || n.includes("បង់ប្រាក់តាមqr")) return true;
+  // loose: has pay-ish + qr-ish syllable
+  if (
+    (n.includes("ទូទាត់") || n.includes("ទាត់") || n.includes("បង់")) &&
+    (n.includes("qr") || n.includes("ព្យូ") || n.includes("គុរ") || n.includes("ស្កេន"))
+  ) {
+    return true;
+  }
+  return false;
 }
 
 function speechRecognitionSupported() {
@@ -5616,12 +5665,36 @@ async function startVoiceSessionMic() {
     }
   };
 
+  // If browser already granted mic, start is silent; if not, ONE system dialog only
+  try {
+    if (navigator.permissions && navigator.permissions.query) {
+      navigator.permissions
+        .query({ name: "microphone" })
+        .then((st) => {
+          if (st && st.state === "denied") {
+            setVoiceSessionUI({
+              listening: false,
+              status: "Mic denied in system settings",
+              assistant: "Telegram app → Permissions → Microphone → Allow",
+            });
+            _voiceCmdActive = false;
+          }
+        })
+        .catch(() => {});
+    }
+  } catch (e) {}
+
   try {
     rec.start();
   } catch (e) {
     log("rec.start: " + (e && e.message));
     _voiceCmdActive = false;
-    // "already started" — ignore; don't request mic again
+    const msg = String((e && e.message) || "");
+    if (/already started/i.test(msg)) {
+      setVoiceSessionUI({ listening: true, status: "Listening…" });
+      _voiceCmdActive = true;
+      return;
+    }
     setVoiceSessionUI({
       listening: false,
       status: "Tap mic once to start",
@@ -5650,7 +5723,7 @@ async function voiceSpeakAndListen(questionKm, nextStep) {
   openVoiceSessionModal();
   setVoiceSessionUI({
     assistant: questionKm,
-    status: "Assistant speaking…",
+    status: "Tap mic to answer",
     listening: false,
   });
   updateVoiceCmdStatus(questionKm);
@@ -5660,11 +5733,8 @@ async function voiceSpeakAndListen(questionKm, nextStep) {
       await speakKhmerAudioFallback(questionKm);
     }
   } catch (e) {}
-  // Listen again for answer (one clean start — user gesture chain may be gone;
-  // still try; Android often allows after prior Allow)
-  setTimeout(() => {
-    if (!_voiceCmdActive) startVoiceSessionMic();
-  }, 700);
+  // Never auto-call startVoiceSessionMic here — Telegram would show Allow again.
+  // User taps mic once more to reply (permission already granted).
 }
 
 async function voiceAssistAction(kind) {
@@ -5696,163 +5766,17 @@ async function voiceAssistAction(kind) {
   }
 }
 
-async function voiceSpeakAndListen(questionKm, nextStep) {
-  if (isIOSDevice()) {
-    // iOS has no STT — just speak and wait for energy confirm on pay screens
-    setVoiceSessionUI({ assistant: questionKm });
-    try {
-      if (typeof speakKhmerAudioFallback === "function") {
-        await speakKhmerAudioFallback(questionKm);
-      }
-    } catch (e) {}
-    return;
-  }
-  _voiceDialog.step = nextStep || null;
-  setVoiceSessionUI({ assistant: questionKm, status: "Assistant…" });
-  updateVoiceCmdStatus(questionKm);
-  try {
-    unlockAudioEngine();
-    if (typeof speakKhmerAudioFallback === "function") {
-      await speakKhmerAudioFallback(questionKm);
-    }
-  } catch (e) {}
-  setTimeout(() => {
-    if (!_voiceCmdActive) startVoiceSessionMic();
-    else setVoiceSessionUI({ status: "Your turn — speak", listening: true });
-  }, 500);
-}
 
-async function voiceAssistAction(kind) {
-  openVoiceSessionModal();
-  if (kind === "listen") {
-    startVoiceSessionMic();
-    return;
-  }
-  if (isIOSDevice()) {
-    // Navigate to context then user speaks to pay
-    if (kind === "general") await voiceActOpenGeneral();
-    else if (kind === "utility") await voiceActOpenUtility();
-    else if (kind === "qr") {
-      try {
-        if (typeof triggerInstantQRScan === "function") triggerInstantQRScan();
-      } catch (e) {}
-    }
-    setTimeout(() => startIOSVoiceAutoPay(), 400);
-    return;
-  }
-  if (kind === "general") {
-    await voiceActOpenGeneral();
-    await voiceSpeakAndListen(
-      "បានបើក General Bills។ បញ្ចូលលេខ រួចនិយាយ បាទ។",
-      "await_bill_inquiry",
-    );
-  } else if (kind === "utility") {
-    await voiceActOpenUtility();
-    await voiceSpeakAndListen(
-      "បានបើក Utility។ បញ្ចូលលេខ រួចនិយាយ បាទ។",
-      "await_bill_inquiry",
-    );
-  } else if (kind === "qr") {
-    try {
-      if (typeof triggerInstantQRScan === "function") triggerInstantQRScan();
-    } catch (e) {}
-    await voiceSpeakAndListen(
-      "បានបើក QR។ និយាយ បាទ ដើម្បីបញ្ជាក់។",
-      "await_qr_confirm",
-    );
-  }
-}
 
-async function voiceSpeakAndListen(questionKm, nextStep) {
-  if (isIOSDevice()) return;
-  _voiceDialog.step = nextStep || null;
-  setVoiceSessionUI({ assistant: questionKm, status: "Assistant…" });
-  updateVoiceCmdStatus(questionKm);
-  try {
-    unlockAudioEngine();
-    if (typeof speakKhmerAudioFallback === "function") {
-      await speakKhmerAudioFallback(questionKm);
-    }
-  } catch (e) {}
-  setTimeout(() => {
-    if (!_voiceCmdActive) startVoiceSessionMic();
-    else setVoiceSessionUI({ status: "Your turn — speak", listening: true });
-  }, 500);
-}
 
-async function voiceAssistAction(kind) {
-  if (isIOSDevice()) {
-    showToast("Voice: Android only");
-    return;
-  }
-  openVoiceSessionModal();
-  if (kind === "general") {
-    await voiceActOpenGeneral();
-    await voiceSpeakAndListen(
-      "បានបើក General Bills។ បញ្ចូលលេខ រួចនិយាយ បាទ។",
-      "await_bill_inquiry",
-    );
-  } else if (kind === "utility") {
-    await voiceActOpenUtility();
-    await voiceSpeakAndListen(
-      "បានបើក Utility។ បញ្ចូលលេខ រួចនិយាយ បាទ។",
-      "await_bill_inquiry",
-    );
-  } else if (kind === "qr") {
-    try {
-      if (typeof triggerInstantQRScan === "function") triggerInstantQRScan();
-    } catch (e) {}
-    await voiceSpeakAndListen(
-      "បានបើក QR។ និយាយ បាទ ដើម្បីបញ្ជាក់។",
-      "await_qr_confirm",
-    );
-  } else if (kind === "listen") {
-    startVoiceSessionMic();
-  }
-}
 
-async function voiceSpeakAndListen(questionKm, nextStep) {
-  _voiceDialog.step = nextStep || null;
-  setVoiceSessionUI({ assistant: questionKm, status: "Assistant…" });
-  updateVoiceCmdStatus(questionKm);
-  try {
-    unlockAudioEngine();
-    if (typeof speakKhmerAudioFallback === "function") {
-      await speakKhmerAudioFallback(questionKm);
-    }
-  } catch (e) {}
-  setTimeout(() => {
-    if (!_voiceCmdActive) startVoiceSessionMic();
-    else setVoiceSessionUI({ status: "Your turn — speak", listening: true });
-  }, 500);
-}
 
-async function voiceAssistAction(kind) {
-  openVoiceSessionModal();
-  if (kind === "general") {
-    await voiceActOpenGeneral();
-    await voiceSpeakAndListen(
-      "បានបើក General Bills។ បញ្ចូលលេខ រួចនិយាយ បាទ។",
-      "await_bill_inquiry",
-    );
-  } else if (kind === "utility") {
-    await voiceActOpenUtility();
-    await voiceSpeakAndListen(
-      "បានបើក Utility។ បញ្ចូលលេខ រួចនិយាយ បាទ។",
-      "await_bill_inquiry",
-    );
-  } else if (kind === "qr") {
-    try {
-      if (typeof triggerInstantQRScan === "function") triggerInstantQRScan();
-    } catch (e) {}
-    await voiceSpeakAndListen(
-      "បានបើក QR។ និយាយ បាទ ដើម្បីបញ្ជាក់។",
-      "await_qr_confirm",
-    );
-  } else if (kind === "listen") {
-    startVoiceSessionMic();
-  }
-}
+
+
+
+
+
+
 
 async function handleVoiceCommand(raw) {
   const text = String(raw || "").trim();
@@ -5991,15 +5915,7 @@ async function handleVoiceCommand(raw) {
       "bill",
     ]);
 
-  const isQr = speechIncludes(text, [
-    "qr",
-    "khqr",
-    "ស្កេន",
-    "scan",
-    "ទូទាត់តាមqr",
-    "បង់ប្រាក់តាមqr",
-    "គុរ",
-  ]);
+  const isQr = speechIsQrIntent(text);
 
   const isPayDeeplink =
     !isGeneralBill &&
