@@ -5280,7 +5280,7 @@ async function startVoiceRecordFallback() {
   startVoiceSessionTimer();
   setVoiceSessionUI({
     listening: true,
-    status: "Recording… tap stop when done",
+    status: "Recording… tap red button to stop",
     transcript: "—",
   });
   _voiceMediaRecorder.ondataavailable = (e) => {
@@ -5304,7 +5304,7 @@ async function startVoiceRecordFallback() {
       return;
     }
     setVoiceSessionUI({
-      status: "Transcribing…",
+      status: "Transcribing (open-source AI)…",
       listening: false,
     });
     const text = await transcribeAudioBlob(blob);
@@ -5313,9 +5313,9 @@ async function startVoiceRecordFallback() {
       await handleVoiceCommand(text);
     } else {
       setVoiceSessionUI({
-        status: "Could not transcribe",
+        status: "Could not understand — try again",
         assistant:
-          "Add OPENAI_API_KEY or GROQ_API_KEY on Vercel for iPhone voice. Or use Android Telegram.",
+          "Speak clearly in Khmer, then tap stop. First use downloads open-source model (~75MB).",
       });
     }
   };
@@ -5324,14 +5324,140 @@ async function startVoiceRecordFallback() {
   // User taps stop (mic button) to finish early
 }
 
+/** Open-source Whisper in browser (Transformers.js) — no API key, works on iPhone */
+let _whisperPipeline = null;
+let _whisperLoading = null;
+
+async function loadOpenSourceWhisper(onProgress) {
+  if (_whisperPipeline) return _whisperPipeline;
+  if (_whisperLoading) return _whisperLoading;
+  _whisperLoading = (async () => {
+    try {
+      const mod = await import(
+        "https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2"
+      );
+      const { pipeline, env } = mod;
+      // Cache models in browser; allow remote models
+      env.allowLocalModels = false;
+      env.useBrowserCache = true;
+      if (onProgress) onProgress(0.05, "Loading open-source Whisper…");
+      const transcriber = await pipeline(
+        "automatic-speech-recognition",
+        "Xenova/whisper-tiny",
+        {
+          progress_callback: (prog) => {
+            if (!onProgress || !prog) return;
+            if (prog.status === "progress" && prog.progress != null) {
+              onProgress(
+                Math.min(0.95, (prog.progress || 0) / 100),
+                "Downloading model " + Math.round(prog.progress || 0) + "%",
+              );
+            } else if (prog.status === "ready") {
+              onProgress(1, "Model ready");
+            }
+          },
+        },
+      );
+      _whisperPipeline = transcriber;
+      return transcriber;
+    } catch (e) {
+      log("Whisper load failed: " + (e && e.message));
+      _whisperLoading = null;
+      throw e;
+    }
+  })();
+  return _whisperLoading;
+}
+
+/** Decode recorded blob → mono Float32Array @ 16 kHz for Whisper */
+async function audioBlobToFloat32(blob) {
+  const arrayBuffer = await blob.arrayBuffer();
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  const ctx = new AudioCtx();
+  let decoded;
+  try {
+    decoded = await ctx.decodeAudioData(arrayBuffer.slice(0));
+  } catch (e) {
+    try {
+      await ctx.close();
+    } catch (e2) {}
+    throw e;
+  }
+  const targetRate = 16000;
+  const channel = decoded.getChannelData(0);
+  if (decoded.sampleRate === targetRate) {
+    try {
+      await ctx.close();
+    } catch (e) {}
+    return channel;
+  }
+  // Linear resample to 16kHz
+  const ratio = decoded.sampleRate / targetRate;
+  const newLen = Math.max(1, Math.round(channel.length / ratio));
+  const out = new Float32Array(newLen);
+  for (let i = 0; i < newLen; i++) {
+    const src = i * ratio;
+    const i0 = Math.floor(src);
+    const i1 = Math.min(i0 + 1, channel.length - 1);
+    const f = src - i0;
+    out[i] = channel[i0] * (1 - f) + channel[i1] * f;
+  }
+  try {
+    await ctx.close();
+  } catch (e) {}
+  return out;
+}
+
+async function transcribeWithOpenSourceWhisper(blob) {
+  setVoiceSessionUI({
+    status: "Loading open-source AI (first time only)…",
+    listening: false,
+  });
+  const transcriber = await loadOpenSourceWhisper((p, msg) => {
+    setVoiceSessionUI({
+      status: msg || "Loading model…",
+      listening: false,
+    });
+  });
+  setVoiceSessionUI({ status: "Transcribing offline…", listening: false });
+  const audio = await audioBlobToFloat32(blob);
+  // Multilingual tiny Whisper — language km (Khmer)
+  const result = await transcriber(audio, {
+    language: "khmer",
+    task: "transcribe",
+    chunk_length_s: 30,
+    stride_length_s: 5,
+  });
+  let text = "";
+  if (typeof result === "string") text = result;
+  else if (result && result.text) text = result.text;
+  else if (Array.isArray(result) && result[0] && result[0].text)
+    text = result.map((r) => r.text).join(" ");
+  return String(text || "").trim();
+}
+
 async function transcribeAudioBlob(blob) {
+  // 1) Open-source in-browser Whisper (works on iPhone, no API key)
+  try {
+    const local = await transcribeWithOpenSourceWhisper(blob);
+    if (local) {
+      log("Open-source Whisper: " + local);
+      return local;
+    }
+  } catch (e) {
+    log("Open-source STT failed: " + (e && e.message));
+  }
+
+  // 2) Optional server Whisper if OPENAI/GROQ key set on Vercel
   try {
     const buf = await blob.arrayBuffer();
     const bytes = new Uint8Array(buf);
     let binary = "";
-    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    for (let i = 0; i < bytes.length; i++)
+      binary += String.fromCharCode(bytes[i]);
     const b64 = btoa(binary);
-    const dataUrl = "data:" + (blob.type || "audio/webm") + ";base64," + b64;
+    const dataUrl =
+      "data:" + (blob.type || "audio/webm") + ";base64," + b64;
     for (const url of ["/api/speech/transcribe", "api/speech/transcribe"]) {
       try {
         const res = await fetch(url, {
@@ -5344,16 +5470,12 @@ async function transcribeAudioBlob(blob) {
         });
         const data = await res.json().catch(() => ({}));
         if (data && data.ok && data.text) return String(data.text).trim();
-        if (data && data.error === "no_stt_key") {
-          log("STT: no API key on server");
-          return "";
-        }
       } catch (e) {
         log("STT fetch: " + e.message);
       }
     }
   } catch (e) {
-    log("transcribe: " + e.message);
+    log("transcribe server: " + e.message);
   }
   return "";
 }
