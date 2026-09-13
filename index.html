@@ -185,6 +185,46 @@
       }
       .quick-tile:hover .quick-icon { transform: scale(1.08); }
 
+      .voice-session-sheet {
+        border-radius: 24px 24px 0 0;
+        background: rgba(255,255,255,0.92);
+        backdrop-filter: blur(24px) saturate(1.4);
+        -webkit-backdrop-filter: blur(24px) saturate(1.4);
+        box-shadow: 0 -8px 40px rgba(15,23,42,0.12);
+      }
+      .dark .voice-session-sheet {
+        background: rgba(15,23,42,0.94);
+        box-shadow: 0 -8px 40px rgba(0,0,0,0.45);
+      }
+      .voice-ring {
+        width: 64px; height: 64px;
+        border-radius: 50%;
+        background: linear-gradient(145deg, #f43f5e, #e11d48);
+        box-shadow: 0 8px 24px rgba(244,63,94,0.35);
+        display: flex; align-items: center; justify-content: center;
+        color: #fff; font-size: 22px;
+        transition: transform 0.15s ease;
+      }
+      .voice-ring.live {
+        animation: voiceGlow 1.4s ease-in-out infinite;
+      }
+      @keyframes voiceGlow {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(244,63,94,0.45), 0 8px 24px rgba(244,63,94,0.35); }
+        50% { box-shadow: 0 0 0 12px rgba(244,63,94,0.0), 0 8px 24px rgba(244,63,94,0.4); }
+      }
+      .voice-wave span {
+        display: inline-block; width: 3px; margin: 0 1.5px;
+        border-radius: 2px; background: #f43f5e;
+        animation: vwave 0.9s ease-in-out infinite;
+      }
+      .voice-wave span:nth-child(2) { animation-delay: 0.12s }
+      .voice-wave span:nth-child(3) { animation-delay: 0.24s }
+      .voice-wave span:nth-child(4) { animation-delay: 0.36s }
+      .voice-wave span:nth-child(5) { animation-delay: 0.48s }
+      @keyframes vwave {
+        0%, 100% { height: 6px; opacity: 0.45 }
+        50% { height: 18px; opacity: 1 }
+      }
       .voice-cmd-fab {
         backdrop-filter: blur(8px);
       }
@@ -2628,31 +2668,33 @@ System ready...</pre
 
     <!-- Voice Assistant fallback (when mic speech recognition fails) -->
     
-    <!-- Voice session: mic + timer + live text (no command list) -->
-    <div id="voiceSessionModal" class="hidden fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-slate-950/50 backdrop-blur-sm p-4">
-      <div class="w-full max-w-sm bg-white dark:bg-slate-900 rounded-3xl p-5 shadow-2xl space-y-4">
-        <div class="flex items-center justify-between">
-          <p class="text-xs font-extrabold text-slate-800 dark:text-white">Voice command</p>
-          <button type="button" onclick="stopVoiceSession(true)" class="text-slate-400 text-lg px-2">&times;</button>
-        </div>
-        <div class="flex flex-col items-center gap-2 py-2">
-          <button type="button" id="voiceSessionMicBtn" onclick="toggleVoiceSessionMic()" class="w-20 h-20 rounded-full bg-gradient-to-br from-rose-500 to-pink-600 text-white text-3xl shadow-lg shadow-rose-500/40 flex items-center justify-center active:scale-95 transition-transform">
+    <!-- Voice session — compact 2026 bottom sheet -->
+    <div id="voiceSessionModal" class="hidden fixed inset-0 z-[60] flex items-end justify-center pointer-events-none">
+      <div class="absolute inset-0 bg-slate-950/25 pointer-events-auto" onclick="stopVoiceSession(true)"></div>
+      <div class="voice-session-sheet relative z-10 w-full max-w-md pointer-events-auto px-4 pt-3 pb-[max(16px,env(safe-area-inset-bottom))] space-y-3">
+        <div class="mx-auto w-10 h-1 rounded-full bg-slate-300/80 dark:bg-slate-600 mb-1"></div>
+        <div class="flex items-center gap-3">
+          <button type="button" id="voiceSessionMicBtn" onclick="toggleVoiceSessionMic()" class="voice-ring shrink-0" aria-label="Mic">
             <i class="fa-solid fa-microphone" id="voiceSessionMicIcon"></i>
           </button>
-          <p id="voiceSessionTimer" class="text-2xl font-extrabold font-num text-slate-900 dark:text-white tabular-nums">0:00</p>
-          <p id="voiceSessionStatus" class="text-[11px] font-bold text-slate-500 text-center">Tap mic to speak</p>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center justify-between gap-2">
+              <p id="voiceSessionStatus" class="text-[11px] font-bold text-slate-500 truncate">Tap to speak</p>
+              <p id="voiceSessionTimer" class="text-sm font-extrabold font-num text-slate-900 dark:text-white tabular-nums">0:00</p>
+            </div>
+            <div id="voiceWave" class="voice-wave hidden items-center h-5 mt-1">
+              <span></span><span></span><span></span><span></span><span></span>
+            </div>
+            <p id="voiceSessionTranscript" class="text-[13px] font-bold text-slate-800 dark:text-slate-100 truncate mt-0.5">—</p>
+          </div>
+          <button type="button" onclick="stopVoiceSession(true)" class="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 flex items-center justify-center shrink-0">
+            <i class="fa-solid fa-xmark text-sm"></i>
+          </button>
         </div>
-        <div class="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-3 min-h-[72px]">
-          <p class="text-[10px] font-bold uppercase text-slate-400 mb-1">You said</p>
-          <p id="voiceSessionTranscript" class="text-sm font-bold text-slate-800 dark:text-slate-100 whitespace-pre-wrap break-words leading-relaxed">—</p>
+        <div id="voiceSessionAssistantWrap" class="hidden rounded-2xl bg-indigo-50/90 dark:bg-indigo-950/50 px-3 py-2.5 border border-indigo-100/80 dark:border-indigo-900/50">
+          <p class="text-[10px] font-bold text-indigo-400 uppercase tracking-wide">Assistant</p>
+          <p id="voiceSessionAssistant" class="text-[12px] font-bold text-indigo-900 dark:text-indigo-100 leading-snug mt-0.5">—</p>
         </div>
-        <div class="rounded-2xl border border-indigo-100 dark:border-indigo-900 bg-indigo-50/80 dark:bg-indigo-950/40 px-3 py-3 min-h-[56px]">
-          <p class="text-[10px] font-bold uppercase text-indigo-400 mb-1">Assistant</p>
-          <p id="voiceSessionAssistant" class="text-sm font-bold text-indigo-800 dark:text-indigo-200 whitespace-pre-wrap leading-relaxed">—</p>
-        </div>
-        <button type="button" id="voiceSessionStopBtn" onclick="stopVoiceSessionMic()" class="bank-btn-secondary w-full py-3 text-xs font-bold">
-          Stop listening
-        </button>
       </div>
     </div>
 </body>
