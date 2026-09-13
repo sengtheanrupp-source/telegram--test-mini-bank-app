@@ -2610,12 +2610,37 @@ function saveSecuritySettings() {
   const pinInput = document.getElementById("securityPinValue");
   const bioToggle = document.getElementById("biometricsEnabled");
 
-  securitySettings.enabled = lockToggle ? lockToggle.checked : false;
-  securitySettings.pin = pinInput ? (pinInput.value.trim() || "1234") : "1234";
-  securitySettings.useBiometrics = bioToggle ? bioToggle.checked : true;
+  securitySettings.enabled = lockToggle
+    ? !!lockToggle.checked
+    : !!securitySettings.enabled;
+  securitySettings.pin = pinInput
+    ? pinInput.value.trim() || securitySettings.pin || "1234"
+    : securitySettings.pin || "1234";
+  securitySettings.useBiometrics = bioToggle
+    ? !!bioToggle.checked
+    : securitySettings.useBiometrics !== false;
+  if (typeof getStoredWebAuthnCredentialId === "function" && getStoredWebAuthnCredentialId()) {
+    securitySettings.bioEnrolled = true;
+  }
 
-  localStorage.setItem("bankSecuritySettings", JSON.stringify(securitySettings));
-  updateBiometricStatusBadge();
+  try {
+    localStorage.setItem(
+      "bankSecuritySettings",
+      JSON.stringify({
+        enabled: !!securitySettings.enabled,
+        pin: securitySettings.pin || "1234",
+        useBiometrics: securitySettings.useBiometrics !== false,
+        bioEnrolled: !!securitySettings.bioEnrolled,
+      }),
+    );
+  } catch (e) {
+    log("Security save failed: " + e.message);
+  }
+  const configBox = document.getElementById("pinConfigBox");
+  if (configBox) configBox.classList.toggle("hidden", !securitySettings.enabled);
+  try {
+    updateBiometricStatusBadge();
+  } catch (e) {}
   log("Security settings saved:", securitySettings);
 }
 
@@ -3766,16 +3791,56 @@ function initApp() {
   }
   log("Telegram Mini App Bank Engine initialised successfully.");
 
-  // Security unlock only on payment actions — not on every Mini App open
-  // (avoids PaymentStagingMini popup / PIN wall on launch)
-  isAppUnlocked = true;
-
   try {
     bindGatewayAutoSave();
   } catch (e) {}
   try {
     initVoiceCommandUI();
   } catch (e) {}
+
+  // App lock ON → require PIN / biometric before using the app
+  if (securitySettings.enabled) {
+    isAppUnlocked = false;
+    requireSecurityAuth(function () {
+      isAppUnlocked = true;
+      showToast("Unlocked");
+    }, "app");
+  } else {
+    isAppUnlocked = true;
+  }
+
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) {
+      if (securitySettings.enabled) isAppUnlocked = false;
+      return;
+    }
+    if (securitySettings.enabled && !isAppUnlocked) {
+      requireSecurityAuth(function () {
+        isAppUnlocked = true;
+      }, "app");
+    }
+  });
+
+  if (tgApp && tgApp.onEvent) {
+    try {
+      tgApp.onEvent("visibilityChanged", function (payload) {
+        var visible =
+          typeof payload === "boolean"
+            ? payload
+            : payload &&
+              (payload.is_visible === true || payload.isVisible === true);
+        if (!visible) {
+          if (securitySettings.enabled) isAppUnlocked = false;
+          return;
+        }
+        if (securitySettings.enabled && !isAppUnlocked) {
+          requireSecurityAuth(function () {
+            isAppUnlocked = true;
+          }, "app");
+        }
+      });
+    } catch (e) {}
+  }
 }
 
 document.addEventListener("DOMContentLoaded", initApp);
