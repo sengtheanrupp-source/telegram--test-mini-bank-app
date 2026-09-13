@@ -2737,15 +2737,16 @@ function requireSecurityAuth(onSuccess, mode) {
   const modal = document.getElementById("securityLockModal");
   if (modal) modal.classList.remove("hidden");
 
-  // Prefer owner biometrics when enabled + enrolled
+  // Do NOT auto-scan biometrics — user must tap fingerprint key / put finger on sensor
   if (securitySettings.useBiometrics && isOwnerBiometricsEnrolled()) {
-    try {
-      triggerBiometricScan();
-    } catch (e) {}
+    if (subEl) {
+      subEl.textContent =
+        pinLockMode === "app"
+          ? "Enter PIN or tap fingerprint to unlock"
+          : "Enter PIN or tap fingerprint to authorize";
+    }
   } else if (securitySettings.useBiometrics && !isOwnerBiometricsEnrolled()) {
-    // Show PIN pad; fingerprint key still available after enroll
-    const sub = document.getElementById("securityLockSubtitle");
-    if (sub) sub.textContent = "Enter PIN or enroll fingerprint in Settings";
+    if (subEl) subEl.textContent = "Enter PIN or enroll fingerprint in Settings";
   }
 }
 
@@ -3009,14 +3010,9 @@ function triggerBiometricScan() {
   unlockAudioEngine();
   biometricMode = "auth";
   isBiometricScanningActive = false;
-  // One-tap: open UI and immediately start scan (Confirm/Pay click is the gesture)
-  openBiometricScanModal("Scan fingerprint to authorize");
-  setBioScanStatus("Scanning…", "indigo");
-  setTimeout(() => {
-    try {
-      startBiometricTouchScan();
-    } catch (e) {}
-  }, 80);
+  // Open sensor UI only — user must put finger / tap the sensor button
+  openBiometricScanModal("Place your finger on the sensor");
+  setBioScanStatus("Tap the fingerprint button to scan", "indigo");
 }
 
 function setBioScanStatus(text, tone) {
@@ -5099,6 +5095,7 @@ function stopVoiceCommand() {
   try {
     if (_voiceCmdRecognition) _voiceCmdRecognition.stop();
   } catch (e) {}
+  _voiceCmdRecognition = null;
   const btn = document.getElementById("voiceCmdFab");
   if (btn) {
     btn.classList.remove(
@@ -5112,21 +5109,42 @@ function stopVoiceCommand() {
   syncVoiceCmdFabVisibility();
 }
 
-async function startVoiceCommand() {
-  if (appPreferences.voiceCommand === false) {
-    showToast("Voice command is off in Settings", true);
-    return;
+/** Dialog state for ACLEDA-style follow-up questions */
+let _voiceDialog = { step: null, intent: null };
+
+async function voiceSpeakAndListen(questionKm, nextStep) {
+  _voiceDialog.step = nextStep || null;
+  updateVoiceCmdStatus(questionKm);
+  showToast("🔊 " + questionKm);
+  try {
+    unlockAudioEngine();
+    if (typeof speakKhmerAudioFallback === "function") {
+      await speakKhmerAudioFallback(questionKm);
+    }
+  } catch (e) {
+    log("voiceSpeak: " + (e && e.message));
   }
+  // After speaking, listen for user reply
+  setTimeout(() => {
+    if (appPreferences.voiceCommand === false) return;
+    startVoiceCommandListenOnly();
+  }, 400);
+}
+
+function startVoiceCommand() {
+  _voiceDialog = { step: null, intent: null };
+  startVoiceCommandListenOnly();
+}
+
+function startVoiceCommandListenOnly() {
+  if (appPreferences.voiceCommand === false) return;
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) {
-    showToast("This Telegram WebView cannot use speech — try Android Chrome", true);
-    updateVoiceCmdStatus("Not supported here");
+    showToast("Voice not supported — use Android Chrome / Telegram", true);
+    updateVoiceCmdStatus("Not supported");
     return;
   }
   unlockAudioEngine();
-  // Do NOT call getUserMedia first — SpeechRecognition requests mic once.
-  // Calling both caused the Allow dialog twice.
-
   try {
     if (_voiceCmdRecognition) {
       try {
@@ -5142,7 +5160,7 @@ async function startVoiceCommand() {
   } catch (e) {}
   rec.continuous = false;
   rec.interimResults = true;
-  rec.maxAlternatives = 3;
+  rec.maxAlternatives = 5;
 
   _voiceCmdActive = true;
   const btn = document.getElementById("voiceCmdFab");
@@ -5150,8 +5168,8 @@ async function startVoiceCommand() {
     btn.classList.add("listening");
     btn.classList.remove("vc-hidden");
   }
-  updateVoiceCmdStatus("កំពុងស្តាប់…");
-  showToast("🎤 និយាយពាក្យបញ្ជា…");
+  updateVoiceCmdStatus("កំពុងស្តាប់… និយាយឥឡូវ");
+  showToast("🎤 កំពុងស្តាប់…");
 
   rec.onresult = (event) => {
     let transcript = "";
@@ -5165,91 +5183,189 @@ async function startVoiceCommand() {
   };
   rec.onerror = (e) => {
     log("voice cmd error: " + (e.error || ""));
-    stopVoiceCommand();
-    if (e.error === "not-allowed") {
-      showToast("Microphone permission required", true);
+    const err = e.error || "";
+    if (err === "not-allowed") {
+      stopVoiceCommand();
+      showToast("Please Allow microphone", true);
       updateVoiceCmdStatus("Mic blocked");
-    } else if (e.error === "no-speech") {
-      updateVoiceCmdStatus("No speech — tap mic again");
-    } else {
-      updateVoiceCmdStatus("Try again");
+      return;
     }
+    if (err === "no-speech") {
+      updateVoiceCmdStatus("មិនឮសំឡេង — ចុចមីកឡើងវិញ");
+      showToast("No speech — tap mic again", true);
+      stopVoiceCommand();
+      return;
+    }
+    if (err === "network") {
+      showToast("Network needed for speech recognition", true);
+    }
+    stopVoiceCommand();
+    updateVoiceCmdStatus("Try again — tap mic");
   };
   rec.onend = () => {
+    // Keep dialog state; only clear listening UI if not about to re-listen
     if (_voiceCmdActive) {
       _voiceCmdActive = false;
       const b = document.getElementById("voiceCmdFab");
-      if (b) {
-        b.classList.remove(
-          "listening",
-          "ring-4",
-          "ring-rose-400",
-          "animate-pulse",
-        );
-      }
-      updateVoiceCmdStatus("");
-      syncVoiceCmdFabVisibility();
+      if (b) b.classList.remove("listening", "ring-4", "ring-rose-400", "animate-pulse");
     }
   };
   try {
     rec.start();
   } catch (e) {
-    showToast("Could not start voice command", true);
+    showToast("Could not start listening", true);
     stopVoiceCommand();
   }
 }
 
 /**
- * Method 1 Pay Bill: បង់ប្រាក់លើវិក្កយបត្រ / ទូទាត់វិក្កយបត្រ → open Pay Bill
- * Confirm: បាទ / ចាស → inquiry + pay
- * Method 2 Deeplink: បង់ប្រាក់ / ទូទាត់ → deeplink pay; បាទ/ចាស → Done
- * Method 3 QR: បង់ប្រាក់តាម QR / ទូទាត់តាម QR → scan; បាទ/ចាស → confirm QR
+ * ACLEDA-style:
+ * 1) User speaks intent → app may ask follow-up in Khmer → user replies
+ * 2) Confirm steps with បាទ / ចាស
  */
-function handleVoiceCommand(raw) {
+async function handleVoiceCommand(raw) {
   const text = String(raw || "").trim();
   if (!text) {
-    updateVoiceCmdStatus("No speech detected");
+    updateVoiceCmdStatus("មិនឮ — ចុចមីកម្តងទៀត");
     return;
   }
-  log("Voice command: " + text);
+  log("Voice command: " + text + " step=" + (_voiceDialog && _voiceDialog.step));
   updateVoiceCmdStatus("Heard: " + text);
   showToast("🎤 " + text);
 
-  const n = normalizeKhmerSpeech(text);
-  const isYes = speechIncludes(text, ["បាទ", "ចាស", "ចាាស", "yes", "ok", "okay", "confirm"]);
+  const isYes = speechIncludes(text, [
+    "បាទ",
+    "ចាស",
+    "ចាាស",
+    "yes",
+    "ok",
+    "okay",
+    "confirm",
+    "យល់ព្រម",
+  ]);
+  const isNo = speechIncludes(text, ["ទេ", "no", "មិន", "បោះបង់", "cancel"]);
 
+  // --- Follow-up dialog steps ---
+  if (_voiceDialog && _voiceDialog.step === "choose_bill_type") {
+    if (speechIncludes(text, ["utility", "យូទីលីត", "អគ្គិសនី", "ទឹក", "ភ្លើង"])) {
+      _voiceDialog = { step: null, intent: "utility" };
+      stopVoiceCommand();
+      await voiceActOpenUtility();
+      await voiceSpeakAndListen(
+        "បានបើក Utility។ បញ្ចូលលេខគណនី រួចនិយាយ បាទ ដើម្បី Inquiry។",
+        "await_bill_inquiry",
+      );
+      return;
+    }
+    if (
+      speechIncludes(text, ["general", "ទូទៅ", "វិក្កយបត្រ"]) ||
+      isYes
+    ) {
+      _voiceDialog = { step: null, intent: "general" };
+      stopVoiceCommand();
+      await voiceActOpenGeneral();
+      await voiceSpeakAndListen(
+        "បានបើក General Bills។ បញ្ចូលលេខគណនី រួចនិយាយ បាទ ដើម្បី Inquiry។",
+        "await_bill_inquiry",
+      );
+      return;
+    }
+    await voiceSpeakAndListen(
+      "សូមនិយាយ General ឬ Utility។",
+      "choose_bill_type",
+    );
+    return;
+  }
+
+  if (_voiceDialog && _voiceDialog.step === "await_bill_inquiry") {
+    if (isYes) {
+      stopVoiceCommand();
+      try {
+        if (workflowState.payment_token && typeof runBillPaySmartFlow === "function") {
+          unlockAudioEngine();
+          runBillPaySmartFlow();
+          await voiceSpeakAndListen("កំពុងទូទាត់។", null);
+        } else if (typeof runBillPayInquiry === "function") {
+          runBillPayInquiry();
+          await voiceSpeakAndListen(
+            "កំពុង Inquiry។ បន្ទាប់ពីជោគជ័យ និយាយ បាទ ដើម្បីទូទាត់។",
+            "await_bill_pay",
+          );
+        }
+      } catch (e) {}
+      return;
+    }
+    if (isNo) {
+      _voiceDialog = { step: null, intent: null };
+      stopVoiceCommand();
+      showToast("Cancelled");
+      return;
+    }
+  }
+
+  if (_voiceDialog && _voiceDialog.step === "await_bill_pay") {
+    if (isYes) {
+      stopVoiceCommand();
+      try {
+        unlockAudioEngine();
+        if (typeof runBillPaySmartFlow === "function") runBillPaySmartFlow();
+      } catch (e) {}
+      _voiceDialog = { step: null, intent: null };
+      return;
+    }
+  }
+
+  if (_voiceDialog && _voiceDialog.step === "await_qr_confirm") {
+    if (isYes) {
+      stopVoiceCommand();
+      try {
+        unlockAudioEngine();
+        if (typeof submitQRConfirm === "function") submitQRConfirm();
+        else if (typeof confirmQRPayment === "function") confirmQRPayment();
+      } catch (e) {}
+      _voiceDialog = { step: null, intent: null };
+      return;
+    }
+  }
+
+  if (_voiceDialog && _voiceDialog.step === "await_deeplink_confirm") {
+    if (isYes) {
+      stopVoiceCommand();
+      try {
+        unlockAudioEngine();
+        if (typeof runSmartPaymentFlow === "function") runSmartPaymentFlow();
+      } catch (e) {}
+      _voiceDialog = { step: null, intent: null };
+      return;
+    }
+  }
+
+  // --- Fresh intents ---
   const isUtility =
-    speechIncludes(text, ["utility", "យូទីលីត", "អគ្គិសនី", "ទឹក", "ភ្លើង"]) ||
-    (speechIncludes(text, ["វិក្កយបត្រ", "ទូទាត់វិក្កយបត្រ", "បង់ប្រាក់លើវិក្កយបត្រ"]) &&
-      speechIncludes(text, ["utility", "យូទីលីត", "utilitybills"]));
+    speechIncludes(text, ["utility", "យូទីលីត", "អគ្គិសនី"]) ||
+    (speechIncludes(text, ["វិក្កយបត្រ", "ទូទាត់វិក្កយបត្រ"]) &&
+      speechIncludes(text, ["utility", "យូទីលីត"]));
 
   const isGeneralBill =
     !isUtility &&
-    (speechIncludes(text, [
-      "ទូទាត់វិក្កយបត្រgeneral",
-      "វិក្កយបត្រgeneral",
-      "generalbills",
-      "general",
+    speechIncludes(text, [
       "ទូទាត់វិក្កយបត្រ",
       "បង់ប្រាក់លើវិក្កយបត្រ",
       "វិក្កយបត្រ",
+      "general",
       "paybill",
       "bill",
-    ]) ||
-      (n.includes("វិក្កយបត្រ") && !n.includes("qr") && !n.includes("គុរ")));
+    ]);
 
-  const isQr =
-    speechIncludes(text, [
-      "បង់ប្រាក់តាមqr",
-      "ទូទាត់តាមqr",
-      "តាមqr",
-      "qr",
-      "khqr",
-      "គុរ",
-      "ស្កេន",
-      "scan",
-      "ស្កេនqr",
-    ]) || n.includes("qr");
+  const isQr = speechIncludes(text, [
+    "qr",
+    "khqr",
+    "ស្កេន",
+    "scan",
+    "ទូទាត់តាមqr",
+    "បង់ប្រាក់តាមqr",
+    "គុរ",
+  ]);
 
   const isPayDeeplink =
     !isGeneralBill &&
@@ -5257,126 +5373,100 @@ function handleVoiceCommand(raw) {
     !isQr &&
     speechIncludes(text, ["បង់ប្រាក់", "ទូទាត់", "pay", "payment", "deeplink"]);
 
-  // --- QR ---
   if (isQr && !isYes) {
-    showToast("Opening Scan QR…");
     stopVoiceCommand();
     try {
       if (typeof triggerInstantQRScan === "function") triggerInstantQRScan();
-      else if (typeof openCameraScanView === "function") openCameraScanView();
       else navigateToView("cameraScanView");
-    } catch (e) {
-      try {
-        navigateToView("cameraScanView");
-      } catch (e2) {}
-    }
+    } catch (e) {}
+    await voiceSpeakAndListen(
+      "បានបើកស្កេន QR។ បន្ទាប់ពីស្កេន និយាយ បាទ ដើម្បីបញ្ជាក់។",
+      "await_qr_confirm",
+    );
     return;
   }
 
-  // --- Utility bills ---
   if (isUtility && !isYes) {
-    showToast("Opening Utility Bills…");
     stopVoiceCommand();
-    try {
-      if (typeof startUtilityBillPay === "function") startUtilityBillPay();
-      else {
-        workflowState.billPayMode = "utility";
-        navigateToView("billPayView");
-      }
-    } catch (e) {}
-    // Auto inquiry if customer code already filled
-    setTimeout(() => {
-      try {
-        const raw = (document.getElementById("bpRawCode")?.value || "").trim();
-        if (raw && typeof runBillPayInquiry === "function") runBillPayInquiry();
-      } catch (e) {}
-    }, 400);
+    await voiceActOpenUtility();
+    await voiceSpeakAndListen(
+      "Utility Bills។ បញ្ចូលលេខ រួចនិយាយ បាទ។",
+      "await_bill_inquiry",
+    );
     return;
   }
 
-  // --- General bills ---
   if (isGeneralBill && !isYes) {
-    showToast("Opening General Bills…");
+    // If user only said bill without General/Utility → ask
+    const specifies =
+      speechIncludes(text, ["general", "utility", "យូទីលីត", "ទូទៅ"]) ||
+      speechIncludes(text, ["ទូទាត់វិក្កយបត្រgeneral"]);
+    if (!specifies && speechIncludes(text, ["វិក្កយបត្រ", "ទូទាត់វិក្កយបត្រ", "bill"])) {
+      stopVoiceCommand();
+      await voiceSpeakAndListen(
+        "តើអ្នកចង់ទូទាត់វិក្កយបត្រ General ឬ Utility?",
+        "choose_bill_type",
+      );
+      return;
+    }
     stopVoiceCommand();
-    try {
-      if (typeof startGeneralBillPay === "function") startGeneralBillPay();
-      else {
-        workflowState.billPayMode = "general";
-        navigateToView("billPayView");
-      }
-    } catch (e) {}
-    setTimeout(() => {
-      try {
-        const raw = (document.getElementById("bpRawCode")?.value || "").trim();
-        if (raw && typeof runBillPayInquiry === "function") runBillPayInquiry();
-      } catch (e) {}
-    }, 400);
+    await voiceActOpenGeneral();
+    await voiceSpeakAndListen(
+      "General Bills។ បញ្ចូលលេខ រួចនិយាយ បាទ។",
+      "await_bill_inquiry",
+    );
     return;
   }
 
-  // --- Deeplink pay (when payment URL / link_token active) ---
   if (isPayDeeplink && !isYes) {
-    showToast("Deeplink payment…");
     stopVoiceCommand();
     if (workflowState.link_token || workflowState.payment_token) {
-      try {
-        unlockAudioEngine();
-        if (typeof runSmartPaymentFlow === "function") runSmartPaymentFlow();
-      } catch (e) {}
+      await voiceSpeakAndListen(
+        "មានការទូទាត់ Deeplink។ និយាយ បាទ ដើម្បីបញ្ជាក់។",
+        "await_deeplink_confirm",
+      );
     } else {
       try {
         if (typeof openDeeplinkViewManually === "function") openDeeplinkViewManually();
         else navigateToView("paymentView");
       } catch (e) {}
+      await voiceSpeakAndListen("បើកទំព័រទូទាត់។", null);
     }
     return;
   }
 
-  // --- Confirm / Yes ---
   if (isYes) {
     stopVoiceCommand();
-    // QR confirm
     const qrModal = document.getElementById("khqrConfirmModal");
     if (qrModal && !qrModal.classList.contains("hidden")) {
-      showToast("Confirming QR…");
       try {
         unlockAudioEngine();
         if (typeof submitQRConfirm === "function") submitQRConfirm();
-        else if (typeof confirmQRPayment === "function") confirmQRPayment();
       } catch (e) {}
       return;
     }
-    // Success Done (deeplink return url)
     const bankModal = document.getElementById("bankModal");
     const doneBtn = document.getElementById("modalDoneBtn");
     if (bankModal && !bankModal.classList.contains("hidden") && doneBtn) {
-      showToast("Done…");
       try {
         if (typeof handlePaymentDoneAction === "function") handlePaymentDoneAction();
       } catch (e) {}
       return;
     }
-    // Bill pay view
     const billView = document.getElementById("billPayView");
     if (billView && !billView.classList.contains("hidden")) {
-      if (workflowState.payment_token) {
-        showToast("Paying bill…");
-        try {
+      try {
+        if (workflowState.payment_token && typeof runBillPaySmartFlow === "function") {
           unlockAudioEngine();
-          if (typeof runBillPaySmartFlow === "function") runBillPaySmartFlow();
-        } catch (e) {}
-      } else {
-        showToast("Inquiry…");
-        try {
-          if (typeof runBillPayInquiry === "function") runBillPayInquiry();
-        } catch (e) {}
-      }
+          runBillPaySmartFlow();
+        } else if (typeof runBillPayInquiry === "function") {
+          runBillPayInquiry();
+        }
+      } catch (e) {}
       return;
     }
-    // Deeplink payment view
     const payView = document.getElementById("paymentView");
     if (payView && !payView.classList.contains("hidden")) {
-      showToast("Confirming payment…");
       try {
         unlockAudioEngine();
         if (typeof runSmartPaymentFlow === "function") runSmartPaymentFlow();
@@ -5387,9 +5477,41 @@ function handleVoiceCommand(raw) {
     return;
   }
 
-  showToast("Unrecognized — try: ទូទាត់វិក្កយបត្រ / Utility / QR / បាទ", true);
+  if (isNo) {
+    _voiceDialog = { step: null, intent: null };
+    stopVoiceCommand();
+    showToast("Cancelled");
+    return;
+  }
+
   stopVoiceCommand();
+  await voiceSpeakAndListen(
+    "សូមនិយាយ ម្តងទៀត៖ ទូទាត់វិក្កយបត្រ, ទូទាត់តាម QR, ឬ បង់ប្រាក់។",
+    null,
+  );
 }
+
+async function voiceActOpenGeneral() {
+  try {
+    if (typeof startGeneralBillPay === "function") startGeneralBillPay();
+    else {
+      workflowState.billPayMode = "general";
+      navigateToView("billPayView");
+    }
+  } catch (e) {}
+}
+
+async function voiceActOpenUtility() {
+  try {
+    if (typeof startUtilityBillPay === "function") startUtilityBillPay();
+    else {
+      workflowState.billPayMode = "utility";
+      navigateToView("billPayView");
+    }
+  } catch (e) {}
+}
+
+
 
 
 
