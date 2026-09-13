@@ -5087,11 +5087,14 @@ function toggleVoiceCommand() {
     stopVoiceCommand();
     return;
   }
+  // Always open assistant + try mic (iOS Telegram often cannot hear speech)
+  openVoiceAssistModal();
   startVoiceCommand();
 }
 
 function stopVoiceCommand() {
   _voiceCmdActive = false;
+  _voiceListenRetries = 0;
   try {
     if (_voiceCmdRecognition) _voiceCmdRecognition.stop();
   } catch (e) {}
@@ -5109,8 +5112,9 @@ function stopVoiceCommand() {
   syncVoiceCmdFabVisibility();
 }
 
-/** Dialog state for ACLEDA-style follow-up questions */
 let _voiceDialog = { step: null, intent: null };
+let _voiceListenRetries = 0;
+const VOICE_LANGS = ["km-KH", "km", "en-US", "en-GB"];
 
 async function voiceSpeakAndListen(questionKm, nextStep) {
   _voiceDialog.step = nextStep || null;
@@ -5124,15 +5128,86 @@ async function voiceSpeakAndListen(questionKm, nextStep) {
   } catch (e) {
     log("voiceSpeak: " + (e && e.message));
   }
-  // After speaking, listen for user reply
   setTimeout(() => {
     if (appPreferences.voiceCommand === false) return;
     startVoiceCommandListenOnly();
-  }, 400);
+  }, 500);
+}
+
+function openVoiceAssistModal() {
+  const m = document.getElementById("voiceAssistModal");
+  if (m) m.classList.remove("hidden");
+  const hint = document.getElementById("voiceAssistHint");
+  if (hint) {
+    const ok = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+    hint.textContent = ok
+      ? "Speak Khmer, or tap a button below. Listening…"
+      : "This device cannot hear speech in Telegram. Tap a button — app still speaks back.";
+  }
+}
+
+function closeVoiceAssistModal() {
+  const m = document.getElementById("voiceAssistModal");
+  if (m) m.classList.add("hidden");
+  stopVoiceCommand();
+}
+
+async function voiceAssistAction(kind) {
+  closeVoiceAssistModal();
+  stopVoiceCommand();
+  unlockAudioEngine();
+  if (kind === "listen") {
+    openVoiceAssistModal();
+    _voiceListenRetries = 0;
+    startVoiceCommandListenOnly();
+    return;
+  }
+  if (kind === "general") {
+    await voiceActOpenGeneral();
+    await voiceSpeakAndListen(
+      "បានបើក General Bills។ បញ្ចូលលេខគណនី រួចនិយាយ បាទ។",
+      "await_bill_inquiry",
+    );
+    return;
+  }
+  if (kind === "utility") {
+    await voiceActOpenUtility();
+    await voiceSpeakAndListen(
+      "បានបើក Utility Bills។ បញ្ចូលលេខ រួចនិយាយ បាទ។",
+      "await_bill_inquiry",
+    );
+    return;
+  }
+  if (kind === "qr") {
+    try {
+      if (typeof triggerInstantQRScan === "function") triggerInstantQRScan();
+      else navigateToView("cameraScanView");
+    } catch (e) {}
+    await voiceSpeakAndListen(
+      "បានបើកស្កេន QR។ បន្ទាប់ពីស្កេន និយាយ បាទ។",
+      "await_qr_confirm",
+    );
+    return;
+  }
+  if (kind === "pay") {
+    if (workflowState.link_token || workflowState.payment_token) {
+      await voiceSpeakAndListen(
+        "មានការទូទាត់។ និយាយ បាទ ដើម្បីបញ្ជាក់។",
+        "await_deeplink_confirm",
+      );
+    } else {
+      try {
+        if (typeof openDeeplinkViewManually === "function") openDeeplinkViewManually();
+        else navigateToView("paymentView");
+      } catch (e) {}
+      showToast("Open a payment link first");
+    }
+  }
 }
 
 function startVoiceCommand() {
   _voiceDialog = { step: null, intent: null };
+  _voiceListenRetries = 0;
   startVoiceCommandListenOnly();
 }
 
@@ -5140,23 +5215,37 @@ function startVoiceCommandListenOnly() {
   if (appPreferences.voiceCommand === false) return;
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) {
-    showToast("Voice not supported — use Android Chrome / Telegram", true);
-    updateVoiceCmdStatus("Not supported");
+    updateVoiceCmdStatus("Mic speech not supported — use buttons");
+    openVoiceAssistModal();
+    // Still try to speak prompt
+    try {
+      unlockAudioEngine();
+      if (typeof speakKhmerAudioFallback === "function") {
+        speakKhmerAudioFallback("សូមជ្រើសរើសពាក្យបញ្ជានៅលើអេក្រង់។");
+      }
+    } catch (e) {}
     return;
   }
+
   unlockAudioEngine();
   try {
     if (_voiceCmdRecognition) {
       try {
-        _voiceCmdRecognition.stop();
-      } catch (e) {}
+        _voiceCmdRecognition.abort();
+      } catch (e) {
+        try {
+          _voiceCmdRecognition.stop();
+        } catch (e2) {}
+      }
     }
   } catch (e) {}
 
+  const lang =
+    VOICE_LANGS[Math.min(_voiceListenRetries, VOICE_LANGS.length - 1)] || "km-KH";
   const rec = new SR();
   _voiceCmdRecognition = rec;
   try {
-    rec.lang = "km-KH";
+    rec.lang = lang;
   } catch (e) {}
   rec.continuous = false;
   rec.interimResults = true;
@@ -5168,61 +5257,96 @@ function startVoiceCommandListenOnly() {
     btn.classList.add("listening");
     btn.classList.remove("vc-hidden");
   }
-  updateVoiceCmdStatus("កំពុងស្តាប់… និយាយឥឡូវ");
-  showToast("🎤 កំពុងស្តាប់…");
+  updateVoiceCmdStatus("កំពុងស្តាប់… (" + lang + ")");
+  showToast("🎤 និយាយឥឡូវ…");
+
+  let gotFinal = false;
 
   rec.onresult = (event) => {
     let transcript = "";
+    let isFinal = false;
     for (let i = event.resultIndex; i < event.results.length; i++) {
       transcript += event.results[i][0].transcript;
+      if (event.results[i].isFinal) isFinal = true;
     }
     updateVoiceCmdStatus(transcript || "…");
-    if (event.results[event.results.length - 1].isFinal) {
+    if (isFinal && transcript.trim()) {
+      gotFinal = true;
+      _voiceListenRetries = 0;
       handleVoiceCommand(transcript);
     }
   };
+
   rec.onerror = (e) => {
-    log("voice cmd error: " + (e.error || ""));
-    const err = e.error || "";
-    if (err === "not-allowed") {
+    const err = (e && e.error) || "";
+    log("voice cmd error: " + err + " lang=" + lang);
+    if (err === "not-allowed" || err === "service-not-allowed") {
       stopVoiceCommand();
-      showToast("Please Allow microphone", true);
-      updateVoiceCmdStatus("Mic blocked");
+      showToast("Allow microphone in phone settings", true);
+      openVoiceAssistModal();
+      updateVoiceCmdStatus("Mic blocked — use buttons");
       return;
     }
-    if (err === "no-speech") {
-      updateVoiceCmdStatus("មិនឮសំឡេង — ចុចមីកឡើងវិញ");
-      showToast("No speech — tap mic again", true);
+    if (err === "no-speech" || err === "aborted") {
+      // Auto-retry up to 3 times (user needs time to speak)
+      if (_voiceListenRetries < 3) {
+        _voiceListenRetries++;
+        updateVoiceCmdStatus("មិនឮ… ស្តាប់ម្តងទៀត (" + _voiceListenRetries + "/3)");
+        setTimeout(() => startVoiceCommandListenOnly(), 350);
+        return;
+      }
       stopVoiceCommand();
+      updateVoiceCmdStatus("Use buttons below");
+      openVoiceAssistModal();
+      try {
+        if (typeof speakKhmerAudioFallback === "function") {
+          speakKhmerAudioFallback("សូមជ្រើសរើសពាក្យបញ្ជានៅលើអេក្រង់។");
+        }
+      } catch (e2) {}
       return;
     }
-    if (err === "network") {
-      showToast("Network needed for speech recognition", true);
+    if (err === "network" || err === "language-not-supported") {
+      if (_voiceListenRetries < VOICE_LANGS.length - 1) {
+        _voiceListenRetries++;
+        setTimeout(() => startVoiceCommandListenOnly(), 300);
+        return;
+      }
+      stopVoiceCommand();
+      openVoiceAssistModal();
+      showToast("Speech not available — use Voice Assistant buttons", true);
+      return;
     }
     stopVoiceCommand();
-    updateVoiceCmdStatus("Try again — tap mic");
+    openVoiceAssistModal();
+    updateVoiceCmdStatus("Try button commands");
   };
+
   rec.onend = () => {
-    // Keep dialog state; only clear listening UI if not about to re-listen
-    if (_voiceCmdActive) {
-      _voiceCmdActive = false;
-      const b = document.getElementById("voiceCmdFab");
-      if (b) b.classList.remove("listening", "ring-4", "ring-rose-400", "animate-pulse");
+    _voiceCmdActive = false;
+    const b = document.getElementById("voiceCmdFab");
+    if (b) b.classList.remove("listening", "ring-4", "ring-rose-400", "animate-pulse");
+    // If ended with no result and retries left, retry
+    if (!gotFinal && _voiceListenRetries < 3 && _voiceCmdRecognition === rec) {
+      // onerror may already schedule retry; avoid double if no-speech fired
     }
   };
+
   try {
     rec.start();
   } catch (e) {
-    showToast("Could not start listening", true);
+    log("rec.start fail: " + (e && e.message));
+    // Retry once after short delay
+    if (_voiceListenRetries < 2) {
+      _voiceListenRetries++;
+      setTimeout(() => startVoiceCommandListenOnly(), 400);
+      return;
+    }
+    showToast("Could not start mic — use buttons", true);
+    openVoiceAssistModal();
     stopVoiceCommand();
   }
 }
 
-/**
- * ACLEDA-style:
- * 1) User speaks intent → app may ask follow-up in Khmer → user replies
- * 2) Confirm steps with បាទ / ចាស
- */
 async function handleVoiceCommand(raw) {
   const text = String(raw || "").trim();
   if (!text) {
