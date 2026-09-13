@@ -986,46 +986,50 @@
                     class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 font-mono text-center tracking-widest text-base font-bold text-indigo-500 focus:outline-none focus:border-indigo-500"
                   />
                 </div>
-                <div
-                  class="bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800 space-y-3"
-                >
-                  <div class="flex items-center justify-between gap-2">
-                    <div class="min-w-0">
-                      <span class="text-xs font-bold text-slate-800 dark:text-slate-200 block">Biometric Scan</span>
-                      <span class="text-[10px] text-slate-400 block">Device Face ID / Fingerprint (owner only)</span>
-                    </div>
-                    <input
-                      type="checkbox"
-                      id="biometricsEnabled"
-                      checked
-                      onchange="saveSecuritySettings()"
-                      class="w-4 h-4 accent-indigo-600 rounded cursor-pointer shrink-0"
-                    />
-                  </div>
-                  <p class="text-[10px] text-slate-500 leading-relaxed">
-                    Setup binds this device’s secure sensor (WebAuthn / Telegram Biometrics).
-                    Only the enrolled owner can unlock payments — other fingers fail.
-                  </p>
-                  <div class="pt-1 flex items-center justify-between border-t border-slate-200/60 dark:border-slate-800/60 gap-2">
-                    <span id="biometricStatusBadge" class="text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20">
-                      Not enrolled
+              </div>
+
+              <!-- Biometric always visible (not hidden under PIN toggle) -->
+              <div
+                id="biometricConfigBox"
+                class="bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800 space-y-3"
+              >
+                <div class="flex items-center justify-between gap-2">
+                  <div class="min-w-0">
+                    <span class="text-xs font-bold text-slate-800 dark:text-slate-200 block">
+                      <i class="fa-solid fa-fingerprint text-indigo-500 mr-1"></i>Biometric Scan
                     </span>
-                    <button
-                      type="button"
-                      onclick="enrollBiometricsInSettings()"
-                      class="text-[11px] font-bold text-white bg-indigo-600 hover:bg-indigo-500 px-2.5 py-1.5 rounded-xl flex items-center gap-1 active:scale-95 transition-all"
-                    >
-                      <i class="fa-solid fa-fingerprint"></i> Enroll Owner
-                    </button>
+                    <span class="text-[10px] text-slate-400 block">Face ID / Fingerprint — owner only</span>
                   </div>
+                  <input
+                    type="checkbox"
+                    id="biometricsEnabled"
+                    checked
+                    onchange="saveSecuritySettings()"
+                    class="w-4 h-4 accent-indigo-600 rounded cursor-pointer shrink-0"
+                  />
+                </div>
+                <p class="text-[10px] text-slate-500 leading-relaxed">
+                  Tap <b>Enroll Owner</b> once. On pay, unlock with the same finger / face.
+                </p>
+                <div class="pt-1 flex items-center justify-between border-t border-slate-200/60 dark:border-slate-800/60 gap-2">
+                  <span id="biometricStatusBadge" class="text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20">
+                    Not enrolled
+                  </span>
                   <button
                     type="button"
-                    onclick="testBiometricAuth()"
-                    class="w-full text-[11px] font-bold text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 py-2 rounded-xl flex items-center justify-center gap-1.5 active:scale-95"
+                    onclick="enrollBiometricsInSettings()"
+                    class="text-[11px] font-bold text-white bg-indigo-600 hover:bg-indigo-500 px-2.5 py-1.5 rounded-xl flex items-center gap-1 active:scale-95 transition-all"
                   >
-                    <i class="fa-solid fa-shield-halved"></i> Test Owner Scan
+                    <i class="fa-solid fa-fingerprint"></i> Enroll Owner
                   </button>
                 </div>
+                <button
+                  type="button"
+                  onclick="testBiometricAuth()"
+                  class="w-full text-[11px] font-bold text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 py-2 rounded-xl flex items-center justify-center gap-1.5 active:scale-95"
+                >
+                  <i class="fa-solid fa-shield-halved"></i> Test Owner Scan
+                </button>
               </div>
             </div>
 

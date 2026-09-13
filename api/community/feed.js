@@ -188,7 +188,18 @@ module.exports = async function handler(req, res) {
             if (!parent.replies.some((r) => r.id === c.id)) parent.replies.push(c);
           }
         } else if (!p.comments.some((x) => x.id === c.id)) {
-          p.comments.push({ ...c, replies: c.replies || [] });
+          p.comments.push({
+            ...c,
+            voiceData: c.voiceData || "",
+            voice: !!(c.voice || c.voiceData),
+            replies: c.replies || [],
+          });
+        } else {
+          const i = p.comments.findIndex((x) => x.id === c.id);
+          if (i >= 0 && c.voiceData && !p.comments[i].voiceData) {
+            p.comments[i].voiceData = c.voiceData;
+            p.comments[i].voice = true;
+          }
         }
         store.posts = pruneOld(store.posts);
         store.updatedAt = Date.now();

@@ -2601,6 +2601,7 @@ function loadSecuritySettings() {
     if (configBox) configBox.classList.toggle("hidden", !securitySettings.enabled);
     if (getStoredWebAuthnCredentialId()) securitySettings.bioEnrolled = true;
     updateBiometricStatusBadge();
+    // Biometric card is always visible in Security settings
   } catch (e) {}
 }
 
@@ -2711,16 +2712,15 @@ function requireSecurityAuth(onSuccess, mode) {
   const modal = document.getElementById("securityLockModal");
   if (modal) modal.classList.remove("hidden");
 
-  // Prefer owner biometrics when enabled + enrolled (WebAuthn / Telegram / demo)
-  if (
-    securitySettings.useBiometrics &&
-    (securitySettings.bioEnrolled ||
-      getStoredWebAuthnCredentialId() ||
-      (tgApp && tgApp.BiometricManager))
-  ) {
+  // Prefer owner biometrics when enabled + enrolled
+  if (securitySettings.useBiometrics && isOwnerBiometricsEnrolled()) {
     try {
       triggerBiometricScan();
     } catch (e) {}
+  } else if (securitySettings.useBiometrics && !isOwnerBiometricsEnrolled()) {
+    // Show PIN pad; fingerprint key still available after enroll
+    const sub = document.getElementById("securityLockSubtitle");
+    if (sub) sub.textContent = "Enter PIN or enroll fingerprint in Settings";
   }
 }
 
@@ -3747,6 +3747,7 @@ function initApp() {
   loadGatewaySettings();
   try { bindGatewayAutoSave(); } catch (e) {}
   loadSecuritySettings();
+  try { updateBiometricStatusBadge(); } catch (e) {}
   loadAppPreferences();
   showSettingsSection("gateway");
   updateFullCodes();
@@ -3878,10 +3879,23 @@ function mergePosts(a, b) {
       if (!comments.some((x) => x.id === c.id)) comments.push(c);
       else {
         const i = comments.findIndex((x) => x.id === c.id);
-        const merged = { ...comments[i], ...c };
+        const merged = {
+          ...comments[i],
+          ...c,
+          voiceData: c.voiceData || comments[i].voiceData || "",
+          voice: !!(c.voice || comments[i].voice || c.voiceData || comments[i].voiceData),
+        };
         const replies = [...(comments[i].replies || [])];
         (c.replies || []).forEach((r) => {
           if (!replies.some((x) => x.id === r.id)) replies.push(r);
+          else {
+            const ri = replies.findIndex((x) => x.id === r.id);
+            replies[ri] = {
+              ...replies[ri],
+              ...r,
+              voiceData: r.voiceData || replies[ri].voiceData || "",
+            };
+          }
         });
         merged.replies = replies;
         comments[i] = merged;
@@ -4475,32 +4489,89 @@ function renderCommentList() {
 }
 
 function playVoiceComment(id) {
-  const src = window._voiceMap && window._voiceMap[id];
-  if (!src) return;
+  window._voiceMap = window._voiceMap || {};
+  // Resolve audio from map or live posts cache
+  let src = window._voiceMap[id];
+  if (!src) {
+    const posts = loadCommunityPosts();
+    for (const p of posts) {
+      for (const c of p.comments || []) {
+        if (c.id === id && c.voiceData) src = c.voiceData;
+        for (const r of c.replies || []) {
+          if (r.id === id && r.voiceData) src = r.voiceData;
+        }
+      }
+    }
+    if (src) window._voiceMap[id] = src;
+  }
+  if (!src) {
+    showToast("Voice audio not available on this device", true);
+    return;
+  }
   try {
     if (_activeAudio) {
-      _activeAudio.pause();
+      try {
+        _activeAudio.pause();
+      } catch (e) {}
       _activeAudio = null;
     }
   } catch (e) {}
-  const audio = new Audio(src);
+
+  // PC-friendly: prefer blob URL from base64 for better codec support
+  let playUrl = src;
+  try {
+    if (String(src).startsWith("data:")) {
+      const m = /^data:([^;]+);base64,(.+)$/s.exec(src);
+      if (m) {
+        const mime = m[1] || "audio/webm";
+        const bin = atob(m[2]);
+        const arr = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+        const blob = new Blob([arr], { type: mime });
+        playUrl = URL.createObjectURL(blob);
+      }
+    }
+  } catch (e) {
+    playUrl = src;
+  }
+
+  const audio = new Audio();
+  audio.preload = "auto";
+  audio.src = playUrl;
   _activeAudio = audio;
   const icon = document.getElementById("voicePlayIcon_" + id);
   const timeEl = document.getElementById("voiceTime_" + id);
   const bar = document.getElementById("voiceBar_" + id);
   if (icon) icon.className = "fa-solid fa-pause text-xs";
+
   audio.ontimeupdate = () => {
     const cur = audio.currentTime || 0;
     const dur = audio.duration && isFinite(audio.duration) ? audio.duration : 0;
-    if (timeEl) timeEl.textContent = formatAudioTime(cur) + " / " + formatAudioTime(dur || 0);
+    if (timeEl)
+      timeEl.textContent =
+        formatAudioTime(cur) + " / " + formatAudioTime(dur || 0);
     if (bar && dur) bar.style.width = Math.min(100, (cur / dur) * 100) + "%";
   };
   audio.onended = () => {
     if (icon) icon.className = "fa-solid fa-play text-xs";
     if (bar) bar.style.width = "0%";
     _activeAudio = null;
+    try {
+      if (playUrl && playUrl.startsWith("blob:")) URL.revokeObjectURL(playUrl);
+    } catch (e) {}
   };
-  audio.play().catch(() => showToast("Could not play voice", true));
+  audio.onerror = () => {
+    if (icon) icon.className = "fa-solid fa-play text-xs";
+    showToast("Could not play this voice note on PC", true);
+  };
+  const run = audio.play();
+  if (run && typeof run.catch === "function") {
+    run.catch((err) => {
+      log("voice play: " + (err && err.message));
+      showToast("Click again to play voice", true);
+      if (icon) icon.className = "fa-solid fa-play text-xs";
+    });
+  }
 }
 
 function startReply(commentId, author) {
@@ -4565,12 +4636,16 @@ async function submitComment() {
   renderCommunityFeed();
   showToast("Comment shared");
 
+  const voicePayload =
+    baseComment.voiceData && String(baseComment.voiceData).length < 1200000
+      ? baseComment.voiceData
+      : "";
   await pushCommunityAction({
     action: "addComment",
     postId: p.id,
     comment: {
       ...baseComment,
-      voiceData: undefined, // keep payload small for server
+      voiceData: voicePayload || undefined,
       voice: !!baseComment.voice,
       postAuthor: p.author,
       postCaption: p.caption,
