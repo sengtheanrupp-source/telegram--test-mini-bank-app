@@ -5017,12 +5017,15 @@ setInterval(() => {
 
 
 
-/* ===== SCREEN SHARE (phone → mini app for team demo) ===== */
+/* ===== SCREEN SHARE / LIVE DEMO (works in Telegram Android & iOS WebView) ===== */
 let _ssPeer = null;
 let _ssCall = null;
 let _ssStream = null;
 let _ssRole = null; // 'host' | 'viewer'
 let _ssRoomId = null;
+let _ssConns = []; // data connections for app-UI mirror
+let _ssFrameTimer = null;
+let _ssMode = null; // 'display' | 'mirror'
 
 function _ssRandomCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -5038,96 +5041,303 @@ function _ssSetStatus(msg) {
 
 function _ssShowVideo(stream) {
   const video = document.getElementById("ssVideo");
+  const img = document.getElementById("ssMirrorImg");
   const ph = document.getElementById("ssPlaceholder");
-  if (!video) return;
-  video.srcObject = stream;
-  video.classList.remove("hidden");
+  if (img) img.classList.add("hidden");
+  if (video) {
+    video.srcObject = stream;
+    video.classList.remove("hidden");
+    video.play().catch(() => {});
+  }
   if (ph) ph.classList.add("hidden");
-  video.play().catch(() => {});
 }
 
-function _ssHideVideo() {
+function _ssShowMirrorFrame(dataUrl) {
   const video = document.getElementById("ssVideo");
+  const img = document.getElementById("ssMirrorImg");
   const ph = document.getElementById("ssPlaceholder");
   if (video) {
     video.srcObject = null;
     video.classList.add("hidden");
   }
+  if (img && dataUrl) {
+    img.src = dataUrl;
+    img.classList.remove("hidden");
+  }
+  if (ph) ph.classList.add("hidden");
+}
+
+function _ssHideVideo() {
+  const video = document.getElementById("ssVideo");
+  const img = document.getElementById("ssMirrorImg");
+  const ph = document.getElementById("ssPlaceholder");
+  if (video) {
+    video.srcObject = null;
+    video.classList.add("hidden");
+  }
+  if (img) {
+    img.removeAttribute("src");
+    img.classList.add("hidden");
+  }
   if (ph) ph.classList.remove("hidden");
 }
 
+function _ssCanDisplayMedia() {
+  try {
+    return !!(navigator.mediaDevices && typeof navigator.mediaDevices.getDisplayMedia === "function");
+  } catch (e) {
+    return false;
+  }
+}
+
+function _ssPeerConfig() {
+  return {
+    debug: 1,
+    config: {
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+      ],
+    },
+  };
+}
+
+function _ssShowRoomUI(room) {
+  const roomBox = document.getElementById("ssRoomBox");
+  const joinBox = document.getElementById("ssJoinBox");
+  const codeEl = document.getElementById("ssRoomCode");
+  const stopBtn = document.getElementById("ssStopBtn");
+  if (roomBox) roomBox.classList.remove("hidden");
+  if (joinBox) joinBox.classList.add("hidden");
+  if (codeEl) codeEl.textContent = room;
+  if (stopBtn) stopBtn.classList.remove("hidden");
+}
+
+/** Capture mini-app viewport as JPEG (works inside Telegram WebView on Android & iOS) */
+async function _ssCaptureAppFrame() {
+  if (typeof html2canvas !== "function") return null;
+  try {
+    const target =
+      document.querySelector("main") ||
+      document.getElementById("appRoot") ||
+      document.body;
+    // Hide floating controls that clutter the demo frame
+    const hideEls = [
+      document.getElementById("voiceCmdFab"),
+      document.getElementById("voiceYesNoSheet"),
+    ].filter(Boolean);
+    const prev = hideEls.map((el) => el.style.visibility);
+    hideEls.forEach((el) => {
+      el.style.visibility = "hidden";
+    });
+    const canvas = await html2canvas(target, {
+      scale: Math.min(0.6, 540 / Math.max(window.innerWidth, 320)),
+      useCORS: true,
+      allowTaint: true,
+      backgroundColor: "#f8fafc",
+      logging: false,
+      foreignObjectRendering: false,
+      imageTimeout: 2000,
+      width: target.clientWidth || window.innerWidth,
+      height: Math.min(
+        target.scrollHeight || window.innerHeight,
+        Math.max(window.innerHeight, 640),
+      ),
+      windowWidth: window.innerWidth,
+      windowHeight: window.innerHeight,
+      ignoreElements: (el) => {
+        if (!el || !el.id) return false;
+        return el.id === "voiceCmdFab" || el.id === "voiceYesNoSheet" || el.id === "ssStopBtn";
+      },
+    });
+    hideEls.forEach((el, i) => {
+      el.style.visibility = prev[i] || "";
+    });
+    return canvas.toDataURL("image/jpeg", 0.5);
+  } catch (e) {
+    log("ss capture: " + (e && e.message));
+    return null;
+  }
+}
+
+function _ssBroadcastFrame(dataUrl) {
+  if (!dataUrl || !_ssConns.length) return;
+  const payload = JSON.stringify({ t: "frame", d: dataUrl });
+  // PeerJS data channel can struggle with huge messages; keep JPEG small
+  _ssConns.forEach((c) => {
+    try {
+      if (c && c.open) c.send(payload);
+    } catch (e) {}
+  });
+}
+
+function _ssStartFrameLoop() {
+  _ssStopFrameLoop();
+  const tick = async () => {
+    if (_ssRole !== "host" || _ssMode !== "mirror") return;
+    const frame = await _ssCaptureAppFrame();
+    if (frame) {
+      _ssShowMirrorFrame(frame); // local preview for host
+      _ssBroadcastFrame(frame);
+    }
+    _ssFrameTimer = setTimeout(tick, 900);
+  };
+  tick();
+}
+
+function _ssStopFrameLoop() {
+  if (_ssFrameTimer) {
+    clearTimeout(_ssFrameTimer);
+    _ssFrameTimer = null;
+  }
+}
+
+function _ssHandleViewerData(raw) {
+  try {
+    const msg = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (!msg || !msg.t) return;
+    if (msg.t === "frame" && msg.d) {
+      _ssShowMirrorFrame(msg.d);
+      _ssSetStatus("Live demo — viewing host mini app");
+    } else if (msg.t === "nav" && msg.viewId) {
+      // optional: soft follow host navigation when not on screenShareView
+    }
+  } catch (e) {}
+}
+
+function _ssIsMobileOrTelegram() {
+  try {
+    const ua = navigator.userAgent || "";
+    const mobile = /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
+    const tg = !!(window.Telegram && window.Telegram.WebApp);
+    // Telegram WebView blocks getDisplayMedia on Android & iOS
+    return mobile || tg;
+  } catch (e) {
+    return true;
+  }
+}
+
+/**
+ * Host: On Telegram Android/iOS use Live App Mirror (html2canvas frames).
+ * On desktop Chrome try OS screen share, else same mirror fallback.
+ * Never shows "not supported" — always has a working path.
+ */
 async function startScreenShareHost() {
   try {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
-      showToast("Screen share not supported on this device", true);
-      return;
-    }
     if (typeof Peer === "undefined") {
-      showToast("PeerJS not loaded — check network", true);
+      showToast("Network error — PeerJS not loaded. Check internet.", true);
       return;
     }
 
     stopScreenShare();
-
-    const stream = await navigator.mediaDevices.getDisplayMedia({
-      video: { frameRate: 15, width: { ideal: 720 }, height: { ideal: 1280 } },
-      audio: false,
-    });
-    _ssStream = stream;
     _ssRole = "host";
-    _ssShowVideo(stream);
-
-    stream.getVideoTracks()[0].onended = () => stopScreenShare();
 
     const room = _ssRandomCode();
     _ssRoomId = room;
+    _ssShowRoomUI(room);
 
-    const roomBox = document.getElementById("ssRoomBox");
-    const joinBox = document.getElementById("ssJoinBox");
-    const codeEl = document.getElementById("ssRoomCode");
-    const stopBtn = document.getElementById("ssStopBtn");
-    if (roomBox) roomBox.classList.remove("hidden");
-    if (joinBox) joinBox.classList.add("hidden");
-    if (codeEl) codeEl.textContent = room;
-    if (stopBtn) stopBtn.classList.remove("hidden");
+    const tryOsScreen = _ssCanDisplayMedia() && !_ssIsMobileOrTelegram();
 
-    _ssPeer = new Peer("bankss-" + room, {
-      debug: 1,
-      config: {
-        iceServers: [
-          { urls: "stun:stun.l.google.com:19302" },
-          { urls: "stun:stun1.l.google.com:19302" },
-        ],
-      },
+    if (tryOsScreen) {
+      try {
+        const stream = await navigator.mediaDevices.getDisplayMedia({
+          video: { frameRate: 12, width: { ideal: 720 }, height: { ideal: 1280 } },
+          audio: false,
+        });
+        _ssStream = stream;
+        _ssMode = "display";
+        _ssShowVideo(stream);
+        stream.getVideoTracks()[0].onended = () => stopScreenShare();
+
+        _ssPeer = new Peer("bankss-" + room, _ssPeerConfig());
+        _ssPeer.on("open", () => {
+          _ssSetStatus("OS screen sharing · Room " + room);
+          showToast("Room " + room + " — share code with team");
+        });
+        _ssPeer.on("call", (call) => {
+          _ssCall = call;
+          call.answer(_ssStream);
+          _ssSetStatus("Viewer connected (OS screen)");
+          showToast("Viewer joined");
+          call.on("close", () => _ssSetStatus("Viewer left — still sharing"));
+        });
+        _ssPeer.on("connection", (conn) => {
+          _ssConns.push(conn);
+        });
+        _ssPeer.on("error", (err) => {
+          log("Peer host error: " + (err && err.type));
+          if (err && err.type === "unavailable-id") {
+            stopScreenShare();
+            setTimeout(startScreenShareHost, 400);
+          } else {
+            showToast("Share error: " + (err && err.type) + " — try again", true);
+          }
+        });
+        return;
+      } catch (dispErr) {
+        log("getDisplayMedia failed, mirror fallback: " + (dispErr && dispErr.message));
+      }
+    }
+
+    // —— Live App Mirror (Telegram Android & iOS + all devices) ——
+    if (typeof html2canvas !== "function") {
+      showToast("Loading tools… please wait 2s and tap Start demo again", true);
+      return;
+    }
+
+    _ssMode = "mirror";
+    _ssPeer = new Peer("bankss-" + room, _ssPeerConfig());
+
+    _ssPeer.on("open", () => {
+      _ssSetStatus("Demo live · Room " + room + " — send code to team");
+      showToast("Room " + room + " — share code with team");
+      log("Screen mirror host open: bankss-" + room);
+      _ssStartFrameLoop();
     });
 
-    _ssPeer.on("open", (id) => {
-      _ssSetStatus("Sharing… Room " + room + " — send code to team");
-      showToast("Room " + room + " — share code with team");
-      log("Screen share host open: " + id);
+    _ssPeer.on("connection", (conn) => {
+      _ssConns.push(conn);
+      conn.on("open", () => {
+        _ssSetStatus("Viewer connected · Room " + room);
+        showToast("Viewer joined");
+        _ssCaptureAppFrame().then((f) => {
+          if (f) {
+            try {
+              conn.send(JSON.stringify({ t: "frame", d: f }));
+            } catch (e) {}
+          }
+        });
+      });
+      conn.on("close", () => {
+        _ssConns = _ssConns.filter((c) => c !== conn);
+        _ssSetStatus(_ssConns.length ? "Viewers: " + _ssConns.length : "Waiting for viewers…");
+      });
     });
 
     _ssPeer.on("call", (call) => {
-      _ssCall = call;
-      call.answer(_ssStream);
-      _ssSetStatus("Viewer connected");
-      showToast("Viewer joined");
-      call.on("close", () => _ssSetStatus("Viewer left — still sharing"));
+      try {
+        call.answer(new MediaStream());
+      } catch (e) {
+        try {
+          call.answer();
+        } catch (e2) {}
+      }
     });
 
     _ssPeer.on("error", (err) => {
-      log("Peer host error: " + (err && err.type));
+      log("Peer mirror host error: " + (err && err.type));
       if (err && err.type === "unavailable-id") {
-        // rare collision — retry once
         stopScreenShare();
         setTimeout(startScreenShareHost, 400);
+      } else if (err && err.type === "network") {
+        showToast("Network error — check internet and retry", true);
       } else {
-        showToast("Share error: " + (err && err.type), true);
+        showToast("Demo error: " + (err && err.type) + " — retry", true);
       }
     });
   } catch (e) {
     log("startScreenShareHost: " + (e && e.message));
-    showToast(e && e.message ? e.message : "Could not start screen share", true);
+    showToast("Could not start demo — check internet and retry", true);
     stopScreenShare();
   }
 }
@@ -5147,7 +5357,10 @@ async function connectScreenShareViewer() {
       return;
     }
     const input = document.getElementById("ssJoinInput");
-    const code = (input && input.value ? input.value : "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const code = (input && input.value ? input.value : "")
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "");
     if (code.length < 4) {
       showToast("Enter a valid room code", true);
       return;
@@ -5156,54 +5369,65 @@ async function connectScreenShareViewer() {
     stopScreenShare();
     _ssRole = "viewer";
     _ssRoomId = code;
+    _ssMode = "mirror"; // will upgrade if media stream arrives
 
     const stopBtn = document.getElementById("ssStopBtn");
     if (stopBtn) stopBtn.classList.remove("hidden");
     _ssSetStatus("Connecting to " + code + "…");
 
-    _ssPeer = new Peer(undefined, {
-      debug: 1,
-      config: {
-        iceServers: [
-          { urls: "stun:stun.l.google.com:19302" },
-          { urls: "stun:stun1.l.google.com:19302" },
-        ],
-      },
-    });
+    _ssPeer = new Peer(undefined, _ssPeerConfig());
 
     _ssPeer.on("open", () => {
-      // Receive-only: empty local stream
-      let emptyStream;
+      // 1) Data connection for app-UI mirror (Android/iOS path)
+      const conn = _ssPeer.connect("bankss-" + code, { reliable: true });
+      if (conn) {
+        _ssConns.push(conn);
+        conn.on("open", () => {
+          _ssSetStatus("Connected — waiting for frames…");
+          showToast("Connected to room " + code);
+        });
+        conn.on("data", (data) => _ssHandleViewerData(data));
+        conn.on("close", () => {
+          _ssSetStatus("Host disconnected");
+          _ssHideVideo();
+        });
+      }
+
+      // 2) Also try media call (desktop OS-share path)
       try {
-        emptyStream = new MediaStream();
+        let emptyStream;
+        try {
+          emptyStream = new MediaStream();
+        } catch (e) {
+          emptyStream = null;
+        }
+        const call = _ssPeer.call("bankss-" + code, emptyStream);
+        if (call) {
+          _ssCall = call;
+          call.on("stream", (remote) => {
+            if (remote && remote.getTracks && remote.getTracks().length) {
+              _ssMode = "display";
+              _ssStream = remote;
+              _ssShowVideo(remote);
+              _ssSetStatus("Live — viewing host screen");
+              showToast("Live screen connected");
+            }
+          });
+          call.on("close", () => {
+            if (_ssMode === "display") {
+              _ssSetStatus("Host disconnected");
+              _ssHideVideo();
+            }
+          });
+        }
       } catch (e) {
-        emptyStream = null;
+        log("viewer media call skip: " + (e && e.message));
       }
-      const call = _ssPeer.call("bankss-" + code, emptyStream);
-      if (!call) {
-        showToast("Could not call host — check code", true);
-        return;
-      }
-      _ssCall = call;
-      call.on("stream", (remote) => {
-        _ssStream = remote;
-        _ssShowVideo(remote);
-        _ssSetStatus("Live — viewing phone screen");
-        showToast("Connected — live screen");
-      });
-      call.on("close", () => {
-        _ssSetStatus("Host disconnected");
-        _ssHideVideo();
-      });
-      call.on("error", (err) => {
-        showToast("Call error", true);
-        log("viewer call error: " + err);
-      });
     });
 
     _ssPeer.on("error", (err) => {
       log("Peer viewer error: " + (err && err.type));
-      showToast("Connect failed — is the phone still sharing?", true);
+      showToast("Connect failed — is the phone still hosting?", true);
     });
   } catch (e) {
     showToast(e && e.message ? e.message : "Join failed", true);
@@ -5223,10 +5447,19 @@ function copyScreenShareCode() {
 
 function stopScreenShare() {
   try {
+    _ssStopFrameLoop();
     if (_ssCall) {
-      try { _ssCall.close(); } catch (e) {}
+      try {
+        _ssCall.close();
+      } catch (e) {}
       _ssCall = null;
     }
+    _ssConns.forEach((c) => {
+      try {
+        c.close();
+      } catch (e) {}
+    });
+    _ssConns = [];
     if (_ssStream) {
       try {
         _ssStream.getTracks().forEach((t) => t.stop());
@@ -5234,12 +5467,15 @@ function stopScreenShare() {
       _ssStream = null;
     }
     if (_ssPeer) {
-      try { _ssPeer.destroy(); } catch (e) {}
+      try {
+        _ssPeer.destroy();
+      } catch (e) {}
       _ssPeer = null;
     }
   } catch (e) {}
   _ssRole = null;
   _ssRoomId = null;
+  _ssMode = null;
   _ssHideVideo();
   const roomBox = document.getElementById("ssRoomBox");
   const joinBox = document.getElementById("ssJoinBox");
