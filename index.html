@@ -213,6 +213,69 @@
         -webkit-user-select: text !important;
       }
 
+
+      #ssStage {
+        position: relative;
+        width: 100%;
+        min-height: 55vh;
+        max-height: 70vh;
+        aspect-ratio: 9 / 16;
+        background: #020617;
+        border-radius: 24px;
+        overflow: hidden;
+        border: 1px solid rgba(51, 65, 85, 0.8);
+      }
+      #ssStage.ss-fs-fallback,
+      #ssStage:fullscreen,
+      #ssStage:-webkit-full-screen {
+        position: fixed !important;
+        inset: 0 !important;
+        z-index: 100 !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        max-height: none !important;
+        aspect-ratio: auto !important;
+        border-radius: 0 !important;
+        background: #000 !important;
+      }
+      #ssVideo, #ssMirrorImg {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        background: #020617;
+      }
+      #ssLiveBadge {
+        position: fixed;
+        top: 72px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 70;
+        background: #e11d48;
+        color: #fff;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        padding: 6px 14px;
+        border-radius: 999px;
+        box-shadow: 0 8px 24px rgba(225, 29, 72, 0.45);
+        pointer-events: none;
+      }
+      #ssFullscreenBtn {
+        position: absolute;
+        right: 10px;
+        bottom: 10px;
+        z-index: 5;
+        width: 40px;
+        height: 40px;
+        border-radius: 12px;
+        background: rgba(15, 23, 42, 0.75);
+        color: #fff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid rgba(255,255,255,0.15);
+      }
+
       .khmer-text {
         font-family: "Noto Sans Khmer", "Plus Jakarta Sans", sans-serif;
         line-height: 1.55;
@@ -1427,6 +1490,7 @@
     </div>
 
     <!-- MAIN APP VIEWPORTS CONTAINER -->
+    <div id="ssLiveBadge" class="hidden">LIVE</div>
     <main class="flex-1 max-w-md sm:max-w-xl md:max-w-2xl mx-auto w-full p-4 sm:p-6 pb-28 space-y-5">
       <!-- 1. HOME DASHBOARD VIEW -->
       <section id="homeView" class="space-y-5">
@@ -1669,29 +1733,29 @@
       </section>
 
 
-      <!-- SCREEN SHARE VIEW — phone shares screen into mini app for team demo -->
+      <!-- SCREEN SHARE VIEW — live mini-app demo for team (Android & iOS) -->
       <section id="screenShareView" class="hidden space-y-4">
         <div class="flex justify-between items-center">
           <div>
             <h2 class="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
               <i class="fa-solid fa-share-from-square text-orange-500"></i> Screen Share
             </h2>
-            <p class="text-xs text-slate-400">Share phone screen into this mini app for team demo</p>
+            <p class="text-xs text-slate-400">Live mini-app demo to PC (team walkthrough)</p>
           </div>
-          <button type="button" onclick="stopScreenShare(); navigateToView('homeView');" class="text-xs font-bold text-slate-400 hover:text-slate-600">
+          <button type="button" onclick="navigateToView('homeView');" class="text-xs font-bold text-slate-400 hover:text-slate-600">
             Close
           </button>
         </div>
 
         <div class="bank-card p-4 space-y-3">
-          <p class="text-[11px] font-bold text-slate-500 uppercase tracking-wider">How it works (Android &amp; iOS)</p>
+          <p class="text-[11px] font-bold text-slate-500 uppercase tracking-wider">How to use</p>
           <ol class="text-[11px] text-slate-600 dark:text-slate-300 space-y-1.5 list-decimal list-inside leading-relaxed">
-            <li><b>On phone:</b> Screen → <b>Start demo</b> → copy Room code</li>
-            <li>Send the code to teammates in Telegram</li>
-            <li><b>On PC:</b> Screen → Join room → paste code</li>
-            <li>Team sees your mini app live (payment demo walkthrough)</li>
+            <li><b>Phone:</b> tap <b>Start demo</b> → copy Room code → send to team</li>
+            <li><b>Important:</b> after Start demo, open <b>Home / Pay Bill / Scan</b> on the phone — stay LIVE while you demo</li>
+            <li><b>PC:</b> Screen → Join room → paste code → Connect</li>
+            <li>On PC tap <b>Fullscreen</b> for clear view</li>
           </ol>
-          <p class="text-[10px] text-slate-400 leading-relaxed">Works inside Telegram on Android &amp; iOS (app UI mirror). True OS screen share is blocked by Telegram WebView — use Start demo instead.</p>
+          <p class="text-[10px] text-amber-600 dark:text-amber-400 font-semibold leading-relaxed">Telegram blocks real phone OS screen share. This streams the <b>mini app UI</b> live instead (best for payment demos).</p>
         </div>
 
         <div class="grid grid-cols-2 gap-2.5">
@@ -1706,7 +1770,7 @@
         </div>
 
         <div id="ssRoomBox" class="hidden bank-card p-4 space-y-2">
-          <p class="text-[10px] font-bold text-slate-400 uppercase">Room code</p>
+          <p class="text-[10px] font-bold text-slate-400 uppercase">Room code — send to team</p>
           <div class="flex items-center gap-2">
             <code id="ssRoomCode" class="flex-1 font-num text-lg font-extrabold tracking-widest text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/40 px-3 py-2 rounded-xl text-center">—</code>
             <button type="button" onclick="copyScreenShareCode()" class="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-200">
@@ -1714,24 +1778,28 @@
             </button>
           </div>
           <p id="ssStatus" class="text-[11px] text-slate-500">Waiting for viewers…</p>
+          <p class="text-[10px] text-emerald-600 font-bold">Keep demoing on Home / Pay — stream stays LIVE</p>
         </div>
 
         <div id="ssJoinBox" class="hidden bank-card p-4 space-y-2">
           <label class="text-[10px] font-bold text-slate-400 uppercase">Enter room code from phone</label>
-          <input id="ssJoinInput" type="text" maxlength="12" placeholder="e.g. AB12CD" class="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-3 text-center font-num text-base font-bold tracking-widest uppercase focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          <input id="ssJoinInput" type="text" maxlength="12" placeholder="e.g. AB12CD" class="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-3 text-center font-num text-base font-bold tracking-widest uppercase focus:outline-none focus:ring-2 focus:ring-indigo-500" style="user-select:text;-webkit-user-select:text" />
           <button type="button" onclick="connectScreenShareViewer()" class="bank-btn-primary w-full py-3 text-sm">Connect</button>
         </div>
 
-        <div class="relative w-full aspect-[9/16] max-h-[55vh] bg-slate-950 rounded-3xl overflow-hidden border border-slate-800 flex items-center justify-center">
-          <video id="ssVideo" class="hidden w-full h-full object-contain" autoplay playsinline muted></video>
-          <img id="ssMirrorImg" class="hidden w-full h-full object-contain bg-slate-950" alt="Live demo" />
+        <div id="ssStage" class="flex items-center justify-center">
+          <video id="ssVideo" class="hidden" autoplay playsinline muted></video>
+          <img id="ssMirrorImg" class="hidden" alt="Live demo" />
           <div id="ssPlaceholder" class="text-center p-6 space-y-2">
             <div class="w-14 h-14 bg-orange-500/15 text-orange-500 rounded-2xl flex items-center justify-center mx-auto text-2xl">
               <i class="fa-solid fa-display"></i>
             </div>
             <p class="text-xs font-bold text-slate-200">No stream yet</p>
-            <p class="text-[11px] text-slate-400 max-w-xs">Start demo on phone or join a room from PC to view the live mini app.</p>
+            <p class="text-[11px] text-slate-400 max-w-xs">Start demo on phone, then join from PC. Use Fullscreen for quality.</p>
           </div>
+          <button type="button" id="ssFullscreenBtn" class="hidden" onclick="toggleScreenShareFullscreen()" title="Fullscreen">
+            <i class="fa-solid fa-expand"></i>
+          </button>
         </div>
 
         <button type="button" id="ssStopBtn" onclick="stopScreenShare()" class="hidden w-full py-3 rounded-2xl text-xs font-bold bg-rose-500/15 text-rose-600 dark:text-rose-400">
