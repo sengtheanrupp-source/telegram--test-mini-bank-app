@@ -31,7 +31,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+Khmer:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap"
       rel="stylesheet"
     />
 
@@ -41,7 +41,7 @@
         theme: {
           extend: {
             fontFamily: {
-              sans: ["Plus Jakarta Sans", "ui-sans-serif", "system-ui", "sans-serif"],
+              sans: ["Plus Jakarta Sans", "Noto Sans Khmer", "ui-sans-serif", "system-ui", "sans-serif"],
               num: ["Space Grotesk", "ui-monospace", "monospace"],
             },
             colors: {
@@ -71,11 +71,11 @@
         --bank-surface: #ffffff;
         --bank-muted: #64748b;
         --bank-radius: 20px;
-        --bank-ease: cubic-bezier(0.22, 1, 0.36, 1);
+        --bank-ease: cubic-bezier(0.34, 1.4, 0.64, 1);
       }
       html { scroll-behavior: smooth; }
       body {
-        font-family: "Plus Jakarta Sans", system-ui, sans-serif;
+        font-family: "Plus Jakarta Sans", "Noto Sans Khmer", system-ui, sans-serif;
         user-select: none;
         -webkit-tap-highlight-color: transparent;
         -webkit-font-smoothing: antialiased;
@@ -107,14 +107,14 @@
         border-radius: var(--bank-radius);
         box-shadow: 0 4px 24px -6px rgba(15, 23, 42, 0.07);
         backdrop-filter: blur(12px);
-        transition: transform 0.2s var(--bank-ease), box-shadow 0.2s var(--bank-ease);
+        transition: transform 0.1s var(--bank-ease), box-shadow 0.1s var(--bank-ease);
       }
       .dark .bank-card {
         background: rgba(15, 23, 42, 0.85);
         border-color: rgba(51, 65, 85, 0.7);
         box-shadow: 0 8px 32px -8px rgba(0, 0, 0, 0.45);
       }
-      .bank-card:active { transform: scale(0.985); }
+      .bank-card:active { transform: scale(0.97); }
 
       .bank-btn-primary {
         background: linear-gradient(135deg, #059669 0%, #0d9488 45%, #4f46e5 100%);
@@ -122,11 +122,11 @@
         font-weight: 700;
         border-radius: 16px;
         box-shadow: 0 12px 28px -8px rgba(5, 150, 105, 0.45);
-        transition: transform 0.15s var(--bank-ease), box-shadow 0.15s var(--bank-ease), filter 0.15s;
+        transition: transform 0.08s var(--bank-ease), box-shadow 0.08s var(--bank-ease), filter 0.08s;
       }
       .bank-btn-primary:active {
-        transform: scale(0.97);
-        box-shadow: 0 6px 16px -6px rgba(5, 150, 105, 0.4);
+        transform: scale(0.94);
+        box-shadow: 0 4px 12px -6px rgba(5, 150, 105, 0.35);
       }
       .bank-btn-primary:disabled {
         background: #cbd5e1;
@@ -143,9 +143,9 @@
         color: #0f172a;
         font-weight: 700;
         border-radius: 16px;
-        transition: background 0.15s, transform 0.15s;
+        transition: background 0.08s, transform 0.08s;
       }
-      .bank-btn-secondary:active { transform: scale(0.97); background: #e2e8f0; }
+      .bank-btn-secondary:active { transform: scale(0.94); background: #e2e8f0; }
       .dark .bank-btn-secondary {
         background: #1e293b;
         color: #e2e8f0;
@@ -156,9 +156,9 @@
         border: 1px solid rgba(226, 232, 240, 0.85);
         border-radius: 18px;
         box-shadow: 0 2px 12px -4px rgba(15, 23, 42, 0.06);
-        transition: transform 0.18s var(--bank-ease), border-color 0.18s, box-shadow 0.18s;
+        transition: transform 0.08s var(--bank-ease), border-color 0.08s, box-shadow 0.08s;
       }
-      .quick-tile:active { transform: scale(0.96); }
+      .quick-tile:active { transform: scale(0.92); }
       .quick-tile:hover {
         border-color: rgba(99, 102, 241, 0.45);
         box-shadow: 0 8px 24px -8px rgba(79, 70, 229, 0.25);
@@ -177,13 +177,79 @@
         font-size: 1.05rem;
         background: linear-gradient(145deg, #eef2ff, #e0e7ff);
         color: #4f46e5;
-        transition: transform 0.2s var(--bank-ease);
+        transition: transform 0.1s var(--bank-ease);
       }
       .dark .quick-icon {
         background: linear-gradient(145deg, rgba(79, 70, 229, 0.25), rgba(99, 102, 241, 0.12));
         color: #a5b4fc;
       }
       .quick-tile:hover .quick-icon { transform: scale(1.08); }
+
+
+      /* Snappy social/game-like tap feedback */
+      button, .quick-tile, .bank-card, .nav-fab, .pin-key, .settings-menu-item {
+        -webkit-tap-highlight-color: transparent;
+        touch-action: manipulation;
+      }
+      button:active, .settings-menu-item:active {
+        transform: scale(0.94);
+        transition: transform 0.06s cubic-bezier(0.34, 1.4, 0.64, 1);
+      }
+
+      .khmer-text {
+        font-family: "Noto Sans Khmer", "Plus Jakarta Sans", sans-serif;
+        line-height: 1.55;
+      }
+      .bi-label-km {
+        display: block;
+        font-weight: 700;
+        font-family: "Noto Sans Khmer", sans-serif;
+        line-height: 1.3;
+      }
+      .bi-label-en {
+        display: block;
+        font-size: 9px;
+        font-weight: 600;
+        opacity: 0.55;
+        letter-spacing: 0.02em;
+        margin-top: 1px;
+      }
+
+      /* Voice confirm Yes/No sheet */
+      #voiceYesNoSheet {
+        position: fixed; inset: 0; z-index: 80;
+        display: flex; align-items: flex-end; justify-content: center;
+        background: rgba(2, 6, 23, 0.55);
+        backdrop-filter: blur(8px);
+        padding: 16px;
+      }
+      #voiceYesNoSheet.hidden { display: none !important; }
+      .voice-yn-card {
+        width: 100%; max-width: 400px;
+        background: #fff;
+        border-radius: 24px;
+        padding: 20px 18px 18px;
+        box-shadow: 0 24px 60px -12px rgba(0,0,0,0.35);
+        animation: ynSlideUp 0.22s cubic-bezier(0.34, 1.4, 0.64, 1);
+      }
+      .dark .voice-yn-card { background: #0f172a; border: 1px solid rgba(51,65,85,0.7); }
+      @keyframes ynSlideUp {
+        from { transform: translateY(40px) scale(0.96); opacity: 0; }
+        to { transform: translateY(0) scale(1); opacity: 1; }
+      }
+      .voice-yn-btn {
+        flex: 1; padding: 14px 12px; border-radius: 16px; font-weight: 800;
+        font-size: 15px; transition: transform 0.08s var(--bank-ease), filter 0.08s;
+      }
+      .voice-yn-btn:active { transform: scale(0.93); }
+      .voice-yn-yes {
+        background: linear-gradient(135deg, #059669, #0d9488);
+        color: #fff; box-shadow: 0 10px 24px -8px rgba(5,150,105,0.45);
+      }
+      .voice-yn-no {
+        background: #f1f5f9; color: #0f172a;
+      }
+      .dark .voice-yn-no { background: #1e293b; color: #e2e8f0; }
 
       .voice-session-sheet {
         border-radius: 24px 24px 0 0;
@@ -1396,57 +1462,74 @@
 
         <!-- Main menus only -->
         <div>
-          <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2.5 px-0.5">Main menu</p>
+          <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2.5 px-0.5">
+            <span class="khmer-text">ម៉ឺនុយដើម</span> · Main menu
+          </p>
           <div class="grid grid-cols-4 gap-2.5">
-            <button onclick="triggerInstantQRScan()" class="quick-tile p-3 flex flex-col items-center gap-2">
+            <button onclick="triggerInstantQRScan()" class="quick-tile p-3 flex flex-col items-center gap-1.5">
               <div class="quick-icon"><i class="fa-solid fa-qrcode"></i></div>
-              <span class="text-[10px] font-bold text-slate-700 dark:text-slate-200">Scan QR</span>
+              <span class="text-center leading-tight">
+                <span class="bi-label-km text-[10px] text-slate-700 dark:text-slate-200">ស្កេន QR</span>
+                <span class="bi-label-en text-slate-500">Scan QR</span>
+              </span>
             </button>
-            <button onclick="openPayBillMenu()" class="quick-tile p-3 flex flex-col items-center gap-2">
+            <button onclick="openPayBillMenu()" class="quick-tile p-3 flex flex-col items-center gap-1.5">
               <div class="quick-icon" style="background:linear-gradient(145deg,#ecfdf5,#d1fae5);color:#059669">
                 <i class="fa-solid fa-receipt"></i>
               </div>
-              <span class="text-[10px] font-bold text-slate-700 dark:text-slate-200">Pay Bill</span>
+              <span class="text-center leading-tight">
+                <span class="bi-label-km text-[10px] text-slate-700 dark:text-slate-200">បង់វិក្កយបត្រ</span>
+                <span class="bi-label-en text-slate-500">Pay Bill</span>
+              </span>
             </button>
-            <button onclick="navigateToView('imageScanView')" class="quick-tile p-3 flex flex-col items-center gap-2">
+            <button onclick="navigateToView('imageScanView')" class="quick-tile p-3 flex flex-col items-center gap-1.5">
               <div class="quick-icon" style="background:linear-gradient(145deg,#fff7ed,#ffedd5);color:#ea580c">
-                <i class="fa-solid fa-image"></i>
+                <i class="fa-solid fa-display"></i>
               </div>
-              <span class="text-[10px] font-bold text-slate-700 dark:text-slate-200">Upload QR</span>
+              <span class="text-center leading-tight">
+                <span class="bi-label-km text-[10px] text-slate-700 dark:text-slate-200">អេក្រង់</span>
+                <span class="bi-label-en text-slate-500">Screen</span>
+              </span>
             </button>
-            <button onclick="openPostView()" class="quick-tile p-3 flex flex-col items-center gap-2">
+            <button onclick="openPostView()" class="quick-tile p-3 flex flex-col items-center gap-1.5">
               <div class="relative">
                 <div class="quick-icon" style="background:linear-gradient(145deg,#fdf2f8,#fce7f3);color:#db2777">
                   <i class="fa-solid fa-clapperboard"></i>
                 </div>
                 <span id="postHomeBadge" class="hidden absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-bold leading-4 text-center z-10">0</span>
               </div>
-              <span class="text-[10px] font-bold text-slate-700 dark:text-slate-200">Post</span>
+              <span class="text-center leading-tight">
+                <span class="bi-label-km text-[10px] text-slate-700 dark:text-slate-200">ប៉ុស្តិ៍</span>
+                <span class="bi-label-en text-slate-500">Post</span>
+              </span>
             </button>
-            <button data-menu-deeplink onclick="openDeeplinkViewManually()" class="hidden quick-tile p-3 flex flex-col items-center gap-2">
+            <button data-menu-deeplink onclick="openDeeplinkViewManually()" class="hidden quick-tile p-3 flex flex-col items-center gap-1.5">
               <div class="quick-icon" style="background:linear-gradient(145deg,#f5f3ff,#ede9fe);color:#7c3aed">
                 <i class="fa-solid fa-link"></i>
               </div>
-              <span class="text-[10px] font-bold text-slate-700 dark:text-slate-200">Deeplink</span>
+              <span class="text-center leading-tight">
+                <span class="bi-label-km text-[10px] text-slate-700 dark:text-slate-200">តំណភ្ជាប់</span>
+                <span class="bi-label-en text-slate-500">Deeplink</span>
+              </span>
             </button>
           </div>
         </div>
 
-        <button onclick="triggerInstantQRScan()" class="bank-btn-primary w-full py-4 text-sm flex items-center justify-center gap-2.5">
-          <i class="fa-solid fa-qrcode text-base"></i>
-          Scan KHQR &amp; Pay Instantly
+        <button onclick="triggerInstantQRScan()" class="bank-btn-primary w-full py-4 text-sm flex flex-col items-center justify-center gap-0.5">
+          <span class="flex items-center gap-2.5"><i class="fa-solid fa-qrcode text-base"></i><span class="khmer-text">ស្កេន KHQR &amp; បង់ភ្លាមៗ</span></span>
+          <span class="text-[10px] font-semibold opacity-80">Scan KHQR &amp; Pay Instantly</span>
         </button>
 
         <div class="grid grid-cols-2 gap-2.5">
-          <button onclick="openPayBillMenu()" class="bank-card p-4 text-left active:scale-[0.98] transition-transform">
+          <button onclick="openPayBillMenu()" class="bank-card p-4 text-left active:scale-[0.97] transition-transform">
             <i class="fa-solid fa-file-invoice-dollar text-emerald-500 mb-2"></i>
-            <p class="text-xs font-extrabold text-slate-800 dark:text-white">Pay bills</p>
-            <p class="text-[10px] text-slate-400 mt-0.5">General &amp; utility</p>
+            <p class="text-xs font-extrabold text-slate-800 dark:text-white khmer-text">បង់វិក្កយបត្រ</p>
+            <p class="text-[10px] text-slate-400 mt-0.5">Pay bills · General &amp; utility</p>
           </button>
-          <button onclick="openPostView()" class="bank-card p-4 text-left active:scale-[0.98] transition-transform">
+          <button onclick="openPostView()" class="bank-card p-4 text-left active:scale-[0.97] transition-transform">
             <i class="fa-solid fa-photo-film text-pink-500 mb-2"></i>
-            <p class="text-xs font-extrabold text-slate-800 dark:text-white">Community</p>
-            <p class="text-[10px] text-slate-400 mt-0.5">Photos, video &amp; react</p>
+            <p class="text-xs font-extrabold text-slate-800 dark:text-white khmer-text">សហគមន៍</p>
+            <p class="text-[10px] text-slate-400 mt-0.5">Community · Photos &amp; video</p>
           </button>
         </div>
       </section>
@@ -1586,8 +1669,9 @@
             <h2
               class="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2"
             >
-              <i class="fa-solid fa-image text-indigo-500"></i> Image &amp;
-              Screen KHQR Scanner
+              <i class="fa-solid fa-display text-indigo-500"></i>
+              <span class="khmer-text">អេក្រង់ &amp; រូបភាព</span>
+              <span class="text-[11px] font-semibold text-slate-400">Screen &amp; Image</span>
             </h2>
             <p class="text-xs text-slate-400">
               Upload screenshot or snip screen area to detect KHQR
@@ -2211,7 +2295,7 @@ System ready...</pre
         </button>
         <button id="tab-btn-billpay" onclick="openPayBillMenu()" class="flex flex-col items-center justify-center gap-0.5 py-2.5 text-slate-400">
           <i class="fa-solid fa-receipt text-[17px]"></i>
-          <span class="text-[9px] font-bold">Pay Bills</span>
+          <span class="text-[9px] font-bold leading-tight text-center"><span class="khmer-text block">បង់វិក្ក</span><span class="opacity-60 text-[8px]">Pay Bills</span></span>
         </button>
         <button id="tab-btn-camera" onclick="triggerInstantQRScan()" class="flex flex-col items-center justify-center gap-0.5 py-1.5 text-white" aria-label="Scan QR">
           <span class="nav-fab"><i class="fa-solid fa-qrcode"></i></span>
@@ -2611,7 +2695,7 @@ System ready...</pre
     <div id="createPostModal" class="hidden fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-950/60 backdrop-blur-sm p-0 sm:p-4">
       <div class="bg-white dark:bg-slate-900 w-full max-w-sm rounded-t-3xl sm:rounded-3xl p-5 shadow-2xl space-y-3 max-h-[90vh] overflow-y-auto">
         <h3 class="text-sm font-extrabold text-slate-900 dark:text-white">New post</h3>
-        <textarea id="postCaptionInput" rows="4" placeholder="Write your post…" class="w-full rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-3 text-sm font-bold text-slate-900 dark:text-white leading-relaxed focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+        <textarea id="postCaptionInput" rows="4" lang="km" dir="auto" placeholder="សរសេរប៉ុស្តិ៍… / Write your post…" class="w-full rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-3 text-sm font-bold text-slate-900 dark:text-white leading-relaxed focus:outline-none focus:ring-2 focus:ring-indigo-500 khmer-text" style="font-family: 'Noto Sans Khmer', 'Plus Jakarta Sans', sans-serif;"></textarea>
         <label class="bank-btn-secondary w-full py-3 text-xs flex items-center justify-center gap-2 cursor-pointer">
           <i class="fa-solid fa-image"></i> Photo or video (optional)
           <input type="file" accept="image/*,video/*" class="hidden" onchange="handlePostMediaPick(event)" />
@@ -2634,7 +2718,7 @@ System ready...</pre
         <div class="space-y-2 border-t border-slate-100 dark:border-slate-800 pt-2">
           <p id="replyHint" class="hidden text-[11px] text-indigo-600 font-bold"></p>
           <div class="flex gap-2 items-center">
-            <input id="commentInput" type="text" placeholder="Write a comment…" class="flex-1 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-3 text-sm font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            <input id="commentInput" type="text" lang="km" dir="auto" placeholder="សរសេរមតិ… / Write a comment…" class="flex-1 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-3 text-sm font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 khmer-text" style="font-family: 'Noto Sans Khmer', 'Plus Jakarta Sans', sans-serif;" />
             <button type="button" id="voiceCommentBtn" onclick="toggleVoiceComment()" class="w-11 h-11 rounded-full bg-slate-100 dark:bg-slate-800 text-rose-500 flex items-center justify-center shrink-0" title="Voice"><i class="fa-solid fa-microphone"></i></button>
             <button type="button" onclick="submitComment()" class="bank-btn-primary px-4 py-3 text-sm font-bold shrink-0">Send</button>
           </div>
@@ -2697,5 +2781,33 @@ System ready...</pre
         </div>
       </div>
     </div>
-</body>
+
+    <!-- Voice system Yes/No confirm (បាទ / ទេ) for Pay Bills, KHQR, Deeplink -->
+    <div id="voiceYesNoSheet" class="hidden">
+      <div class="voice-yn-card">
+        <div class="flex items-start gap-3 mb-4">
+          <div class="w-11 h-11 rounded-2xl bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 flex items-center justify-center text-lg shrink-0">
+            <i class="fa-solid fa-microphone-lines"></i>
+          </div>
+          <div class="min-w-0 flex-1">
+            <p id="voiceYnTitleKm" class="khmer-text text-sm font-extrabold text-slate-900 dark:text-white leading-snug">តើអ្នកចង់បន្តទេ?</p>
+            <p id="voiceYnTitleEn" class="text-[11px] font-semibold text-slate-400 mt-0.5">Do you want to continue?</p>
+            <p id="voiceYnDetail" class="text-[11px] text-slate-500 dark:text-slate-400 mt-2 leading-relaxed"></p>
+          </div>
+        </div>
+        <div class="flex gap-2.5">
+          <button type="button" id="voiceYnNoBtn" onclick="answerVoiceYesNo(false)" class="voice-yn-btn voice-yn-no">
+            <span class="khmer-text block">ទេ</span>
+            <span class="text-[10px] font-semibold opacity-70">No</span>
+          </button>
+          <button type="button" id="voiceYnYesBtn" onclick="answerVoiceYesNo(true)" class="voice-yn-btn voice-yn-yes">
+            <span class="khmer-text block">បាទ</span>
+            <span class="text-[10px] font-semibold opacity-80">Yes</span>
+          </button>
+        </div>
+        <p class="text-[10px] text-center text-slate-400 mt-3">System voice · សំឡេងប្រព័ន្ធ (Male)</p>
+      </div>
+    </div>
+
+  </body>
 </html>

@@ -602,6 +602,13 @@ function navigateToReturnUrlSameTabAndClose(dest) {
    to the full manual lookup-form UI in case a previous deeplink session
    left the compact auto-confirm card showing. */
 function openDeeplinkViewManually() {
+  // System voice ask for deeplink confirm flow (user can still use UI)
+  if (appPreferences.voiceConfirm) {
+    setTimeout(() => {
+      try { promptDeeplinkVoiceConfirm(); } catch (e) {}
+    }, 600);
+  }
+
   hideDeeplinkLoading();
   // Clear deeplink session so Done button just closes (no return_url redirect)
   workflowState.link_token = "";
@@ -1015,6 +1022,18 @@ function closeKHQRModal() {
 }
 
 async function submitQRConfirm() {
+  // System voice + បាទ/ទេ before KHQR pay when voice confirm enabled
+  if (appPreferences.voiceConfirm && !window._skipVoiceYn) {
+    const yes = await askVoiceYesNo({
+      context: "khqr",
+      titleKm: "ស្កេនរួចហើយ — តើអ្នកចង់បង់ទេ?",
+      titleEn: "Scanned — Pay now?",
+      detail: "បាទ = Scan and click Pay  ·  ទេ = Cancel",
+      speakText: "ស្កេន KHQR រួចហើយ។ តើអ្នកចង់បង់ទេ? សូមជ្រើស បាទ ឬ ទេ។",
+      speakEn: "KHQR ready. Tap Yes to pay, or No to cancel.",
+    });
+    if (!yes) return;
+  }
   // Require PIN / Biometric when security lock is enabled
   requireSecurityAuth(() => {
     submitQRConfirmAfterAuth();
@@ -2173,7 +2192,15 @@ function toggleBillsMenuSetting() {
 }
 
 /* Pay Bill → choose General (prefix from gateway) or Utility */
-function openPayBillMenu() {
+async function openPayBillMenu() {
+  // System voice + បាទ/ទេ: Inquiry only vs Inquiry & Pay
+  if (appPreferences.voiceConfirm) {
+    try {
+      await promptPayBillVoiceOptions();
+    } catch (e) {
+      log("paybill voice options: " + (e && e.message));
+    }
+  }
   const showGen = appPreferences.showGeneralBills !== false;
   const showUtil = appPreferences.showUtilityBills !== false;
   if (showGen && !showUtil) {
@@ -4330,7 +4357,7 @@ function renderCommunityFeed() {
           : "") +
         "</div>" +
         (p.caption
-          ? '<p class="px-3.5 pb-2 text-sm font-bold text-slate-800 dark:text-slate-100 whitespace-pre-wrap leading-relaxed">' +
+          ? '<p class="px-3.5 pb-2 text-sm font-bold text-slate-800 dark:text-slate-100 whitespace-pre-wrap leading-relaxed khmer-text" lang="km" dir="auto" style="font-family:\'Noto Sans Khmer\',\'Plus Jakarta Sans\',sans-serif">' +
             escapeHtml(p.caption) +
             "</p>"
           : "") +
@@ -4547,7 +4574,7 @@ function renderVoiceBubble(c) {
       : "") +
     "</span></button>" +
     (c.text
-      ? '<p class="text-[12px] font-bold text-slate-700 dark:text-slate-200 mt-1">' +
+      ? '<p class="text-[12px] font-bold text-slate-700 dark:text-slate-200 mt-1 khmer-text" lang="km" dir="auto" style="font-family:\'Noto Sans Khmer\',sans-serif">' +
         escapeHtml(c.text) +
         "</p>"
       : "")
@@ -4637,7 +4664,7 @@ function renderCommentList() {
         "</span></p>" +
         (c.voiceData || c.voice
           ? renderVoiceBubble(c)
-          : '<p class="text-sm font-bold text-slate-900 dark:text-slate-100 mt-0.5">' +
+          : '<p class="text-sm font-bold text-slate-900 dark:text-slate-100 mt-0.5 khmer-text" lang="km" dir="auto" style="font-family:\'Noto Sans Khmer\',sans-serif">' +
             escapeHtml(c.text || "") +
             "</p>") +
         '<button type="button" onclick="startReply(\'' +
@@ -4980,6 +5007,215 @@ setInterval(() => {
     syncCommunityFeedFromServer().then(() => updatePostBadges());
   } catch (e) {}
 }, 20000);
+
+
+
+/* ===== SYSTEM VOICE + បាទ/ទេ BUTTON CONFIRM (Pay Bills / KHQR / Deeplink) ===== */
+let _voiceYnResolve = null;
+let _voiceYnContext = null;
+
+/**
+ * Ask user with system voice (male) + show បាទ / ទេ buttons.
+ * context: 'paybill_inquiry' | 'paybill_full' | 'khqr' | 'deeplink'
+ * Returns Promise<boolean>
+ */
+function askVoiceYesNo(opts) {
+  opts = opts || {};
+  const titleKm = opts.titleKm || "តើអ្នកចង់បន្តទេ?";
+  const titleEn = opts.titleEn || "Do you want to continue?";
+  const detail = opts.detail || "";
+  const speakText = opts.speakText || titleKm;
+  const speakEn = opts.speakEn || titleEn;
+
+  return new Promise((resolve) => {
+    _voiceYnResolve = resolve;
+    _voiceYnContext = opts.context || null;
+
+    const sheet = document.getElementById("voiceYesNoSheet");
+    const kmEl = document.getElementById("voiceYnTitleKm");
+    const enEl = document.getElementById("voiceYnTitleEn");
+    const detEl = document.getElementById("voiceYnDetail");
+    if (kmEl) kmEl.textContent = titleKm;
+    if (enEl) enEl.textContent = titleEn;
+    if (detEl) detEl.textContent = detail;
+    if (sheet) sheet.classList.remove("hidden");
+
+    // System voice: Khmer first (male preference), then optional EN
+    (async () => {
+      try {
+        unlockAudioEngine();
+        await speakSystemMale(speakText, "km-KH");
+        // Brief pause then EN under
+        await new Promise((r) => setTimeout(r, 350));
+        if (speakEn) await speakSystemMale(speakEn, "en-US");
+      } catch (e) {
+        log("askVoiceYesNo speak: " + (e && e.message));
+      }
+    })();
+  });
+}
+
+function answerVoiceYesNo(yes) {
+  const sheet = document.getElementById("voiceYesNoSheet");
+  if (sheet) sheet.classList.add("hidden");
+  const resolve = _voiceYnResolve;
+  const ctx = _voiceYnContext;
+  _voiceYnResolve = null;
+  _voiceYnContext = null;
+  if (typeof resolve === "function") resolve(!!yes);
+  if (yes) {
+    showToast("បាទ · Confirmed");
+  } else {
+    showToast("ទេ · Cancelled");
+  }
+  log("VoiceYesNo answer=" + yes + " ctx=" + ctx);
+}
+
+/** Speak with preferred male system voice (Khmer or English) */
+async function speakSystemMale(text, lang) {
+  if (!text) return;
+  lang = lang || "km-KH";
+  const isKm = String(lang).toLowerCase().startsWith("km");
+
+  if (isKm) {
+    try {
+      await speakKhmerAudioFallback(text);
+      return;
+    } catch (e) {}
+  }
+
+  if (!("speechSynthesis" in window)) return;
+  return new Promise((resolve) => {
+    try {
+      window.speechSynthesis.cancel();
+      const voices = window.speechSynthesis.getVoices() || [];
+      const langPrefix = String(lang).toLowerCase().slice(0, 2);
+      let voice =
+        voices.find(
+          (v) =>
+            v.lang &&
+            v.lang.toLowerCase().startsWith(langPrefix) &&
+            /male|man|david|mark|daniel|alex|fred|thomas|google.*english.*us|microsoft.*david|microsoft.*mark/i.test(
+              v.name,
+            ),
+        ) ||
+        voices.find(
+          (v) => v.lang && v.lang.toLowerCase().startsWith(langPrefix),
+        ) ||
+        null;
+
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = lang;
+      if (voice) u.voice = voice;
+      // Male-ish: slightly lower pitch
+      u.pitch = 0.9;
+      u.rate = isKm ? 0.95 : 1.0;
+      u.volume = 1;
+      u.onend = () => resolve();
+      u.onerror = () => resolve();
+      window.speechSynthesis.speak(u);
+      // Safety timeout
+      setTimeout(resolve, Math.min(12000, 800 + text.length * 80));
+    } catch (e) {
+      resolve();
+    }
+  });
+}
+
+/**
+ * Prompt before KHQR pay: បាទ = Scan and click Pay
+ */
+async function promptKHQRVoiceConfirmThenPay() {
+  const yes = await askVoiceYesNo({
+    context: "khqr",
+    titleKm: "ស្កេនរួចហើយ — តើអ្នកចង់បង់ទេ?",
+    titleEn: "Scanned — do you want to Pay?",
+    detail: "បាទ = Scan and click Pay  ·  ទេ = Cancel",
+    speakText: "ស្កេនរួចហើយ។ តើអ្នកចង់បង់ទេ? សូមជ្រើស បាទ ឬ ទេ។",
+    speakEn: "KHQR scanned. Say or tap Yes to pay, or No to cancel.",
+  });
+  if (yes) {
+    // Auto proceed to confirm (same as clicking Pay)
+    if (typeof submitQRConfirm === "function") submitQRConfirm();
+  }
+}
+
+/**
+ * Prompt for Pay Bills: Inquiry only OR Inquiry + Pay
+ */
+async function promptPayBillVoiceOptions() {
+  // First: ask if Inquiry only
+  const inquiryOnly = await askVoiceYesNo({
+    context: "paybill_inquiry",
+    titleKm: "បង់វិក្កយបត្រ — Inquiry តែប៉ុណ្ណោះ?",
+    titleEn: "Pay Bills — Inquiry only?",
+    detail: "បាទ = Inquiry only  ·  ទេ = បន្តជ្រើស Inquiry & បង់",
+    speakText: "បង់វិក្កយបត្រ។ តើអ្នកចង់ Inquiry តែប៉ុណ្ណោះទេ? បាទ សម្រាប់ Inquiry តែប៉ុណ្ណោះ។ ទេ សម្រាប់ Inquiry និងបង់វិក្កយបត្រ។",
+    speakEn: "Pay bills. Yes for inquiry only. No for inquiry and pay.",
+  });
+  if (inquiryOnly) {
+    showToast("Inquiry only mode");
+    window._payBillMode = "inquiry_only";
+    return "inquiry_only";
+  }
+  // Second prompt for full pay
+  const full = await askVoiceYesNo({
+    context: "paybill_full",
+    titleKm: "Inquiry & បង់វិក្កយបត្រ?",
+    titleEn: "Inquiry & Pay the bill?",
+    detail: "បាទ = Inquiry + Pay  ·  ទេ = Cancel",
+    speakText: "តើអ្នកចង់ Inquiry និងបង់វិក្កយបត្រទេ? សូមជ្រើស បាទ ឬ ទេ។",
+    speakEn: "Inquiry and pay the bill? Yes or No.",
+  });
+  if (full) {
+    window._payBillMode = "inquiry_and_pay";
+    showToast("Inquiry & Pay mode");
+    return "inquiry_and_pay";
+  }
+  window._payBillMode = null;
+  return null;
+}
+
+/**
+ * Deeplink: system voice asks បាទ/ទេ; if បាទ auto click Confirm & Done
+ */
+async function promptDeeplinkVoiceConfirm() {
+  const yes = await askVoiceYesNo({
+    context: "deeplink",
+    titleKm: "មានការទូទាត់ Deeplink — បញ្ជាក់?",
+    titleEn: "Deeplink payment — Confirm?",
+    detail: "បាទ = Auto Confirm & Done  ·  ទេ = Cancel",
+    speakText: "មានការទូទាត់តាមតំណភ្ជាប់។ តើអ្នកចង់បញ្ជាក់ទេ? សូមជ្រើស បាទ ឬ ទេ។",
+    speakEn: "Deeplink payment ready. Yes to confirm and done, or No to cancel.",
+  });
+  if (yes) {
+    // Auto-click confirm then done if present
+    try {
+      const confirmBtn =
+        document.getElementById("bpConfirmPayBtn") ||
+        document.querySelector("[data-deeplink-confirm]") ||
+        document.querySelector("#singleInputPanel button.bank-btn-primary") ||
+        document.querySelector("#deeplinkConfirmBtn");
+      if (confirmBtn && !confirmBtn.disabled) {
+        confirmBtn.click();
+      } else if (typeof runBillPayConfirm === "function") {
+        runBillPayConfirm();
+      }
+      // Try Done / close after short delay
+      setTimeout(() => {
+        const doneBtn =
+          document.getElementById("paymentDoneBtn") ||
+          document.querySelector("[data-done-btn]") ||
+          document.querySelector("button[onclick*='Done'], button[onclick*='done']");
+        if (doneBtn) doneBtn.click();
+      }, 1200);
+    } catch (e) {
+      log("deeplink auto confirm: " + (e && e.message));
+    }
+  }
+  return yes;
+}
+
 
 /* ===== KHMER VOICE COMMAND (ACLEDA-style) ===== */
 let _voiceCmdRecognition = null;
