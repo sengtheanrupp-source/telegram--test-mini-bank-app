@@ -602,13 +602,7 @@ function navigateToReturnUrlSameTabAndClose(dest) {
    to the full manual lookup-form UI in case a previous deeplink session
    left the compact auto-confirm card showing. */
 function openDeeplinkViewManually() {
-  // System voice ask for deeplink confirm flow (user can still use UI)
-  if (appPreferences.voiceConfirm) {
-    setTimeout(() => {
-      try { promptDeeplinkVoiceConfirm(); } catch (e) {}
-    }, 600);
-  }
-
+  // បាទ/ទេ is shown when user taps Confirm (runSmartPaymentFlow)
   hideDeeplinkLoading();
   // Clear deeplink session so Done button just closes (no return_url redirect)
   workflowState.link_token = "";
@@ -1022,19 +1016,25 @@ function closeKHQRModal() {
 }
 
 async function submitQRConfirm() {
-  // System voice + បាទ/ទេ before KHQR pay when voice confirm enabled
-  if (appPreferences.voiceConfirm && !window._skipVoiceYn) {
-    const yes = await askVoiceYesNo({
+  // បាទ/ទេ only (no voice speak). Skip if already confirmed via sheet onYes.
+  if (!window._skipVoiceYn) {
+    await askVoiceYesNo({
       context: "khqr",
-      titleKm: "ស្កេនរួចហើយ — តើអ្នកចង់បង់ទេ?",
-      titleEn: "Scanned — Pay now?",
-      detail: "បាទ = Scan and click Pay  ·  ទេ = Cancel",
-      speakText: "ស្កេន KHQR រួចហើយ។ តើអ្នកចង់បង់ទេ? សូមជ្រើស បាទ ឬ ទេ។",
-      speakEn: "KHQR ready. Tap Yes to pay, or No to cancel.",
+      titleKm: "តើអ្នកចង់បង់ KHQR ទេ?",
+      titleEn: "Pay this KHQR?",
+      detail: "បាទ = Pay now  ·  ទេ = Cancel",
+      onYes: function () {
+        window._skipVoiceYn = true;
+        requireSecurityAuth(function () {
+          submitQRConfirmAfterAuth();
+        });
+        setTimeout(function () {
+          window._skipVoiceYn = false;
+        }, 500);
+      },
     });
-    if (!yes) return;
+    return; // wait for បាទ / ទេ
   }
-  // Require PIN / Biometric when security lock is enabled
   requireSecurityAuth(() => {
     submitQRConfirmAfterAuth();
   });
@@ -1594,7 +1594,24 @@ async function runBillPayInquiry() {
 }
 
 async function runBillPaySmartFlow() {
-  // Require PIN / Biometric when security lock is enabled
+  if (!window._skipVoiceYn) {
+    await askVoiceYesNo({
+      context: "paybill_pay",
+      titleKm: "តើអ្នកចង់បង់វិក្កយបត្រទេ?",
+      titleEn: "Pay this bill?",
+      detail: "បាទ = Pay now  ·  ទេ = Cancel",
+      onYes: function () {
+        window._skipVoiceYn = true;
+        requireSecurityAuth(function () {
+          runBillPayConfirm();
+        });
+        setTimeout(function () {
+          window._skipVoiceYn = false;
+        }, 500);
+      },
+    });
+    return;
+  }
   requireSecurityAuth(() => {
     runBillPayConfirm();
   });
@@ -1894,17 +1911,29 @@ function populateDeeplinkConfirmCard(customerCodeLabel) {
 }
 
 async function runSmartPaymentFlow() {
-  const accountNo = (document.getElementById("payerAccountNo")?.value || "").trim();
-  if (!accountNo) {
-    showToast("Enter the payer's Account Number to continue.", true);
-    document.getElementById("payerAccountNo")?.focus();
+  if (!window._skipVoiceYn) {
+    await askVoiceYesNo({
+      context: "deeplink_pay",
+      titleKm: "តើអ្នកចង់បញ្ជាក់ការទូទាត់ទេ?",
+      titleEn: "Confirm this payment?",
+      detail: "បាទ = Confirm & pay  ·  ទេ = Cancel",
+      onYes: function () {
+        window._skipVoiceYn = true;
+        requireSecurityAuth(function () {
+          runSmartPaymentFlowAfterAuth();
+        });
+        setTimeout(function () {
+          window._skipVoiceYn = false;
+        }, 500);
+      },
+    });
     return;
   }
-  // Require PIN / Biometric when security lock is enabled
   requireSecurityAuth(() => {
     runSmartPaymentFlowAfterAuth();
   });
 }
+
 
 async function runSmartPaymentFlowAfterAuth() {
   const baseUrl = document.getElementById("baseUrl").value.trim();
@@ -2193,13 +2222,12 @@ function toggleBillsMenuSetting() {
 
 /* Pay Bill → choose General (prefix from gateway) or Utility */
 async function openPayBillMenu() {
-  // System voice + បាទ/ទេ: Inquiry only vs Inquiry & Pay
-  if (appPreferences.voiceConfirm) {
-    try {
-      await promptPayBillVoiceOptions();
-    } catch (e) {
-      log("paybill voice options: " + (e && e.message));
-    }
+  // បាទ/ទេ before opening (no voice speak)
+  try {
+    const mode = await promptPayBillVoiceOptions();
+    if (!mode) return; // user tapped ទេ
+  } catch (e) {
+    log("paybill yesno: " + (e && e.message));
   }
   const showGen = appPreferences.showGeneralBills !== false;
   const showUtil = appPreferences.showUtilityBills !== false;
@@ -5319,44 +5347,56 @@ function toggleScreenShareFullscreen() {
  */
 
 /** Open dedicated host page in external browser (Chrome) for real OS screen share */
+/** Open Chrome host page for entire phone screen (Meet/AnyDesk style) */
 function openRealScreenShareHost() {
   try {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     let room = "";
     for (let i = 0; i < 6; i++) room += chars[Math.floor(Math.random() * chars.length)];
 
-    // Resolve host page URL relative to current mini app origin
     let base = location.href.split("?")[0].split("#")[0];
-    // If app is index.html, host is screen-host.html beside it
-    if (base.endsWith("index.html")) {
+    if (/index\.html$/i.test(base)) {
       base = base.replace(/index\.html$/i, "screen-host.html");
     } else if (base.endsWith("/")) {
       base = base + "screen-host.html";
     } else {
-      // path without trailing file — append
-      const parts = base.split("/");
-      parts[parts.length - 1] = "screen-host.html";
-      base = parts.join("/");
+      // e.g. https://xxx.vercel.app or .../app
+      const u = new URL(base);
+      const path = u.pathname.replace(/\/?$/, "/");
+      // if path ends with a file-like segment without extension, treat as dir
+      if (path.split("/").pop().includes(".")) {
+        u.pathname = path.replace(/[^/]+$/, "screen-host.html");
+      } else {
+        u.pathname = path + "screen-host.html";
+      }
+      base = u.origin + u.pathname;
     }
     const url = base + "?room=" + encodeURIComponent(room) + "&autostart=1";
 
-    // Show code in mini app so user can still copy / tell team
     _ssRoomId = room;
-    _ssShowRoomUI(room);
-    _ssSetStatus("Open Chrome page → allow screen → team joins " + room);
-    showToast("Room " + room + " — allow screen in Chrome");
+    try {
+      _ssShowRoomUI(room);
+      _ssSetStatus(
+        "Chrome: choose Entire screen · Room " +
+          room +
+          " · team Join room here",
+      );
+    } catch (e) {}
+    showToast("Room " + room + " — in Chrome pick Entire screen");
 
     const tg = window.Telegram && window.Telegram.WebApp;
     if (tg && typeof tg.openLink === "function") {
+      // External browser required for getDisplayMedia
       tg.openLink(url, { try_instant_view: false });
     } else {
       window.open(url, "_blank");
     }
   } catch (e) {
-    showToast("Could not open host page", true);
+    showToast("Could not open Chrome host page", true);
     log("openRealScreenShareHost: " + (e && e.message));
   }
 }
+
 
 async function startScreenShareHost() {
   try {
@@ -5627,24 +5667,25 @@ function stopScreenShare() {
 }
 
 
-/* ===== SYSTEM VOICE + បាទ/ទេ BUTTON CONFIRM (Pay Bills / KHQR / Deeplink) ===== */
+/* ===== បាទ / ទេ CONFIRM — button only, then auto-action (no voice required) ===== */
 let _voiceYnResolve = null;
 let _voiceYnContext = null;
+let _voiceYnPendingAction = null; // function to run on បាទ
 
 /**
- * Ask user with system voice (male) + show បាទ / ទេ buttons.
- * context: 'paybill_inquiry' | 'paybill_full' | 'khqr' | 'deeplink'
- * Returns Promise<boolean>
+ * Show បាទ / ទេ sheet. On បាទ runs onYes (if provided) and resolves true.
+ * No TTS / no mic required.
  */
 function askVoiceYesNo(opts) {
   opts = opts || {};
   const titleKm = opts.titleKm || "តើអ្នកចង់បន្តទេ?";
   const titleEn = opts.titleEn || "Do you want to continue?";
-  const detail = opts.detail || "";
+  const detail = opts.detail || "បាទ = Continue  ·  ទេ = Cancel";
 
   return new Promise((resolve) => {
     _voiceYnResolve = resolve;
     _voiceYnContext = opts.context || null;
+    _voiceYnPendingAction = typeof opts.onYes === "function" ? opts.onYes : null;
 
     const sheet = document.getElementById("voiceYesNoSheet");
     const kmEl = document.getElementById("voiceYnTitleKm");
@@ -5654,171 +5695,150 @@ function askVoiceYesNo(opts) {
     if (enEl) enEl.textContent = titleEn;
     if (detEl) detEl.textContent = detail;
     if (sheet) sheet.classList.remove("hidden");
-    // No TTS — user only taps បាទ / ទេ, then auto-action follows
   });
 }
 
 function answerVoiceYesNo(yes) {
   const sheet = document.getElementById("voiceYesNoSheet");
   if (sheet) sheet.classList.add("hidden");
+
   const resolve = _voiceYnResolve;
   const ctx = _voiceYnContext;
+  const action = _voiceYnPendingAction;
   _voiceYnResolve = null;
   _voiceYnContext = null;
-  if (typeof resolve === "function") resolve(!!yes);
+  _voiceYnPendingAction = null;
+
+  log("YesNo answer=" + yes + " ctx=" + ctx);
+
   if (yes) {
     showToast("បាទ · Confirmed");
+    // Auto-run payment action immediately
+    try {
+      if (typeof action === "function") {
+        setTimeout(() => {
+          try {
+            action();
+          } catch (e) {
+            log("YesNo action error: " + (e && e.message));
+          }
+        }, 80);
+      }
+    } catch (e) {
+      log("YesNo action schedule: " + (e && e.message));
+    }
+    if (typeof resolve === "function") resolve(true);
   } else {
     showToast("ទេ · Cancelled");
+    if (typeof resolve === "function") resolve(false);
   }
-  log("VoiceYesNo answer=" + yes + " ctx=" + ctx);
 }
 
-/** Speak with preferred male system voice (Khmer or English) */
-async function speakSystemMale(text, lang) {
-  if (!text) return;
-  lang = lang || "km-KH";
-  const isKm = String(lang).toLowerCase().startsWith("km");
-
-  if (isKm) {
-    try {
-      await speakKhmerAudioFallback(text);
-      return;
-    } catch (e) {}
-  }
-
-  if (!("speechSynthesis" in window)) return;
-  return new Promise((resolve) => {
-    try {
-      window.speechSynthesis.cancel();
-      const voices = window.speechSynthesis.getVoices() || [];
-      const langPrefix = String(lang).toLowerCase().slice(0, 2);
-      let voice =
-        voices.find(
-          (v) =>
-            v.lang &&
-            v.lang.toLowerCase().startsWith(langPrefix) &&
-            /male|man|david|mark|daniel|alex|fred|thomas|google.*english.*us|microsoft.*david|microsoft.*mark/i.test(
-              v.name,
-            ),
-        ) ||
-        voices.find(
-          (v) => v.lang && v.lang.toLowerCase().startsWith(langPrefix),
-        ) ||
-        null;
-
-      const u = new SpeechSynthesisUtterance(text);
-      u.lang = lang;
-      if (voice) u.voice = voice;
-      // Male-ish: slightly lower pitch
-      u.pitch = 0.9;
-      u.rate = isKm ? 0.95 : 1.0;
-      u.volume = 1;
-      u.onend = () => resolve();
-      u.onerror = () => resolve();
-      window.speechSynthesis.speak(u);
-      // Safety timeout
-      setTimeout(resolve, Math.min(12000, 800 + text.length * 80));
-    } catch (e) {
-      resolve();
-    }
-  });
-}
-
-/**
- * Prompt before KHQR pay: បាទ = Scan and click Pay
- */
+/** KHQR: after scan, បាទ = pay now */
 async function promptKHQRVoiceConfirmThenPay() {
-  const yes = await askVoiceYesNo({
+  await askVoiceYesNo({
     context: "khqr",
     titleKm: "ស្កេនរួចហើយ — តើអ្នកចង់បង់ទេ?",
-    titleEn: "Scanned — do you want to Pay?",
-    detail: "បាទ = Scan and click Pay  ·  ទេ = Cancel",
-    speakText: "ស្កេនរួចហើយ។ តើអ្នកចង់បង់ទេ? សូមជ្រើស បាទ ឬ ទេ។",
-    speakEn: "KHQR scanned. Say or tap Yes to pay, or No to cancel.",
+    titleEn: "Scanned — Pay now?",
+    detail: "បាទ = Pay now  ·  ទេ = Cancel",
+    onYes: function () {
+      window._skipVoiceYn = true;
+      try {
+        if (typeof submitQRConfirm === "function") submitQRConfirm();
+      } finally {
+        setTimeout(function () {
+          window._skipVoiceYn = false;
+        }, 500);
+      }
+    },
   });
-  if (yes) {
-    // Auto proceed to confirm (same as clicking Pay)
-    if (typeof submitQRConfirm === "function") submitQRConfirm();
-  }
 }
 
-/**
- * Prompt for Pay Bills: Inquiry only OR Inquiry + Pay
- */
+/** Pay Bills open: optional mode; always continues to menu after បាទ */
 async function promptPayBillVoiceOptions() {
-  // First: ask if Inquiry only
-  const inquiryOnly = await askVoiceYesNo({
-    context: "paybill_inquiry",
-    titleKm: "បង់វិក្កយបត្រ — Inquiry តែប៉ុណ្ណោះ?",
-    titleEn: "Pay Bills — Inquiry only?",
-    detail: "បាទ = Inquiry only  ·  ទេ = បន្តជ្រើស Inquiry & បង់",
-    speakText: "បង់វិក្កយបត្រ។ តើអ្នកចង់ Inquiry តែប៉ុណ្ណោះទេ? បាទ សម្រាប់ Inquiry តែប៉ុណ្ណោះ។ ទេ សម្រាប់ Inquiry និងបង់វិក្កយបត្រ។",
-    speakEn: "Pay bills. Yes for inquiry only. No for inquiry and pay.",
+  const yes = await askVoiceYesNo({
+    context: "paybill",
+    titleKm: "បើកបង់វិក្កយបត្រ?",
+    titleEn: "Open Pay Bills?",
+    detail: "បាទ = Open Pay Bills  ·  ទេ = Cancel",
   });
-  if (inquiryOnly) {
-    showToast("Inquiry only mode");
-    window._payBillMode = "inquiry_only";
-    return "inquiry_only";
-  }
-  // Second prompt for full pay
-  const full = await askVoiceYesNo({
-    context: "paybill_full",
-    titleKm: "Inquiry & បង់វិក្កយបត្រ?",
-    titleEn: "Inquiry & Pay the bill?",
-    detail: "បាទ = Inquiry + Pay  ·  ទេ = Cancel",
-    speakText: "តើអ្នកចង់ Inquiry និងបង់វិក្កយបត្រទេ? សូមជ្រើស បាទ ឬ ទេ។",
-    speakEn: "Inquiry and pay the bill? Yes or No.",
-  });
-  if (full) {
+  if (yes) {
     window._payBillMode = "inquiry_and_pay";
-    showToast("Inquiry & Pay mode");
     return "inquiry_and_pay";
   }
   window._payBillMode = null;
   return null;
 }
 
-/**
- * Deeplink: system voice asks បាទ/ទេ; if បាទ auto click Confirm & Done
- */
+/** Deeplink: បាទ = Confirm payment + Done */
 async function promptDeeplinkVoiceConfirm() {
-  const yes = await askVoiceYesNo({
+  await askVoiceYesNo({
     context: "deeplink",
-    titleKm: "មានការទូទាត់ Deeplink — បញ្ជាក់?",
-    titleEn: "Deeplink payment — Confirm?",
-    detail: "បាទ = Auto Confirm & Done  ·  ទេ = Cancel",
-    speakText: "មានការទូទាត់តាមតំណភ្ជាប់។ តើអ្នកចង់បញ្ជាក់ទេ? សូមជ្រើស បាទ ឬ ទេ។",
-    speakEn: "Deeplink payment ready. Yes to confirm and done, or No to cancel.",
-  });
-  if (yes) {
-    // Auto-click confirm then done if present
-    try {
-      const confirmBtn =
-        document.getElementById("bpConfirmPayBtn") ||
-        document.querySelector("[data-deeplink-confirm]") ||
-        document.querySelector("#singleInputPanel button.bank-btn-primary") ||
-        document.querySelector("#deeplinkConfirmBtn");
-      if (confirmBtn && !confirmBtn.disabled) {
-        confirmBtn.click();
-      } else if (typeof runBillPayConfirm === "function") {
-        runBillPayConfirm();
+    titleKm: "បញ្ជាក់ការទូទាត់ Deeplink?",
+    titleEn: "Confirm Deeplink payment?",
+    detail: "បាទ = Confirm & Done  ·  ទេ = Cancel",
+    onYes: function () {
+      window._skipVoiceYn = true;
+      try {
+        autoConfirmDeeplinkPayment();
+      } finally {
+        setTimeout(function () {
+          window._skipVoiceYn = false;
+        }, 800);
       }
-      // Try Done / close after short delay
-      setTimeout(() => {
-        const doneBtn =
-          document.getElementById("paymentDoneBtn") ||
-          document.querySelector("[data-done-btn]") ||
-          document.querySelector("button[onclick*='Done'], button[onclick*='done']");
-        if (doneBtn) doneBtn.click();
-      }, 1200);
-    } catch (e) {
-      log("deeplink auto confirm: " + (e && e.message));
-    }
-  }
-  return yes;
+    },
+  });
 }
 
+/** Auto-click Confirm (deeplink / payment view) then Done when ready */
+function autoConfirmDeeplinkPayment() {
+  try {
+    const btn =
+      document.getElementById("confirmPayBtn") ||
+      document.getElementById("bpConfirmPayBtn") ||
+      document.querySelector("[data-deeplink-confirm]");
+    if (btn && !btn.disabled) {
+      // Prefer direct function calls over .click() for reliability
+      if (btn.id === "confirmPayBtn" && typeof runSmartPaymentFlowAfterAuth === "function") {
+        requireSecurityAuth(function () {
+          runSmartPaymentFlowAfterAuth();
+        });
+      } else if (btn.id === "bpConfirmPayBtn" && typeof runBillPayConfirm === "function") {
+        requireSecurityAuth(function () {
+          runBillPayConfirm();
+        });
+      } else {
+        btn.click();
+      }
+    } else if (typeof runSmartPaymentFlowAfterAuth === "function" && workflowState.link_token) {
+      requireSecurityAuth(function () {
+        runSmartPaymentFlowAfterAuth();
+      });
+    } else if (typeof runBillPayConfirm === "function") {
+      requireSecurityAuth(function () {
+        runBillPayConfirm();
+      });
+    } else {
+      showToast("Confirm button not ready — complete inquiry first", true);
+      return;
+    }
+
+    // Auto Done after success modal appears
+    setTimeout(function () {
+      const doneBtn =
+        document.getElementById("paymentDoneBtn") ||
+        document.getElementById("successDoneBtn") ||
+        document.querySelector("[data-done-btn]") ||
+        document.querySelector("button[onclick*='closeSuccess'], button[onclick*='Done']");
+      if (doneBtn && doneBtn.offsetParent !== null) {
+        doneBtn.click();
+      }
+    }, 2200);
+  } catch (e) {
+    log("autoConfirmDeeplinkPayment: " + (e && e.message));
+    showToast("Auto confirm failed", true);
+  }
+}
 
 /* ===== KHMER VOICE COMMAND (ACLEDA-style) ===== */
 let _voiceCmdRecognition = null;
