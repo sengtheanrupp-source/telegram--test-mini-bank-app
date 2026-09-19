@@ -5317,6 +5317,47 @@ function toggleScreenShareFullscreen() {
  * Host: mirror mini-app UI to team (works Android/iOS Telegram).
  * Navigate the app while LIVE — stream keeps running.
  */
+
+/** Open dedicated host page in external browser (Chrome) for real OS screen share */
+function openRealScreenShareHost() {
+  try {
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let room = "";
+    for (let i = 0; i < 6; i++) room += chars[Math.floor(Math.random() * chars.length)];
+
+    // Resolve host page URL relative to current mini app origin
+    let base = location.href.split("?")[0].split("#")[0];
+    // If app is index.html, host is screen-host.html beside it
+    if (base.endsWith("index.html")) {
+      base = base.replace(/index\.html$/i, "screen-host.html");
+    } else if (base.endsWith("/")) {
+      base = base + "screen-host.html";
+    } else {
+      // path without trailing file — append
+      const parts = base.split("/");
+      parts[parts.length - 1] = "screen-host.html";
+      base = parts.join("/");
+    }
+    const url = base + "?room=" + encodeURIComponent(room) + "&autostart=1";
+
+    // Show code in mini app so user can still copy / tell team
+    _ssRoomId = room;
+    _ssShowRoomUI(room);
+    _ssSetStatus("Open Chrome page → allow screen → team joins " + room);
+    showToast("Room " + room + " — allow screen in Chrome");
+
+    const tg = window.Telegram && window.Telegram.WebApp;
+    if (tg && typeof tg.openLink === "function") {
+      tg.openLink(url, { try_instant_view: false });
+    } else {
+      window.open(url, "_blank");
+    }
+  } catch (e) {
+    showToast("Could not open host page", true);
+    log("openRealScreenShareHost: " + (e && e.message));
+  }
+}
+
 async function startScreenShareHost() {
   try {
     if (typeof Peer === "undefined") {

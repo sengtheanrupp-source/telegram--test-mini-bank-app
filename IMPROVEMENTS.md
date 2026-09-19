@@ -1,29 +1,22 @@
-# Mini App Improvements (updated)
+# Screen Share (open-source WebRTC)
 
-## Menus — English only
-All main menu labels are English again (Scan QR, Pay Bill, Screen, Post, etc.).
+## Why Telegram alone cannot do AnyDesk-style share
+Telegram Mini App WebView **blocks** `getDisplayMedia` (OS screen capture) on Android & iOS.
+Native apps (AnyDesk, TeamViewer) use MediaProjection / ReplayKit — not available in a web mini app.
 
-## 1. Screen share (phone → mini app for team demo)
-New **Screen** tile on home opens **Screen Share**:
-- **Phone (Host):** Start sharing → pick screen/app → get a 6-letter **Room code**
-- Send the code to teammates in Telegram
-- **PC (Viewer):** Screen → Join room → paste code → **live phone screen** in the mini app
+## Solution (open source)
+Stack: **WebRTC + PeerJS + STUN** (no paid server).
 
-Uses PeerJS + WebRTC (STUN). No extra backend. Good for walkthrough demos to the team.
+### Mode A — Real phone screen (recommended)
+1. In mini app: **Screen → Share real screen**
+2. Opens **Chrome** page `screen-host.html`
+3. User allows **Entire screen**
+4. Team joins same **Room code** inside the mini app (PC)
+5. Live OS screen video (clear, fullscreen on PC)
 
-Still available: Image & screenshot KHQR scanner (link at bottom of Screen Share view).
+### Mode B — Mini-app UI demo (inside Telegram)
+Streams only the payment mini app UI (html2canvas + WebRTC). Good for payment flow walkthrough without leaving Telegram.
 
-## 2. Post & Comment — Khmer still supported
-Noto Sans Khmer font; captions/comments accept Khmer text (inputs keep Khmer placeholders + font).
-
-## 3. បាទ / ទេ only — no voice
-- Confirmation is **button-only** (no TTS / no spoken prompts).
-- AI-style ask sheet with **បាទ** and **ទេ**.
-- On **បាទ**, the app continues the action (KHQR pay, Pay Bills mode, Deeplink confirm).
-- On **ទេ**, cancels.
-
-## 4. Snappier button animation
-Faster active/scale feedback (less sticky web feel).
-
-## Deploy
-Same static / Vercel deploy. PeerJS loads from CDN (`unpkg.com/peerjs`).
+## Files
+- `screen-host.html` — host page for real OS share (open in Chrome)
+- `index.html` / `app.js` — viewer + mini-app demo + room join

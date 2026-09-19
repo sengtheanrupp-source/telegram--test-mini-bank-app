@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Screen Share Host — Payment App</title>
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh;
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #0b1220; color: #e2e8f0;
+      display: flex; flex-direction: column; align-items: center;
+      padding: 20px 16px 40px;
+    }
+    h1 { font-size: 1.25rem; margin: 0 0 6px; }
+    .sub { color: #94a3b8; font-size: 0.85rem; margin-bottom: 20px; text-align: center; max-width: 360px; line-height: 1.45; }
+    .card {
+      width: 100%; max-width: 400px; background: #111827;
+      border: 1px solid #1e293b; border-radius: 20px; padding: 20px;
+    }
+    .code {
+      font-size: 1.75rem; font-weight: 800; letter-spacing: 0.2em;
+      text-align: center; color: #818cf8; background: #1e1b4b;
+      padding: 14px; border-radius: 14px; margin: 12px 0;
+    }
+    button {
+      width: 100%; border: 0; border-radius: 14px; padding: 14px;
+      font-weight: 700; font-size: 0.95rem; cursor: pointer; margin-top: 10px;
+    }
+    .primary { background: linear-gradient(135deg,#059669,#4f46e5); color: #fff; }
+    .danger { background: #be123c; color: #fff; }
+    .ghost { background: #1e293b; color: #cbd5e1; }
+    #status { font-size: 0.8rem; color: #94a3b8; margin-top: 12px; text-align: center; min-height: 1.2em; }
+    #preview {
+      width: 100%; max-width: 400px; margin-top: 16px; border-radius: 16px;
+      background: #020617; aspect-ratio: 9/16; max-height: 45vh;
+      object-fit: contain; display: none; border: 1px solid #1e293b;
+    }
+    .ok { color: #34d399; }
+    .err { color: #fb7185; }
+    .steps { font-size: 0.78rem; color: #64748b; line-height: 1.5; margin-top: 14px; }
+  </style>
+</head>
+<body>
+  <h1>📡 Real screen share</h1>
+  <p class="sub">Share your <b>phone screen</b> (like AnyDesk) to teammates in the Telegram mini app. Use <b>Chrome</b> on Android for best results.</p>
+
+  <div class="card">
+    <div style="font-size:0.7rem;font-weight:700;color:#64748b;letter-spacing:0.08em">ROOM CODE</div>
+    <div class="code" id="roomCode">······</div>
+    <button class="ghost" type="button" onclick="copyCode()">Copy code</button>
+    <button class="primary" type="button" id="btnStart" onclick="startShare()">Start phone screen share</button>
+    <button class="danger" type="button" id="btnStop" style="display:none" onclick="stopShare()">Stop sharing</button>
+    <p id="status">Tap Start, then pick <b>Entire screen</b> in the system dialog.</p>
+    <p class="steps">
+      1. Tap Start → allow screen capture<br/>
+      2. Send Room code to team in Telegram<br/>
+      3. Team: mini app → Screen → Join room<br/>
+      4. Keep this Chrome tab open while demoing
+    </p>
+  </div>
+  <video id="preview" muted autoplay playsinline></video>
+
+<script>
+const qs = new URLSearchParams(location.search);
+let room = (qs.get("room") || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+if (room.length < 4) {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  room = "";
+  for (let i = 0; i < 6; i++) room += chars[Math.floor(Math.random() * chars.length)];
+}
+document.getElementById("roomCode").textContent = room;
+
+let peer = null, stream = null, calls = [];
+
+function setStatus(msg, cls) {
+  const el = document.getElementById("status");
+  el.textContent = msg;
+  el.className = cls || "";
+}
+
+function copyCode() {
+  navigator.clipboard.writeText(room).then(() => setStatus("Code copied: " + room, "ok")).catch(() => setStatus(room));
+}
+
+function peerConfig() {
+  return {
+    debug: 1,
+    config: {
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "stun:stun2.l.google.com:19302" },
+      ],
+    },
+  };
+}
+
+async function startShare() {
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      setStatus("This browser cannot share screen. Open in Chrome.", "err");
+      return;
+    }
+    stopShare(true);
+    setStatus("Choose Entire screen / this device…");
+
+    stream = await navigator.mediaDevices.getDisplayMedia({
+      video: {
+        frameRate: { ideal: 15, max: 30 },
+        width: { ideal: 1280, max: 1920 },
+        height: { ideal: 720, max: 1920 },
+      },
+      audio: false,
+    });
+
+    const preview = document.getElementById("preview");
+    preview.srcObject = stream;
+    preview.style.display = "block";
+    preview.play().catch(() => {});
+
+    stream.getVideoTracks()[0].onended = () => stopShare();
+
+    peer = new Peer("bankss-" + room, peerConfig());
+    peer.on("open", () => {
+      setStatus("LIVE · Room " + room + " — viewers can join now", "ok");
+      document.getElementById("btnStart").style.display = "none";
+      document.getElementById("btnStop").style.display = "block";
+    });
+    peer.on("call", (call) => {
+      calls.push(call);
+      call.answer(stream);
+      setStatus("Viewer connected · Room " + room, "ok");
+      call.on("close", () => {
+        calls = calls.filter((c) => c !== call);
+        setStatus(calls.length ? "Viewers: " + calls.length : "LIVE · waiting for viewers…", "ok");
+      });
+    });
+    // Data channel hello for mini-app viewers that only open data first
+    peer.on("connection", (conn) => {
+      conn.on("open", () => {
+        try { conn.send(JSON.stringify({ t: "meta", mode: "os", room })); } catch (e) {}
+      });
+    });
+    peer.on("error", (err) => {
+      setStatus("Error: " + (err && err.type) + " — try again", "err");
+      if (err && err.type === "unavailable-id") {
+        stopShare(true);
+        setTimeout(startShare, 400);
+      }
+    });
+  } catch (e) {
+    setStatus((e && e.message) || "Share cancelled / not allowed", "err");
+    stopShare(true);
+  }
+}
+
+function stopShare(silent) {
+  calls.forEach((c) => { try { c.close(); } catch (e) {} });
+  calls = [];
+  if (stream) {
+    try { stream.getTracks().forEach((t) => t.stop()); } catch (e) {}
+    stream = null;
+  }
+  if (peer) {
+    try { peer.destroy(); } catch (e) {}
+    peer = null;
+  }
+  const preview = document.getElementById("preview");
+  preview.srcObject = null;
+  preview.style.display = "none";
+  document.getElementById("btnStart").style.display = "block";
+  document.getElementById("btnStop").style.display = "none";
+  if (!silent) setStatus("Stopped");
+}
+
+// Auto-start if ?autostart=1
+if (qs.get("autostart") === "1") {
+  setTimeout(() => startShare(), 500);
+}
+</script>
+</body>
+</html>
