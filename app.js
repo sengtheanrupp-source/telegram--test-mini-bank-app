@@ -5348,6 +5348,7 @@ function toggleScreenShareFullscreen() {
 
 /** Open dedicated host page in external browser (Chrome) for real OS screen share */
 /** Open Chrome host page for entire phone screen (Meet/AnyDesk style) */
+/** Open host page in REAL Chrome (Android Intent) for entire screen share */
 function openRealScreenShareHost() {
   try {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -5360,39 +5361,75 @@ function openRealScreenShareHost() {
     } else if (base.endsWith("/")) {
       base = base + "screen-host.html";
     } else {
-      // e.g. https://xxx.vercel.app or .../app
-      const u = new URL(base);
-      const path = u.pathname.replace(/\/?$/, "/");
-      // if path ends with a file-like segment without extension, treat as dir
-      if (path.split("/").pop().includes(".")) {
-        u.pathname = path.replace(/[^/]+$/, "screen-host.html");
-      } else {
-        u.pathname = path + "screen-host.html";
+      try {
+        const u = new URL(base);
+        const segs = u.pathname.split("/").filter(Boolean);
+        if (segs.length && segs[segs.length - 1].includes(".")) {
+          segs[segs.length - 1] = "screen-host.html";
+        } else {
+          segs.push("screen-host.html");
+        }
+        u.pathname = "/" + segs.join("/");
+        base = u.origin + u.pathname;
+      } catch (e) {
+        base = base.replace(/\/?$/, "/") + "screen-host.html";
       }
-      base = u.origin + u.pathname;
     }
-    const url = base + "?room=" + encodeURIComponent(room) + "&autostart=1";
+    const url = base + "?room=" + encodeURIComponent(room);
 
     _ssRoomId = room;
     try {
       _ssShowRoomUI(room);
-      _ssSetStatus(
-        "Chrome: choose Entire screen · Room " +
-          room +
-          " · team Join room here",
-      );
+      _ssSetStatus("Room " + room + " — open in Chrome, then Share entire screen");
     } catch (e) {}
-    showToast("Room " + room + " — in Chrome pick Entire screen");
 
+    // Copy URL always (fallback if Intent fails)
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url);
+      }
+    } catch (e) {}
+
+    showToast("Room " + room + " · opening Chrome…");
+
+    const isAndroid = /Android/i.test(navigator.userAgent || "");
     const tg = window.Telegram && window.Telegram.WebApp;
+
+    if (isAndroid) {
+      // Force Google Chrome app (not Telegram in-app browser)
+      try {
+        const u = new URL(url);
+        const intent =
+          "intent://" +
+          u.host +
+          u.pathname +
+          u.search +
+          "#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=" +
+          encodeURIComponent(url) +
+          ";end";
+        // Prefer Intent so getDisplayMedia works
+        location.href = intent;
+        // Also try Telegram openLink as secondary
+        setTimeout(function () {
+          if (tg && typeof tg.openLink === "function") {
+            try {
+              tg.openLink(url, { try_instant_view: false });
+            } catch (e) {}
+          }
+        }, 800);
+        return;
+      } catch (e) {
+        log("chrome intent failed: " + (e && e.message));
+      }
+    }
+
     if (tg && typeof tg.openLink === "function") {
-      // External browser required for getDisplayMedia
       tg.openLink(url, { try_instant_view: false });
     } else {
       window.open(url, "_blank");
     }
   } catch (e) {
-    showToast("Could not open Chrome host page", true);
+    showToast("Could not open host page — copy URL from Screen", true);
     log("openRealScreenShareHost: " + (e && e.message));
   }
 }
