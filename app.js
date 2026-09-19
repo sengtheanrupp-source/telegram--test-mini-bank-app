@@ -1016,22 +1016,11 @@ function closeKHQRModal() {
 }
 
 async function submitQRConfirm() {
-  if (window._skipVoiceYn) {
-    requireSecurityAuth(function () { submitQRConfirmAfterAuth(); });
-    return;
-  }
-  askVoiceYesNo({
-    context: "khqr",
-    titleKm: "តើអ្នកចង់បង់ KHQR ទេ?",
-    titleEn: "Pay this KHQR?",
-    detail: "បាទ = Pay now  ·  ទេ = Cancel",
-    onYes: function () {
-      window._skipVoiceYn = true;
-      requireSecurityAuth(function () { submitQRConfirmAfterAuth(); });
-      setTimeout(function () { window._skipVoiceYn = false; }, 1000);
-    },
+  requireSecurityAuth(function () {
+    submitQRConfirmAfterAuth();
   });
 }
+
 
 
 async function submitQRConfirmAfterAuth() {
@@ -1588,22 +1577,11 @@ async function runBillPayInquiry() {
 }
 
 async function runBillPaySmartFlow() {
-  if (window._skipVoiceYn) {
-    requireSecurityAuth(function () { runBillPayConfirm(); });
-    return;
-  }
-  askVoiceYesNo({
-    context: "paybill_pay",
-    titleKm: "តើអ្នកចង់បង់វិក្កយបត្រទេ?",
-    titleEn: "Pay this bill?",
-    detail: "បាទ = Pay now  ·  ទេ = Cancel",
-    onYes: function () {
-      window._skipVoiceYn = true;
-      requireSecurityAuth(function () { runBillPayConfirm(); });
-      setTimeout(function () { window._skipVoiceYn = false; }, 1000);
-    },
+  requireSecurityAuth(function () {
+    runBillPayConfirm();
   });
 }
+
 
 
 async function runBillPayConfirm() {
@@ -1900,22 +1878,11 @@ function populateDeeplinkConfirmCard(customerCodeLabel) {
 }
 
 async function runSmartPaymentFlow() {
-  if (window._skipVoiceYn) {
-    requireSecurityAuth(function () { runSmartPaymentFlowAfterAuth(); });
-    return;
-  }
-  askVoiceYesNo({
-    context: "deeplink_pay",
-    titleKm: "តើអ្នកចង់បញ្ជាក់ការទូទាត់ទេ?",
-    titleEn: "Confirm this payment?",
-    detail: "បាទ = Confirm & pay  ·  ទេ = Cancel",
-    onYes: function () {
-      window._skipVoiceYn = true;
-      requireSecurityAuth(function () { runSmartPaymentFlowAfterAuth(); });
-      setTimeout(function () { window._skipVoiceYn = false; }, 1000);
-    },
+  requireSecurityAuth(function () {
+    runSmartPaymentFlowAfterAuth();
   });
 }
+
 
 
 
@@ -2206,13 +2173,6 @@ function toggleBillsMenuSetting() {
 
 /* Pay Bill → choose General (prefix from gateway) or Utility */
 async function openPayBillMenu() {
-  // បាទ/ទេ before opening (no voice speak)
-  try {
-    const mode = await promptPayBillVoiceOptions();
-    if (!mode) return; // user tapped ទេ
-  } catch (e) {
-    log("paybill yesno: " + (e && e.message));
-  }
   const showGen = appPreferences.showGeneralBills !== false;
   const showUtil = appPreferences.showUtilityBills !== false;
   if (showGen && !showUtil) {
@@ -5746,30 +5706,24 @@ let _voiceYnPendingAction = null; // function to run on បាទ
  * No TTS / no mic required.
  */
 function askVoiceYesNo(opts) {
+  // Popup removed — auto-accept and run onYes if provided
   opts = opts || {};
-  const titleKm = opts.titleKm || "តើអ្នកចង់បន្តទេ?";
-  const titleEn = opts.titleEn || "Do you want to continue?";
-  const detail = opts.detail || "បាទ = Continue  ·  ទេ = Cancel";
-
   return new Promise((resolve) => {
-    _voiceYnResolve = resolve;
-    _voiceYnContext = opts.context || null;
-    _voiceYnPendingAction = typeof opts.onYes === "function" ? opts.onYes : null;
-
-    const sheet = document.getElementById("voiceYesNoSheet");
-    const kmEl = document.getElementById("voiceYnTitleKm");
-    const enEl = document.getElementById("voiceYnTitleEn");
-    const detEl = document.getElementById("voiceYnDetail");
-    if (kmEl) kmEl.textContent = titleKm;
-    if (enEl) enEl.textContent = titleEn;
-    if (detEl) detEl.textContent = detail;
-    if (sheet) sheet.classList.remove("hidden");
+    try {
+      if (typeof opts.onYes === "function") {
+        setTimeout(function () {
+          try { opts.onYes(); } catch (e) { log("onYes: " + (e && e.message)); }
+        }, 0);
+      }
+    } catch (e) {}
+    resolve(true);
   });
 }
 
 function answerVoiceYesNo(yes) {
   const sheet = document.getElementById("voiceYesNoSheet");
   if (sheet) sheet.classList.add("hidden");
+  // sheet disabled — no AI ask
 
   const resolve = _voiceYnResolve;
   const ctx = _voiceYnContext;
