@@ -10,7 +10,6 @@
 
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <!-- PeerJS + html2canvas for phone → PC screen share (works in Telegram WebView) -->
     <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 
@@ -146,9 +145,9 @@
         color: #0f172a;
         font-weight: 700;
         border-radius: 16px;
-        transition: background 0.08s, transform 0.08s;
+        transition: background 0.15s, transform 0.15s;
       }
-      .bank-btn-secondary:active { transform: scale(0.94); background: #e2e8f0; }
+      .bank-btn-secondary:active { transform: scale(0.97); background: #e2e8f0; }
       .dark .bank-btn-secondary {
         background: #1e293b;
         color: #e2e8f0;
@@ -180,7 +179,7 @@
         font-size: 1.05rem;
         background: linear-gradient(145deg, #eef2ff, #e0e7ff);
         color: #4f46e5;
-        transition: transform 0.1s var(--bank-ease);
+        transition: transform 0.2s var(--bank-ease);
       }
       .dark .quick-icon {
         background: linear-gradient(145deg, rgba(79, 70, 229, 0.25), rgba(99, 102, 241, 0.12));
@@ -189,147 +188,41 @@
       .quick-tile:hover .quick-icon { transform: scale(1.08); }
 
 
-      /* Snappy social/game-like tap feedback */
       button, .quick-tile, .bank-card, .nav-fab, .pin-key, .settings-menu-item {
         -webkit-tap-highlight-color: transparent;
         touch-action: manipulation;
       }
-      button:active, .settings-menu-item:active {
-        transform: scale(0.94);
-        transition: transform 0.06s cubic-bezier(0.34, 1.4, 0.64, 1);
-      }
-
-
-      /* Allow typing (Khmer + EN) — body has user-select:none */
       input, textarea, [contenteditable="true"] {
         user-select: text !important;
         -webkit-user-select: text !important;
-        -webkit-touch-callout: default;
-        touch-action: manipulation;
         font-family: "Noto Sans Khmer", "Plus Jakarta Sans", system-ui, sans-serif !important;
       }
-      input:focus, textarea:focus {
-        user-select: text !important;
-        -webkit-user-select: text !important;
-      }
-
-
-      #ssStage {
-        position: relative;
-        width: 100%;
-        min-height: 55vh;
-        max-height: 70vh;
-        aspect-ratio: 9 / 16;
-        background: #020617;
-        border-radius: 24px;
-        overflow: hidden;
-        border: 1px solid rgba(51, 65, 85, 0.8);
-      }
-      #ssStage.ss-fs-fallback,
-      #ssStage:fullscreen,
-      #ssStage:-webkit-full-screen {
-        position: fixed !important;
-        inset: 0 !important;
-        z-index: 100 !important;
-        width: 100vw !important;
-        height: 100vh !important;
-        max-height: none !important;
-        aspect-ratio: auto !important;
-        border-radius: 0 !important;
-        background: #000 !important;
-      }
-      #ssVideo, #ssMirrorImg {
-        width: 100%;
-        height: 100%;
-        object-fit: contain;
-        background: #020617;
-      }
-      #ssLiveBadge {
-        position: fixed;
-        top: 72px;
-        left: 50%;
-        transform: translateX(-50%);
-        z-index: 70;
-        background: #e11d48;
-        color: #fff;
-        font-size: 11px;
-        font-weight: 800;
-        letter-spacing: 0.08em;
-        padding: 6px 14px;
-        border-radius: 999px;
-        box-shadow: 0 8px 24px rgba(225, 29, 72, 0.45);
-        pointer-events: none;
-      }
-      #ssFullscreenBtn {
-        position: absolute;
-        right: 10px;
-        bottom: 10px;
-        z-index: 5;
-        width: 40px;
-        height: 40px;
-        border-radius: 12px;
-        background: rgba(15, 23, 42, 0.75);
-        color: #fff;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        border: 1px solid rgba(255,255,255,0.15);
-      }
-
-      .khmer-text {
-        font-family: "Noto Sans Khmer", "Plus Jakarta Sans", sans-serif;
-        line-height: 1.55;
-      }
-      .bi-label-km {
-        display: block;
-        font-weight: 700;
-        font-family: "Noto Sans Khmer", sans-serif;
-        line-height: 1.3;
-      }
-      .bi-label-en {
-        display: block;
-        font-size: 9px;
-        font-weight: 600;
-        opacity: 0.55;
-        letter-spacing: 0.02em;
-        margin-top: 1px;
-      }
-
-      /* Voice confirm Yes/No sheet */
+      .khmer-text { font-family: "Noto Sans Khmer", "Plus Jakarta Sans", sans-serif; line-height: 1.55; }
       #voiceYesNoSheet {
         position: fixed; inset: 0; z-index: 80;
         display: flex; align-items: flex-end; justify-content: center;
-        background: rgba(2, 6, 23, 0.55);
-        backdrop-filter: blur(8px);
-        padding: 16px;
+        background: rgba(2, 6, 23, 0.55); backdrop-filter: blur(8px); padding: 16px;
       }
       #voiceYesNoSheet.hidden { display: none !important; }
       .voice-yn-card {
-        width: 100%; max-width: 400px;
-        background: #fff;
-        border-radius: 24px;
-        padding: 20px 18px 18px;
-        box-shadow: 0 24px 60px -12px rgba(0,0,0,0.35);
-        animation: ynSlideUp 0.22s cubic-bezier(0.34, 1.4, 0.64, 1);
+        width: 100%; max-width: 400px; background: #fff; border-radius: 24px;
+        padding: 20px 18px 18px; box-shadow: 0 24px 60px -12px rgba(0,0,0,0.35);
       }
       .dark .voice-yn-card { background: #0f172a; border: 1px solid rgba(51,65,85,0.7); }
-      @keyframes ynSlideUp {
-        from { transform: translateY(40px) scale(0.96); opacity: 0; }
-        to { transform: translateY(0) scale(1); opacity: 1; }
-      }
-      .voice-yn-btn {
-        flex: 1; padding: 14px 12px; border-radius: 16px; font-weight: 800;
-        font-size: 15px; transition: transform 0.08s var(--bank-ease), filter 0.08s;
-      }
+      .voice-yn-btn { flex: 1; padding: 14px 12px; border-radius: 16px; font-weight: 800; font-size: 15px; }
       .voice-yn-btn:active { transform: scale(0.93); }
       .voice-yn-yes {
-        background: linear-gradient(135deg, #059669, #0d9488);
-        color: #fff; box-shadow: 0 10px 24px -8px rgba(5,150,105,0.45);
+        background: linear-gradient(135deg, #059669, #0d9488); color: #fff;
+        box-shadow: 0 10px 24px -8px rgba(5,150,105,0.45);
       }
-      .voice-yn-no {
-        background: #f1f5f9; color: #0f172a;
-      }
+      .voice-yn-no { background: #f1f5f9; color: #0f172a; }
       .dark .voice-yn-no { background: #1e293b; color: #e2e8f0; }
+      #ssLiveBadge {
+        position: fixed; top: 72px; left: 50%; transform: translateX(-50%); z-index: 70;
+        background: #e11d48; color: #fff; font-size: 11px; font-weight: 800;
+        letter-spacing: 0.08em; padding: 6px 14px; border-radius: 999px;
+        box-shadow: 0 8px 24px rgba(225, 29, 72, 0.45); pointer-events: none;
+      }
 
       .voice-session-sheet {
         border-radius: 24px 24px 0 0;
@@ -1490,7 +1383,6 @@
     </div>
 
     <!-- MAIN APP VIEWPORTS CONTAINER -->
-    <div id="ssLiveBadge" class="hidden">LIVE</div>
     <main class="flex-1 max-w-md sm:max-w-xl md:max-w-2xl mx-auto w-full p-4 sm:p-6 pb-28 space-y-5">
       <!-- 1. HOME DASHBOARD VIEW -->
       <section id="homeView" class="space-y-5">
@@ -1591,12 +1483,12 @@
         </button>
 
         <div class="grid grid-cols-2 gap-2.5">
-          <button onclick="openPayBillMenu()" class="bank-card p-4 text-left active:scale-[0.97] transition-transform">
+          <button onclick="openPayBillMenu()" class="bank-card p-4 text-left active:scale-[0.98] transition-transform">
             <i class="fa-solid fa-file-invoice-dollar text-emerald-500 mb-2"></i>
             <p class="text-xs font-extrabold text-slate-800 dark:text-white">Pay bills</p>
             <p class="text-[10px] text-slate-400 mt-0.5">General &amp; utility</p>
           </button>
-          <button onclick="openPostView()" class="bank-card p-4 text-left active:scale-[0.97] transition-transform">
+          <button onclick="openPostView()" class="bank-card p-4 text-left active:scale-[0.98] transition-transform">
             <i class="fa-solid fa-photo-film text-pink-500 mb-2"></i>
             <p class="text-xs font-extrabold text-slate-800 dark:text-white">Community</p>
             <p class="text-[10px] text-slate-400 mt-0.5">Photos, video &amp; react</p>
@@ -1732,98 +1624,86 @@
         </div>
       </section>
 
-
-      <!-- SCREEN SHARE VIEW — live mini-app demo for team (Android & iOS) -->
+      
+      <!-- SCREEN SHARE -->
       <section id="screenShareView" class="hidden space-y-4">
         <div class="flex justify-between items-center">
           <div>
             <h2 class="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
               <i class="fa-solid fa-share-from-square text-orange-500"></i> Screen Share
             </h2>
-            <p class="text-xs text-slate-400">Entire phone screen live → team on PC (WebRTC)</p>
+            <p class="text-xs text-slate-400">Team demo — live phone screen</p>
           </div>
-          <button type="button" onclick="navigateToView('homeView');" class="text-xs font-bold text-slate-400 hover:text-slate-600">
-            Close
+          <button type="button" onclick="navigateToView('homeView');" class="text-xs font-bold text-slate-400 hover:text-slate-600">Close</button>
+        </div>
+
+        <div class="bank-card p-4 space-y-3 border border-emerald-500/30">
+          <p class="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+            <i class="fa-brands fa-telegram"></i> Recommended — Telegram Screen Share
+          </p>
+          <p class="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
+            Closest to AnyDesk for <b>watching</b> the phone. Built into Telegram (Android). Works when you open Bank / Bills apps.
+          </p>
+          <ol class="text-[11px] text-slate-600 dark:text-slate-300 space-y-1.5 list-decimal list-inside leading-relaxed">
+            <li>Open a <b>Telegram group</b> or chat with your team</li>
+            <li>Start <b>Video chat</b></li>
+            <li>Tap <b>Share screen</b> → allow entire screen</li>
+            <li>Team sees your phone live</li>
+          </ol>
+          <button type="button" onclick="openTelegramScreenShareHelp()" class="bank-btn-primary w-full py-3.5 text-sm flex items-center justify-center gap-2">
+            <i class="fa-brands fa-telegram"></i> How to share screen in Telegram
           </button>
         </div>
 
         <div class="bank-card p-4 space-y-3">
-          <p class="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Entire phone screen (Meet / AnyDesk style)</p>
-          <ol class="text-[11px] text-slate-600 dark:text-slate-300 space-y-1.5 list-decimal list-inside leading-relaxed">
-            <li><b>Phone (Android + Chrome):</b> tap button below → Chrome opens</li>
-            <li>Tap <b>Share entire screen</b> → pick <b>Entire screen</b> (not one tab)</li>
-            <li>Send <b>Room code</b> to team in Telegram</li>
-            <li><b>PC:</b> Join room → Connect → Fullscreen — live video continues even if phone opens Bank / Bills app</li>
-          </ol>
-          <p class="text-[10px] text-amber-600 dark:text-amber-400 font-semibold leading-relaxed">Must open in <b>Google Chrome</b> (not Telegram browser). If capture fails: on the host page tap <b>Open this page in Chrome</b>.</p>
-        </div>
-
-        <button type="button" onclick="openRealScreenShareHost()" class="bank-btn-primary w-full py-4 text-sm flex flex-col items-center gap-0.5">
-          <span class="flex items-center gap-2"><i class="fa-solid fa-display"></i> Share entire phone screen</span>
-          <span class="text-[10px] font-semibold opacity-85">Opens Chrome · choose Entire screen</span>
-        </button>
-
-        <div class="grid grid-cols-2 gap-2.5">
-          <button type="button" id="ssJoinBtn" onclick="joinScreenShareRoom()" class="bank-btn-secondary py-3.5 text-xs flex flex-col items-center gap-0.5 border border-slate-200 dark:border-slate-700">
-            <span><i class="fa-solid fa-desktop"></i> Join room</span>
-            <span class="text-[9px] font-semibold opacity-70">Viewer (PC / team)</span>
+          <p class="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Optional — Chrome WebRTC (Android only)</p>
+          <p class="text-[10px] text-slate-400 leading-relaxed">
+            A mini app <b>cannot</b> be AnyDesk. Only real <b>Chrome</b> can capture entire screen. iPhone web capture is blocked by Apple.
+          </p>
+          <button type="button" onclick="openRealScreenShareHost()" class="w-full py-3 rounded-2xl text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200">
+            <i class="fa-brands fa-chrome"></i> Open share page in Chrome
           </button>
-          <button type="button" id="ssStartHostBtn" onclick="startScreenShareHost()" class="bank-btn-secondary py-3.5 text-xs flex flex-col items-center gap-0.5 border border-slate-200 dark:border-slate-700">
-            <span><i class="fa-solid fa-mobile-screen-button"></i> Mini-app only</span>
-            <span class="text-[9px] font-semibold opacity-70">Fallback demo</span>
-          </button>
+          <div class="grid grid-cols-2 gap-2">
+            <button type="button" onclick="joinScreenShareRoom()" class="py-2.5 rounded-xl text-[11px] font-bold border border-slate-200 dark:border-slate-700">
+              Join room (PC)
+            </button>
+            <button type="button" onclick="copyScreenSharePageUrl()" class="py-2.5 rounded-xl text-[11px] font-bold border border-slate-200 dark:border-slate-700">
+              Copy Chrome URL
+            </button>
+          </div>
         </div>
 
         <div id="ssRoomBox" class="hidden bank-card p-4 space-y-2">
-          <p class="text-[10px] font-bold text-slate-400 uppercase">Room code — send to team</p>
+          <p class="text-[10px] font-bold text-slate-400 uppercase">Room code</p>
           <div class="flex items-center gap-2">
             <code id="ssRoomCode" class="flex-1 font-num text-lg font-extrabold tracking-widest text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/40 px-3 py-2 rounded-xl text-center">—</code>
-            <button type="button" onclick="copyScreenShareCode()" class="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-200">
-              <i class="fa-solid fa-copy"></i>
-            </button>
+            <button type="button" onclick="copyScreenShareCode()" class="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-bold"><i class="fa-solid fa-copy"></i></button>
           </div>
-          <p id="ssStatus" class="text-[11px] text-slate-500">Waiting for viewers…</p>
-          <p class="text-[10px] text-emerald-600 font-bold">Keep demoing on Home / Pay — stream stays LIVE</p>
+          <p id="ssStatus" class="text-[11px] text-slate-500"></p>
         </div>
-
         <div id="ssJoinBox" class="hidden bank-card p-4 space-y-2">
-          <label class="text-[10px] font-bold text-slate-400 uppercase">Enter room code from phone</label>
-          <input id="ssJoinInput" type="text" maxlength="12" placeholder="e.g. AB12CD" class="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-3 text-center font-num text-base font-bold tracking-widest uppercase focus:outline-none focus:ring-2 focus:ring-indigo-500" style="user-select:text;-webkit-user-select:text" />
+          <label class="text-[10px] font-bold text-slate-400 uppercase">Room code from host</label>
+          <input id="ssJoinInput" type="text" maxlength="12" placeholder="e.g. AB12CD" class="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-3 text-center font-num text-base font-bold tracking-widest uppercase" style="user-select:text;-webkit-user-select:text" />
           <button type="button" onclick="connectScreenShareViewer()" class="bank-btn-primary w-full py-3 text-sm">Connect</button>
         </div>
-
-        <div id="ssStage" class="flex items-center justify-center">
-          <video id="ssVideo" class="hidden" autoplay playsinline muted></video>
-          <img id="ssMirrorImg" class="hidden" alt="Live demo" />
-          <div id="ssPlaceholder" class="text-center p-6 space-y-2">
-            <div class="w-14 h-14 bg-orange-500/15 text-orange-500 rounded-2xl flex items-center justify-center mx-auto text-2xl">
-              <i class="fa-solid fa-display"></i>
-            </div>
-            <p class="text-xs font-bold text-slate-200">No stream yet</p>
-            <p class="text-[11px] text-slate-400 max-w-xs">Start demo on phone, then join from PC. Use Fullscreen for quality.</p>
-          </div>
-          <button type="button" id="ssFullscreenBtn" class="hidden" onclick="toggleScreenShareFullscreen()" title="Fullscreen">
-            <i class="fa-solid fa-expand"></i>
-          </button>
+        <div id="ssStage" class="relative w-full min-h-[40vh] max-h-[55vh] bg-slate-950 rounded-3xl overflow-hidden border border-slate-800 flex items-center justify-center hidden">
+          <video id="ssVideo" class="hidden w-full h-full object-contain" autoplay playsinline muted></video>
+          <img id="ssMirrorImg" class="hidden w-full h-full object-contain" alt="Live" />
+          <div id="ssPlaceholder" class="hidden"></div>
+          <button type="button" id="ssFullscreenBtn" class="hidden absolute right-2 bottom-2 w-10 h-10 rounded-xl bg-slate-900/80 text-white" onclick="toggleScreenShareFullscreen()"><i class="fa-solid fa-expand"></i></button>
         </div>
-
-        <button type="button" id="ssStopBtn" onclick="stopScreenShare()" class="hidden w-full py-3 rounded-2xl text-xs font-bold bg-rose-500/15 text-rose-600 dark:text-rose-400">
-          <i class="fa-solid fa-stop"></i> Stop share
-        </button>
-
-        <button type="button" onclick="navigateToView('imageScanView')" class="w-full py-2.5 text-[11px] font-semibold text-slate-400 hover:text-indigo-500">
-          Or use Image / screenshot KHQR scanner →
-        </button>
+        <button type="button" id="ssStopBtn" onclick="stopScreenShare()" class="hidden w-full py-3 rounded-2xl text-xs font-bold bg-rose-500/15 text-rose-600">Stop</button>
       </section>
 
-      <!-- 3. IMAGE UPLOAD & SCREEN SNIPPER QR VIEW -->
+<!-- 3. IMAGE UPLOAD & SCREEN SNIPPER QR VIEW -->
       <section id="imageScanView" class="hidden space-y-4">
         <div class="flex justify-between items-center">
           <div>
             <h2
               class="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2"
             >
-              <i class="fa-solid fa-image text-indigo-500"></i> Image &amp; Screen KHQR Scanner
+              <i class="fa-solid fa-image text-indigo-500"></i> Image &amp;
+              Screen KHQR Scanner
             </h2>
             <p class="text-xs text-slate-400">
               Upload screenshot or snip screen area to detect KHQR
@@ -2847,7 +2727,7 @@ System ready...</pre
     <div id="createPostModal" class="hidden fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-950/60 backdrop-blur-sm p-0 sm:p-4">
       <div class="bg-white dark:bg-slate-900 w-full max-w-sm rounded-t-3xl sm:rounded-3xl p-5 shadow-2xl space-y-3 max-h-[90vh] overflow-y-auto">
         <h3 class="text-sm font-extrabold text-slate-900 dark:text-white">New post</h3>
-        <textarea id="postCaptionInput" rows="4" lang="km" dir="auto" inputmode="text" enterkeyhint="done" autocomplete="off" autocorrect="on" autocapitalize="sentences" placeholder="Write your post… (Khmer OK)" class="w-full rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-3 text-sm font-bold text-slate-900 dark:text-white leading-relaxed focus:outline-none focus:ring-2 focus:ring-indigo-500" style="user-select:text;-webkit-user-select:text;font-family:'Noto Sans Khmer','Plus Jakarta Sans',system-ui,sans-serif;"></textarea>
+        <textarea id="postCaptionInput" rows="4" lang="km" dir="auto" inputmode="text" placeholder="Write your post… (Khmer OK)" class="w-full rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-3 text-sm font-bold text-slate-900 dark:text-white leading-relaxed focus:outline-none focus:ring-2 focus:ring-indigo-500" style="user-select:text;-webkit-user-select:text;font-family:'Noto Sans Khmer',sans-serif;"></textarea>
         <label class="bank-btn-secondary w-full py-3 text-xs flex items-center justify-center gap-2 cursor-pointer">
           <i class="fa-solid fa-image"></i> Photo or video (optional)
           <input type="file" accept="image/*,video/*" class="hidden" onchange="handlePostMediaPick(event)" />
@@ -2870,7 +2750,7 @@ System ready...</pre
         <div class="space-y-2 border-t border-slate-100 dark:border-slate-800 pt-2">
           <p id="replyHint" class="hidden text-[11px] text-indigo-600 font-bold"></p>
           <div class="flex gap-2 items-center">
-            <textarea id="commentInput" rows="2" lang="km" dir="auto" inputmode="text" enterkeyhint="send" autocomplete="off" autocorrect="on" autocapitalize="sentences" placeholder="Write a comment… (Khmer OK)" class="flex-1 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2.5 text-sm font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none" style="user-select:text;-webkit-user-select:text;font-family:'Noto Sans Khmer','Plus Jakarta Sans',system-ui,sans-serif;"></textarea>
+            <textarea id="commentInput" rows="2" lang="km" dir="auto" inputmode="text" enterkeyhint="send" placeholder="Write a comment… (Khmer OK)" class="flex-1 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2.5 text-sm font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none" style="user-select:text;-webkit-user-select:text;font-family:'Noto Sans Khmer',sans-serif;"></textarea>
             <button type="button" id="voiceCommentBtn" onclick="toggleVoiceComment()" class="w-11 h-11 rounded-full bg-slate-100 dark:bg-slate-800 text-rose-500 flex items-center justify-center shrink-0" title="Voice"><i class="fa-solid fa-microphone"></i></button>
             <button type="button" onclick="submitComment()" class="bank-btn-primary px-4 py-3 text-sm font-bold shrink-0">Send</button>
           </div>
@@ -2934,17 +2814,17 @@ System ready...</pre
       </div>
     </div>
 
-    <!-- AI-style Yes/No confirm (បាទ / ទេ only — no voice) for Pay Bills, KHQR, Deeplink -->
+    <div id="ssLiveBadge" class="hidden">LIVE</div>
     <div id="voiceYesNoSheet" class="hidden">
       <div class="voice-yn-card">
         <div class="flex items-start gap-3 mb-4">
-          <div class="w-11 h-11 rounded-2xl bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 flex items-center justify-center text-lg shrink-0">
+          <div class="w-11 h-11 rounded-2xl bg-indigo-500/15 text-indigo-600 flex items-center justify-center text-lg shrink-0">
             <i class="fa-solid fa-robot"></i>
           </div>
           <div class="min-w-0 flex-1">
-            <p id="voiceYnTitleKm" class="khmer-text text-sm font-extrabold text-slate-900 dark:text-white leading-snug">តើអ្នកចង់បន្តទេ?</p>
+            <p id="voiceYnTitleKm" class="khmer-text text-sm font-extrabold text-slate-900 dark:text-white">តើអ្នកចង់បន្តទេ?</p>
             <p id="voiceYnTitleEn" class="text-[11px] font-semibold text-slate-400 mt-0.5">Do you want to continue?</p>
-            <p id="voiceYnDetail" class="text-[11px] text-slate-500 dark:text-slate-400 mt-2 leading-relaxed"></p>
+            <p id="voiceYnDetail" class="text-[11px] text-slate-500 mt-2"></p>
           </div>
         </div>
         <div class="flex gap-2.5">
@@ -2957,7 +2837,7 @@ System ready...</pre
             <span class="text-[10px] font-semibold opacity-80">Yes</span>
           </button>
         </div>
-        <p class="text-[10px] text-center text-slate-400 mt-3">Tap បាទ to auto-confirm payment · ទេ to cancel (no voice needed)</p>
+        <p class="text-[10px] text-center text-slate-400 mt-3">Tap បាទ to auto-confirm · ទេ to cancel (no voice needed)</p>
       </div>
     </div>
 

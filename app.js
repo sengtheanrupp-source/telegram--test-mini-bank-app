@@ -5349,6 +5349,55 @@ function toggleScreenShareFullscreen() {
 /** Open dedicated host page in external browser (Chrome) for real OS screen share */
 /** Open Chrome host page for entire phone screen (Meet/AnyDesk style) */
 /** Open host page in REAL Chrome (Android Intent) for entire screen share */
+
+function openTelegramScreenShareHelp() {
+  const msg =
+    "Telegram Screen Share (closest to AnyDesk for viewing):\n\n" +
+    "1. Open your team group in Telegram\n" +
+    "2. Tap the phone/video icon → Start video chat\n" +
+    "3. Tap Share screen → Entire screen\n" +
+    "4. Team joins the same video chat to watch\n\n" +
+    "Works on Android. On iPhone use AirPlay or a native app (AnyDesk).";
+  try {
+    if (window.Telegram && Telegram.WebApp && Telegram.WebApp.showPopup) {
+      Telegram.WebApp.showPopup({
+        title: "Share screen in Telegram",
+        message: msg,
+        buttons: [{ type: "close" }],
+      });
+      return;
+    }
+  } catch (e) {}
+  alert(msg);
+}
+
+function copyScreenSharePageUrl() {
+  try {
+    let base = location.href.split("?")[0].split("#")[0];
+    if (/index\.html$/i.test(base)) base = base.replace(/index\.html$/i, "screen-host.html");
+    else if (base.endsWith("/")) base = base + "screen-host.html";
+    else {
+      try {
+        const u = new URL(base);
+        const segs = u.pathname.split("/").filter(Boolean);
+        if (segs.length && segs[segs.length - 1].includes(".")) segs[segs.length - 1] = "screen-host.html";
+        else segs.push("screen-host.html");
+        u.pathname = "/" + segs.join("/");
+        base = u.origin + u.pathname;
+      } catch (e) {
+        base = base.replace(/\/?$/, "/") + "screen-host.html";
+      }
+    }
+    navigator.clipboard.writeText(base).then(function () {
+      showToast("URL copied — open in Chrome app");
+    }).catch(function () {
+      showToast(base);
+    });
+  } catch (e) {
+    showToast("Could not copy URL", true);
+  }
+}
+
 function openRealScreenShareHost() {
   try {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
