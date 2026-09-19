@@ -1016,29 +1016,23 @@ function closeKHQRModal() {
 }
 
 async function submitQRConfirm() {
-  // បាទ/ទេ only (no voice speak). Skip if already confirmed via sheet onYes.
-  if (!window._skipVoiceYn) {
-    await askVoiceYesNo({
-      context: "khqr",
-      titleKm: "តើអ្នកចង់បង់ KHQR ទេ?",
-      titleEn: "Pay this KHQR?",
-      detail: "បាទ = Pay now  ·  ទេ = Cancel",
-      onYes: function () {
-        window._skipVoiceYn = true;
-        requireSecurityAuth(function () {
-          submitQRConfirmAfterAuth();
-        });
-        setTimeout(function () {
-          window._skipVoiceYn = false;
-        }, 500);
-      },
-    });
-    return; // wait for បាទ / ទេ
+  if (window._skipVoiceYn) {
+    requireSecurityAuth(function () { submitQRConfirmAfterAuth(); });
+    return;
   }
-  requireSecurityAuth(() => {
-    submitQRConfirmAfterAuth();
+  askVoiceYesNo({
+    context: "khqr",
+    titleKm: "តើអ្នកចង់បង់ KHQR ទេ?",
+    titleEn: "Pay this KHQR?",
+    detail: "បាទ = Pay now  ·  ទេ = Cancel",
+    onYes: function () {
+      window._skipVoiceYn = true;
+      requireSecurityAuth(function () { submitQRConfirmAfterAuth(); });
+      setTimeout(function () { window._skipVoiceYn = false; }, 1000);
+    },
   });
 }
+
 
 async function submitQRConfirmAfterAuth() {
   closeKHQRModal();
@@ -1594,28 +1588,23 @@ async function runBillPayInquiry() {
 }
 
 async function runBillPaySmartFlow() {
-  if (!window._skipVoiceYn) {
-    await askVoiceYesNo({
-      context: "paybill_pay",
-      titleKm: "តើអ្នកចង់បង់វិក្កយបត្រទេ?",
-      titleEn: "Pay this bill?",
-      detail: "បាទ = Pay now  ·  ទេ = Cancel",
-      onYes: function () {
-        window._skipVoiceYn = true;
-        requireSecurityAuth(function () {
-          runBillPayConfirm();
-        });
-        setTimeout(function () {
-          window._skipVoiceYn = false;
-        }, 500);
-      },
-    });
+  if (window._skipVoiceYn) {
+    requireSecurityAuth(function () { runBillPayConfirm(); });
     return;
   }
-  requireSecurityAuth(() => {
-    runBillPayConfirm();
+  askVoiceYesNo({
+    context: "paybill_pay",
+    titleKm: "តើអ្នកចង់បង់វិក្កយបត្រទេ?",
+    titleEn: "Pay this bill?",
+    detail: "បាទ = Pay now  ·  ទេ = Cancel",
+    onYes: function () {
+      window._skipVoiceYn = true;
+      requireSecurityAuth(function () { runBillPayConfirm(); });
+      setTimeout(function () { window._skipVoiceYn = false; }, 1000);
+    },
   });
 }
+
 
 async function runBillPayConfirm() {
   const baseUrl = document.getElementById("baseUrl").value.trim();
@@ -1911,28 +1900,23 @@ function populateDeeplinkConfirmCard(customerCodeLabel) {
 }
 
 async function runSmartPaymentFlow() {
-  if (!window._skipVoiceYn) {
-    await askVoiceYesNo({
-      context: "deeplink_pay",
-      titleKm: "តើអ្នកចង់បញ្ជាក់ការទូទាត់ទេ?",
-      titleEn: "Confirm this payment?",
-      detail: "បាទ = Confirm & pay  ·  ទេ = Cancel",
-      onYes: function () {
-        window._skipVoiceYn = true;
-        requireSecurityAuth(function () {
-          runSmartPaymentFlowAfterAuth();
-        });
-        setTimeout(function () {
-          window._skipVoiceYn = false;
-        }, 500);
-      },
-    });
+  if (window._skipVoiceYn) {
+    requireSecurityAuth(function () { runSmartPaymentFlowAfterAuth(); });
     return;
   }
-  requireSecurityAuth(() => {
-    runSmartPaymentFlowAfterAuth();
+  askVoiceYesNo({
+    context: "deeplink_pay",
+    titleKm: "តើអ្នកចង់បញ្ជាក់ការទូទាត់ទេ?",
+    titleEn: "Confirm this payment?",
+    detail: "បាទ = Confirm & pay  ·  ទេ = Cancel",
+    onYes: function () {
+      window._skipVoiceYn = true;
+      requireSecurityAuth(function () { runSmartPaymentFlowAfterAuth(); });
+      setTimeout(function () { window._skipVoiceYn = false; }, 1000);
+    },
   });
 }
+
 
 
 async function runSmartPaymentFlowAfterAuth() {
@@ -2092,8 +2076,8 @@ async function runVerifyTxn() {
 /* 7B. APP PREFERENCES — AUTO-ALLOW CAMERA & KHMER VOICE CONFIRMATION */
 let appPreferences = {
   autoCamera: true,
-  voiceConfirm: true,
-  voiceCommand: true, // default ON — auto mic + voice commands when supported
+  voiceConfirm: false,
+  voiceCommand: false, // off — បាទ/ទេ popup only
   showDeeplinkMenu: false,
   showGeneralBills: true,
   showUtilityBills: true,
@@ -3295,7 +3279,6 @@ function navigateToView(viewId) {
     "homeView",
     "cameraScanView",
     "imageScanView",
-    "screenShareView",
     "billPayView",
     "paymentView",
     "verifyView",
@@ -5797,27 +5780,37 @@ function answerVoiceYesNo(yes) {
 
   log("YesNo answer=" + yes + " ctx=" + ctx);
 
-  if (yes) {
-    showToast("បាទ · Confirmed");
-    // Auto-run payment action immediately
-    try {
-      if (typeof action === "function") {
-        setTimeout(() => {
-          try {
-            action();
-          } catch (e) {
-            log("YesNo action error: " + (e && e.message));
-          }
-        }, 80);
-      }
-    } catch (e) {
-      log("YesNo action schedule: " + (e && e.message));
-    }
-    if (typeof resolve === "function") resolve(true);
-  } else {
+  if (!yes) {
     showToast("ទេ · Cancelled");
     if (typeof resolve === "function") resolve(false);
+    return;
   }
+
+  showToast("បាទ · Confirmed");
+  if (typeof resolve === "function") resolve(true);
+
+  const run = function () {
+    try {
+      if (typeof action === "function") {
+        action();
+        return;
+      }
+      window._skipVoiceYn = true;
+      if (ctx === "khqr" && typeof submitQRConfirmAfterAuth === "function") {
+        requireSecurityAuth(function () { submitQRConfirmAfterAuth(); });
+      } else if (ctx === "paybill_pay" && typeof runBillPayConfirm === "function") {
+        requireSecurityAuth(function () { runBillPayConfirm(); });
+      } else if ((ctx === "deeplink_pay" || ctx === "deeplink") && typeof runSmartPaymentFlowAfterAuth === "function") {
+        requireSecurityAuth(function () { runSmartPaymentFlowAfterAuth(); });
+      }
+    } catch (e) {
+      log("YesNo action error: " + (e && e.message));
+      showToast("Action failed", true);
+    } finally {
+      setTimeout(function () { window._skipVoiceYn = false; }, 1000);
+    }
+  };
+  setTimeout(run, 50);
 }
 
 /** KHQR: after scan, បាទ = pay now */

@@ -199,7 +199,7 @@
       }
       .khmer-text { font-family: "Noto Sans Khmer", "Plus Jakarta Sans", sans-serif; line-height: 1.55; }
       #voiceYesNoSheet {
-        position: fixed; inset: 0; z-index: 80;
+        position: fixed; inset: 0; z-index: 100;
         display: flex; align-items: flex-end; justify-content: center;
         background: rgba(2, 6, 23, 0.55); backdrop-filter: blur(8px); padding: 16px;
       }
@@ -1462,12 +1462,7 @@
               </div>
               <span class="text-[10px] font-bold text-slate-700 dark:text-slate-200">Post</span>
             </button>
-            <button onclick="navigateToView('screenShareView')" class="quick-tile p-3 flex flex-col items-center gap-2">
-              <div class="quick-icon" style="background:linear-gradient(145deg,#ecfeff,#cffafe);color:#0891b2">
-                <i class="fa-solid fa-share-from-square"></i>
-              </div>
-              <span class="text-[10px] font-bold text-slate-700 dark:text-slate-200">Screen</span>
-            </button>
+
             <button data-menu-deeplink onclick="openDeeplinkViewManually()" class="hidden quick-tile p-3 flex flex-col items-center gap-2">
               <div class="quick-icon" style="background:linear-gradient(145deg,#f5f3ff,#ede9fe);color:#7c3aed">
                 <i class="fa-solid fa-link"></i>
@@ -1626,74 +1621,7 @@
 
       
       <!-- SCREEN SHARE -->
-      <section id="screenShareView" class="hidden space-y-4">
-        <div class="flex justify-between items-center">
-          <div>
-            <h2 class="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-              <i class="fa-solid fa-share-from-square text-orange-500"></i> Screen Share
-            </h2>
-            <p class="text-xs text-slate-400">Team demo — live phone screen</p>
-          </div>
-          <button type="button" onclick="navigateToView('homeView');" class="text-xs font-bold text-slate-400 hover:text-slate-600">Close</button>
-        </div>
 
-        <div class="bank-card p-4 space-y-3 border border-emerald-500/30">
-          <p class="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
-            <i class="fa-brands fa-telegram"></i> Recommended — Telegram Screen Share
-          </p>
-          <p class="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
-            Closest to AnyDesk for <b>watching</b> the phone. Built into Telegram (Android). Works when you open Bank / Bills apps.
-          </p>
-          <ol class="text-[11px] text-slate-600 dark:text-slate-300 space-y-1.5 list-decimal list-inside leading-relaxed">
-            <li>Open a <b>Telegram group</b> or chat with your team</li>
-            <li>Start <b>Video chat</b></li>
-            <li>Tap <b>Share screen</b> → allow entire screen</li>
-            <li>Team sees your phone live</li>
-          </ol>
-          <button type="button" onclick="openTelegramScreenShareHelp()" class="bank-btn-primary w-full py-3.5 text-sm flex items-center justify-center gap-2">
-            <i class="fa-brands fa-telegram"></i> How to share screen in Telegram
-          </button>
-        </div>
-
-        <div class="bank-card p-4 space-y-3">
-          <p class="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Optional — Chrome WebRTC (Android only)</p>
-          <p class="text-[10px] text-slate-400 leading-relaxed">
-            A mini app <b>cannot</b> be AnyDesk. Only real <b>Chrome</b> can capture entire screen. iPhone web capture is blocked by Apple.
-          </p>
-          <button type="button" onclick="openRealScreenShareHost()" class="w-full py-3 rounded-2xl text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200">
-            <i class="fa-brands fa-chrome"></i> Open share page in Chrome
-          </button>
-          <div class="grid grid-cols-2 gap-2">
-            <button type="button" onclick="joinScreenShareRoom()" class="py-2.5 rounded-xl text-[11px] font-bold border border-slate-200 dark:border-slate-700">
-              Join room (PC)
-            </button>
-            <button type="button" onclick="copyScreenSharePageUrl()" class="py-2.5 rounded-xl text-[11px] font-bold border border-slate-200 dark:border-slate-700">
-              Copy Chrome URL
-            </button>
-          </div>
-        </div>
-
-        <div id="ssRoomBox" class="hidden bank-card p-4 space-y-2">
-          <p class="text-[10px] font-bold text-slate-400 uppercase">Room code</p>
-          <div class="flex items-center gap-2">
-            <code id="ssRoomCode" class="flex-1 font-num text-lg font-extrabold tracking-widest text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/40 px-3 py-2 rounded-xl text-center">—</code>
-            <button type="button" onclick="copyScreenShareCode()" class="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-bold"><i class="fa-solid fa-copy"></i></button>
-          </div>
-          <p id="ssStatus" class="text-[11px] text-slate-500"></p>
-        </div>
-        <div id="ssJoinBox" class="hidden bank-card p-4 space-y-2">
-          <label class="text-[10px] font-bold text-slate-400 uppercase">Room code from host</label>
-          <input id="ssJoinInput" type="text" maxlength="12" placeholder="e.g. AB12CD" class="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-3 text-center font-num text-base font-bold tracking-widest uppercase" style="user-select:text;-webkit-user-select:text" />
-          <button type="button" onclick="connectScreenShareViewer()" class="bank-btn-primary w-full py-3 text-sm">Connect</button>
-        </div>
-        <div id="ssStage" class="relative w-full min-h-[40vh] max-h-[55vh] bg-slate-950 rounded-3xl overflow-hidden border border-slate-800 flex items-center justify-center hidden">
-          <video id="ssVideo" class="hidden w-full h-full object-contain" autoplay playsinline muted></video>
-          <img id="ssMirrorImg" class="hidden w-full h-full object-contain" alt="Live" />
-          <div id="ssPlaceholder" class="hidden"></div>
-          <button type="button" id="ssFullscreenBtn" class="hidden absolute right-2 bottom-2 w-10 h-10 rounded-xl bg-slate-900/80 text-white" onclick="toggleScreenShareFullscreen()"><i class="fa-solid fa-expand"></i></button>
-        </div>
-        <button type="button" id="ssStopBtn" onclick="stopScreenShare()" class="hidden w-full py-3 rounded-2xl text-xs font-bold bg-rose-500/15 text-rose-600">Stop</button>
-      </section>
 
 <!-- 3. IMAGE UPLOAD & SCREEN SNIPPER QR VIEW -->
       <section id="imageScanView" class="hidden space-y-4">
@@ -2771,7 +2699,7 @@ System ready...</pre
     </div>
 
     <!-- Floating voice command mic (all screens except Settings) -->
-    <button type="button" id="voiceCmdFab" onclick="toggleVoiceCommand()"
+    <button type="button" id="voiceCmdFab" style="display:none!important" onclick="toggleVoiceCommand()"
       class="voice-cmd-fab fixed z-50 w-11 h-11 rounded-full bg-gradient-to-br from-rose-500 to-pink-600 text-white flex items-center justify-center text-sm shadow-lg shadow-rose-500/35 active:scale-90 transition-all border-2 border-white/30"
       style="right: max(12px, env(safe-area-inset-right)); bottom: calc(72px + env(safe-area-inset-bottom));"
       title="Voice command" aria-label="Voice command">
