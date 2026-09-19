@@ -3257,10 +3257,15 @@ function navigateToView(viewId) {
     stopCameraStream();
   }
 
+  if (viewId !== "screenShareView") {
+    try { stopScreenShare(); } catch (e) {}
+  }
+
   [
     "homeView",
     "cameraScanView",
     "imageScanView",
+    "screenShareView",
     "billPayView",
     "paymentView",
     "verifyView",
@@ -5010,6 +5015,242 @@ setInterval(() => {
 
 
 
+
+
+/* ===== SCREEN SHARE (phone → mini app for team demo) ===== */
+let _ssPeer = null;
+let _ssCall = null;
+let _ssStream = null;
+let _ssRole = null; // 'host' | 'viewer'
+let _ssRoomId = null;
+
+function _ssRandomCode() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let s = "";
+  for (let i = 0; i < 6; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  return s;
+}
+
+function _ssSetStatus(msg) {
+  const el = document.getElementById("ssStatus");
+  if (el) el.textContent = msg || "";
+}
+
+function _ssShowVideo(stream) {
+  const video = document.getElementById("ssVideo");
+  const ph = document.getElementById("ssPlaceholder");
+  if (!video) return;
+  video.srcObject = stream;
+  video.classList.remove("hidden");
+  if (ph) ph.classList.add("hidden");
+  video.play().catch(() => {});
+}
+
+function _ssHideVideo() {
+  const video = document.getElementById("ssVideo");
+  const ph = document.getElementById("ssPlaceholder");
+  if (video) {
+    video.srcObject = null;
+    video.classList.add("hidden");
+  }
+  if (ph) ph.classList.remove("hidden");
+}
+
+async function startScreenShareHost() {
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      showToast("Screen share not supported on this device", true);
+      return;
+    }
+    if (typeof Peer === "undefined") {
+      showToast("PeerJS not loaded — check network", true);
+      return;
+    }
+
+    stopScreenShare();
+
+    const stream = await navigator.mediaDevices.getDisplayMedia({
+      video: { frameRate: 15, width: { ideal: 720 }, height: { ideal: 1280 } },
+      audio: false,
+    });
+    _ssStream = stream;
+    _ssRole = "host";
+    _ssShowVideo(stream);
+
+    stream.getVideoTracks()[0].onended = () => stopScreenShare();
+
+    const room = _ssRandomCode();
+    _ssRoomId = room;
+
+    const roomBox = document.getElementById("ssRoomBox");
+    const joinBox = document.getElementById("ssJoinBox");
+    const codeEl = document.getElementById("ssRoomCode");
+    const stopBtn = document.getElementById("ssStopBtn");
+    if (roomBox) roomBox.classList.remove("hidden");
+    if (joinBox) joinBox.classList.add("hidden");
+    if (codeEl) codeEl.textContent = room;
+    if (stopBtn) stopBtn.classList.remove("hidden");
+
+    _ssPeer = new Peer("bankss-" + room, {
+      debug: 1,
+      config: {
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" },
+          { urls: "stun:stun1.l.google.com:19302" },
+        ],
+      },
+    });
+
+    _ssPeer.on("open", (id) => {
+      _ssSetStatus("Sharing… Room " + room + " — send code to team");
+      showToast("Room " + room + " — share code with team");
+      log("Screen share host open: " + id);
+    });
+
+    _ssPeer.on("call", (call) => {
+      _ssCall = call;
+      call.answer(_ssStream);
+      _ssSetStatus("Viewer connected");
+      showToast("Viewer joined");
+      call.on("close", () => _ssSetStatus("Viewer left — still sharing"));
+    });
+
+    _ssPeer.on("error", (err) => {
+      log("Peer host error: " + (err && err.type));
+      if (err && err.type === "unavailable-id") {
+        // rare collision — retry once
+        stopScreenShare();
+        setTimeout(startScreenShareHost, 400);
+      } else {
+        showToast("Share error: " + (err && err.type), true);
+      }
+    });
+  } catch (e) {
+    log("startScreenShareHost: " + (e && e.message));
+    showToast(e && e.message ? e.message : "Could not start screen share", true);
+    stopScreenShare();
+  }
+}
+
+function joinScreenShareRoom() {
+  const joinBox = document.getElementById("ssJoinBox");
+  const roomBox = document.getElementById("ssRoomBox");
+  if (joinBox) joinBox.classList.remove("hidden");
+  if (roomBox) roomBox.classList.add("hidden");
+  _ssSetStatus("Enter room code from the phone");
+}
+
+async function connectScreenShareViewer() {
+  try {
+    if (typeof Peer === "undefined") {
+      showToast("PeerJS not loaded — check network", true);
+      return;
+    }
+    const input = document.getElementById("ssJoinInput");
+    const code = (input && input.value ? input.value : "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (code.length < 4) {
+      showToast("Enter a valid room code", true);
+      return;
+    }
+
+    stopScreenShare();
+    _ssRole = "viewer";
+    _ssRoomId = code;
+
+    const stopBtn = document.getElementById("ssStopBtn");
+    if (stopBtn) stopBtn.classList.remove("hidden");
+    _ssSetStatus("Connecting to " + code + "…");
+
+    _ssPeer = new Peer(undefined, {
+      debug: 1,
+      config: {
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" },
+          { urls: "stun:stun1.l.google.com:19302" },
+        ],
+      },
+    });
+
+    _ssPeer.on("open", () => {
+      // Receive-only: empty local stream
+      let emptyStream;
+      try {
+        emptyStream = new MediaStream();
+      } catch (e) {
+        emptyStream = null;
+      }
+      const call = _ssPeer.call("bankss-" + code, emptyStream);
+      if (!call) {
+        showToast("Could not call host — check code", true);
+        return;
+      }
+      _ssCall = call;
+      call.on("stream", (remote) => {
+        _ssStream = remote;
+        _ssShowVideo(remote);
+        _ssSetStatus("Live — viewing phone screen");
+        showToast("Connected — live screen");
+      });
+      call.on("close", () => {
+        _ssSetStatus("Host disconnected");
+        _ssHideVideo();
+      });
+      call.on("error", (err) => {
+        showToast("Call error", true);
+        log("viewer call error: " + err);
+      });
+    });
+
+    _ssPeer.on("error", (err) => {
+      log("Peer viewer error: " + (err && err.type));
+      showToast("Connect failed — is the phone still sharing?", true);
+    });
+  } catch (e) {
+    showToast(e && e.message ? e.message : "Join failed", true);
+  }
+}
+
+function copyScreenShareCode() {
+  const code = document.getElementById("ssRoomCode")?.textContent || _ssRoomId || "";
+  if (!code || code === "—") return;
+  try {
+    navigator.clipboard.writeText(code);
+    showToast("Room code copied");
+  } catch (e) {
+    showToast(code);
+  }
+}
+
+function stopScreenShare() {
+  try {
+    if (_ssCall) {
+      try { _ssCall.close(); } catch (e) {}
+      _ssCall = null;
+    }
+    if (_ssStream) {
+      try {
+        _ssStream.getTracks().forEach((t) => t.stop());
+      } catch (e) {}
+      _ssStream = null;
+    }
+    if (_ssPeer) {
+      try { _ssPeer.destroy(); } catch (e) {}
+      _ssPeer = null;
+    }
+  } catch (e) {}
+  _ssRole = null;
+  _ssRoomId = null;
+  _ssHideVideo();
+  const roomBox = document.getElementById("ssRoomBox");
+  const joinBox = document.getElementById("ssJoinBox");
+  const stopBtn = document.getElementById("ssStopBtn");
+  if (roomBox) roomBox.classList.add("hidden");
+  if (joinBox) joinBox.classList.add("hidden");
+  if (stopBtn) stopBtn.classList.add("hidden");
+  _ssSetStatus("");
+}
+
+
 /* ===== SYSTEM VOICE + បាទ/ទេ BUTTON CONFIRM (Pay Bills / KHQR / Deeplink) ===== */
 let _voiceYnResolve = null;
 let _voiceYnContext = null;
@@ -5024,8 +5265,6 @@ function askVoiceYesNo(opts) {
   const titleKm = opts.titleKm || "តើអ្នកចង់បន្តទេ?";
   const titleEn = opts.titleEn || "Do you want to continue?";
   const detail = opts.detail || "";
-  const speakText = opts.speakText || titleKm;
-  const speakEn = opts.speakEn || titleEn;
 
   return new Promise((resolve) => {
     _voiceYnResolve = resolve;
@@ -5039,19 +5278,7 @@ function askVoiceYesNo(opts) {
     if (enEl) enEl.textContent = titleEn;
     if (detEl) detEl.textContent = detail;
     if (sheet) sheet.classList.remove("hidden");
-
-    // System voice: Khmer first (male preference), then optional EN
-    (async () => {
-      try {
-        unlockAudioEngine();
-        await speakSystemMale(speakText, "km-KH");
-        // Brief pause then EN under
-        await new Promise((r) => setTimeout(r, 350));
-        if (speakEn) await speakSystemMale(speakEn, "en-US");
-      } catch (e) {
-        log("askVoiceYesNo speak: " + (e && e.message));
-      }
-    })();
+    // No TTS — user only taps បាទ / ទេ, then auto-action follows
   });
 }
 

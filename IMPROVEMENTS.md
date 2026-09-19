@@ -1,36 +1,29 @@
-# Mini App Improvements (2026-09-19)
+# Mini App Improvements (updated)
 
-## 1. Home menu — Screen
-- Replaced **Upload QR** tile with **អេក្រង់ / Screen** on the main home grid.
-- Opens the existing Image & Screen KHQR Scanner (upload screenshot from Android/iOS or Capture Tab/Screen on PC).
-- Purpose: view phone screen content (screenshots) inside the Telegram mini app on desktop.
+## Menus — English only
+All main menu labels are English again (Scan QR, Pay Bill, Screen, Post, etc.).
 
-## 2. Post & Comment — Khmer language
-- Added **Noto Sans Khmer** font (Google Fonts).
-- Post caption and comment inputs: `lang="km"`, `dir="auto"`, Khmer placeholders.
-- Feed captions and comments render with Khmer font for correct Unicode display.
+## 1. Screen share (phone → mini app for team demo)
+New **Screen** tile on home opens **Screen Share**:
+- **Phone (Host):** Start sharing → pick screen/app → get a 6-letter **Room code**
+- Send the code to teammates in Telegram
+- **PC (Viewer):** Screen → Join room → paste code → **live phone screen** in the mini app
 
-## 3. System voice + បាទ / ទេ (Pay Bills, KHQR, Deeplink)
-- Removed reliance on pure “sound commands” for these flows.
-- New **voiceYesNoSheet** UI: system speaks (male preference), user taps **បាទ** or **ទេ**.
-- **Pay Bills**: asks Inquiry only vs Inquiry & pay.
-- **KHQR**: after scan, asks “Pay?” before confirm.
-- **Deeplink**: asks confirm; on **បាទ** auto-clicks Confirm (and tries Done).
-- Works together with existing voiceConfirm preference in Settings.
+Uses PeerJS + WebRTC (STUN). No extra backend. Good for walkthrough demos to the team.
 
-## 4. Faster, less “sticky” clicks
-- Shorter transitions (≈0.06–0.1s) with spring easing.
-- Stronger `:active` scale on tiles, primary buttons, and cards (game/social feel).
-- `touch-action: manipulation` to reduce mobile tap delay.
+Still available: Image & screenshot KHQR scanner (link at bottom of Screen Share view).
 
-## 5. UI & voice bilingual + male speaker
-- Home tiles and CTAs: **Khmer on top**, **English under**.
-- System TTS prefers **male** voices for Khmer and English (`speakSystemMale`).
-- Yes/No sheet labels: បាទ/ទេ with Yes/No under.
+## 2. Post & Comment — Khmer still supported
+Noto Sans Khmer font; captions/comments accept Khmer text (inputs keep Khmer placeholders + font).
 
-### Files touched
-- `index.html` — fonts, CSS, home menu, inputs, voice sheet
-- `app.js` — askVoiceYesNo, prompt helpers, confirm wrappers, Khmer caption CSS
+## 3. បាទ / ទេ only — no voice
+- Confirmation is **button-only** (no TTS / no spoken prompts).
+- AI-style ask sheet with **បាទ** and **ទេ**.
+- On **បាទ**, the app continues the action (KHQR pay, Pay Bills mode, Deeplink confirm).
+- On **ទេ**, cancels.
 
-### Deploy
-Same as before (Vercel / static host). No new env vars required.
+## 4. Snappier button animation
+Faster active/scale feedback (less sticky web feel).
+
+## Deploy
+Same static / Vercel deploy. PeerJS loads from CDN (`unpkg.com/peerjs`).
